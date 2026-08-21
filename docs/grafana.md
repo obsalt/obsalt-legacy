@@ -1,6 +1,6 @@
 # Metrics and Grafana
 
-obsalt does not ship dashboards. Point Grafana at the OpenTelemetry backends you already run. For “what is user-facing”, see [What you can see](what-you-see.md).
+obsalt does not ship a fleet dashboard. Point Grafana at the OpenTelemetry backends you already run. For a **single call** (waterfall + transcript + recording + evals), use [the join view](what-you-see.md) at `/v1/ui`. That page correlates artifacts via `call.id` — it is not a replacement for Tempo.
 
 Local all-in-one (Tempo + Prometheus + Grafana + Loki):
 
@@ -17,7 +17,7 @@ Do not put every signal in Prometheus. Use each backend for what it is good at:
 | Counts / histograms | Prometheus / Mimir | `voice_calls_total{agent,environment,outcome}` |
 | Stage timings (debug a cascade) | Tempo via traces | `stt.transcription`, `llm.inference` |
 | Searchable call facts | Loki (optional) | JSON body with `canonical_call_id` |
-| Transcript / audio / QA | Evidence store | `GET /v1/calls/{id}` via `call.id` on the span |
+| Transcript / audio / QA | Evidence store + `/v1/ui` | Same `call.id` as the span; transcript is not a span attribute |
 
 ```mermaid
 flowchart LR
@@ -30,6 +30,7 @@ flowchart LR
   Tempo --> Grafana
   Prom --> Grafana
   Grafana -->|"explore call.id"| API
+  Grafana -->|"paste call.id"| UI["/v1/ui"]
 ```
 
 ## Prometheus
@@ -61,9 +62,11 @@ Histogram buckets follow voice SLAs (50ms–8s), not generic HTTP buckets.
 
 Filter on join keys: `call.id`, `call.provider_id`, `workspace.id`, `agent.id`, `turn.index`. Span names are listed in [Trace model](trace-model.md).
 
-From a span, open evidence with `GET /v1/calls/{call.id}`. The span will not contain the transcript.
+From a span, open `/v1/calls/{call.id}/ui` (or `GET /v1/calls/{call.id}`). The span will not contain the transcript.
 
 Reconstructed webhooks use the call’s historical timestamps, so a call that happened at 12:00 UTC does not appear as “just now” in the waterfall.
+
+Import `grafana/obsalt-overview.json` for the Prometheus SLO panels (calls by outcome, P95 by stage, tool / STT / assertion failures). It does not embed transcripts.
 
 ## Loki (optional)
 

@@ -90,9 +90,9 @@ Turn-scoped spans also carry `turn.index`.
 
 ```mermaid
 flowchart LR
-  Tempo["Tempo span<br/>call.id = 3f1a…"] --> API["GET /v1/calls/3f1a…"]
+  Tempo["Tempo span<br/>call.id = 3f1a…"] --> UI["/v1/calls/3f1a…/ui"]
   Tempo2["call.provider_id = room-42"] --> API2["GET /v1/calls?provider_call_id=room-42"]
-  API --> Evidence["transcript, hangup, evals"]
+  UI --> Evidence["transcript, hangup, evals"]
   API2 --> Evidence
 ```
 

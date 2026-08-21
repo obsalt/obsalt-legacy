@@ -61,7 +61,7 @@ with VoiceCall.start(
 
 `call.obsalt_call_id` is `call.id` on every span (uuid5 of workspace + provider + `call_id`). `call.provider_call_id` is `"c1"`.
 
-`text=` on `turn()` is evidence. It is not a span attribute.
+`text=` on `turn()` is evidence. It is not a span attribute. `provider_attempt` hops are stored on the snapshot (`turn.metadata.stt_attempts`) so `/v1/ui` can show a Deepgram timeout → Azure fallback after the call ends.
 
 ## 3. VoiceCallTracer (spans only)
 

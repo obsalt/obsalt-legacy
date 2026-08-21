@@ -198,3 +198,4 @@ class NativeSnapshot(BaseModel):
     to_number: str | None = None
     spans_exported: bool = False
     traceparent: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)

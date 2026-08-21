@@ -13,7 +13,7 @@ Agent process (you)
 │    ├─ tools ─┤
 │    └─ TTS  ──┘         └── snapshot JSON ── POST /v1/ingest/native ──► obsalt serve
 obsalt serve (optional, for evidence)
-└─ GET /v1/calls  transcripts, hangups, evals
+└─ GET /v1/ui and /v1/calls  transcript next to the same span tree
 ```
 
 ```mermaid
@@ -181,6 +181,8 @@ call.lifecycle                 call.id = uuid5(acme, native, room-42)
 ├── transcript.finalization    (if you open it)
 └── evaluation.assertion_check (after snapshot ingest)
 ```
+
+**Join view** — `http://localhost:8080/v1/calls/{call.obsalt_call_id}/ui`. Same tree as Tempo, plus transcript and coverage. Fallback hops survive on the snapshot (`stt_attempts`), so the page still shows Deepgram timeout → Azure after the call ends.
 
 **HTTP** — `GET /v1/calls/{call.obsalt_call_id}` or `GET /v1/calls?provider_call_id=room-42&provider=native`.
 

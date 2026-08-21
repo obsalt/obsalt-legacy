@@ -2,7 +2,7 @@
 
 A voice trace models a **call**, not an HTTP request. One root span covers the whole conversation. Each turn is a child. Each independently failing step (STT attempt, LLM, tool, TTS) is a grandchild.
 
-This is the tree both live `VoiceCall` / `VoiceCallTracer` and webhook ingest (reconstructed) produce.
+This is the tree both live `VoiceCall` / `VoiceCallTracer` and webhook ingest (reconstructed) produce. Naming follows the [voice-agent OpenTelemetry guide](https://hamming.ai/resources/opentelemetry-voice-agents-tracing-guide): do not flatten the call into an LLM-only trace, and do not put transcripts on span attributes.
 
 ## Span tree
 
@@ -99,3 +99,7 @@ Store those as evidence. On the span, set:
 - `evidence.transcript_id`
 - `evidence.recording_id`
 - `evidence.redaction_state=redacted`
+
+`GET /v1/calls/{id}/view` rebuilds this same tree for the join UI. It still does not copy transcript text onto span attributes.
+
+Fallbacks are only emitted when the payload has a second hop. Path B records those hops on `turn.metadata.stt_attempts` so the join view and a later reconstruction can show them. Path A never invents them.

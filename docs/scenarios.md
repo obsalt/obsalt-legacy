@@ -19,11 +19,7 @@ Path A = vendor webhook. Path B = `VoiceCall` in your process. [Choose a path](c
 | Hallucinations | `fabricated_id` (ORD-99999), `price_claim` ($48.50) — neither token is in prompt or tool result |
 | Eval “Grounded claims” | Fail |
 
-**Where you look.**
-
-- Tempo: `call.lifecycle` → `turn.*` → `llm.tool_call.lookup_order` in ERROR, plus `evaluation.assertion_check` fails.
-- `GET /v1/hangups` cluster `user_hangup|user|…` with `lost_customer_call_id` pointing at this call.
-- `GET /v1/search` query `refund` hits the transcript.
+**Where you look.** `/v1/ui` for this call (waterfall + transcript + evals). Tempo for the same `call.lifecycle` tree. `GET /v1/hangups` cluster `user_hangup|user|…` with `lost_customer_call_id` pointing at this call. `GET /v1/search` query `refund` hits the transcript.
 
 The fixture that produces this: `tests/fixtures/vapi_end_of_call.json`. `obsalt parse` it without a server.
 
@@ -44,7 +40,7 @@ with call.turn(0, "user", text=text) as turn:
             attempt.set(latency_ms=400, confidence=0.91)
 ```
 
-**What Tempo shows.** `stt.transcription` with children `stt.provider.deepgram` (ERROR) and `stt.provider.fallback.azure`. obsalt will **not** invent a fallback on a Vapi ingest — only Path B can express two hops.
+**What Tempo shows.** `stt.transcription` with children `stt.provider.deepgram` (ERROR) and `stt.provider.fallback.azure`. obsalt will **not** invent a fallback on a Vapi ingest — only Path B can express two hops. Those hops are stored on the snapshot, so `/v1/ui` shows them after ingest too.
 
 **Evidence.** Empty until the snapshot is POSTed (`client=` on `VoiceCall`, or `observer.close()`). If you only care about the waterfall, skip that.
 

@@ -33,7 +33,7 @@ Your laptop / cluster
      ├─ OTLP collector :4318  (protocol)
      ├─ Tempo / Jaeger / Honeycomb   traces
      ├─ Prometheus / Mimir           metrics
-     └─ Grafana :3000                the UI you actually open
+     └─ Grafana :3000                fleet UI (Tempo / Prometheus)
 ```
 
 ```mermaid
@@ -66,7 +66,7 @@ flowchart TB
   SDK -->|"NativeSnapshot"| HTTP
   Vendor -->|"vendor JSON"| HTTP
   Pipe -->|"reconstructed tree, Path A"| OTLP
-  Mem -->|"GET /v1/calls"| You[You]
+  Mem -->|"GET /v1/calls · /v1/ui"| You[You]
   Graf -->|"paste call.id"| You
 ```
 
@@ -77,8 +77,8 @@ flowchart TB
 | `VoiceCall` / `VoiceCallTracer` | Python library | none | Create spans in the agent |
 | OTLP | Protocol | 4318 HTTP | How spans travel |
 | Tempo / Jaeger / Honeycomb | Your service | vendor-specific | Store and query traces |
-| Grafana | Your UI | 3000 typical | Waterfalls + dashboards |
-| `obsalt serve` | HTTP server | 8080 | Ingest + evidence |
+| Grafana | Your UI | 3000 typical | Fleet waterfalls + dashboards |
+| `obsalt serve` | HTTP server | 8080 | Ingest + evidence + `/v1/ui` |
 | Native snapshot | JSON document | n/a | Path B evidence packet |
 | Vendor webhook | JSON document | n/a | Path A evidence packet |
 
@@ -94,7 +94,7 @@ flowchart TB
 | Backend | Tempo | `GET /v1/calls` |
 | PII | Forbidden on spans | Stored, redacted |
 
-`call.id` (obsalt uuid) joins them. `call.provider_id` is your room/SIP/Vapi id.
+`call.id` (obsalt uuid) joins them. `call.provider_id` is your room/SIP/Vapi id. `/v1/ui` is that join, rendered.
 
 Live spans never land in the evidence store by themselves. Path B without `client=` is traces-only.
 
@@ -128,7 +128,7 @@ Run against evidence, then attach `evaluation.assertion_check` spans to the same
 | Path | Layer |
 | --- | --- |
 | `obsalt.session.VoiceCall` | Path B product API |
-| `obsalt.tracing` | Span conventions, `VoiceCallTracer`, OTLP setup, reconstruct |
+| `obsalt.tracing` | Span conventions, `VoiceCallTracer`, OTLP setup, reconstruct, join view |
 | `obsalt.sdk.CallRecorder` | Snapshot builder |
 | `obsalt.integrations.pipecat` | Optional observer |
 | `obsalt.adapters` | Vendor JSON → `CanonicalCall` |
@@ -138,7 +138,7 @@ Run against evidence, then attach `evaluation.assertion_check` spans to the same
 
 ## What this repository does not include
 
-- A web UI. Grafana is the UI.
+- A hosted product dashboard that replaces Grafana. `/v1/ui` is the per-call join view. Fleet waterfalls stay in Tempo.
 - Durable storage. `MemoryStore` dies with the process.
 - A voice platform. obsalt observes calls; it does not dial them.
 - An LLM judge by default (`LlmJudge` is a swap-in).

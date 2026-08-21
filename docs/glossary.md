@@ -55,6 +55,7 @@ The **HTTP server** (`obsalt serve`, default `:8080`). FastAPI.
 
 - Ingest: `/v1/ingest/{vapi,retell,bland,openai-realtime,native}`
 - Evidence: `/v1/calls`, `/search`, `/hangups`, `/latency`, `/evals`
+- Join view: `/v1/ui`, `/v1/calls/{id}/ui`, `/v1/calls/{id}/view`
 - OpenAPI: `/docs`
 - Health: `/health`
 
@@ -81,6 +82,7 @@ The internal normalized record. Adapters fill it. The pipeline analyzes it. The 
 | Contents | Span names, timings, join keys | Transcript, tools, hangup, evals |
 | Backend | Tempo / Jaeger / Honeycomb | `obsalt serve` (in-memory in v0.1) |
 | PII | Forbidden | Stored, redacted where possible |
+| Human view | Grafana (fleet) | `/v1/ui` joins both for one call |
 
 ## spans_exported
 

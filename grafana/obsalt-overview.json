@@ -1,0 +1,85 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Calls by outcome",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (outcome, agent) (increase(voice_calls_total[5m]))",
+          "legendFormat": "{{agent}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "P95 stage latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(voice_response_latency_seconds_bucket[5m])))",
+          "legendFormat": "{{stage}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Tool failures",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (tool_name, failure_type) (increase(voice_tool_failures_total[5m]))",
+          "legendFormat": "{{tool_name}} {{failure_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Low-confidence STT turns",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (stt_provider) (increase(voice_low_confidence_turns_total[5m]))",
+          "legendFormat": "{{stt_provider}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Assertion failures",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (assertion_type) (increase(voice_assertion_failures_total[5m]))",
+          "legendFormat": "{{assertion_type}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["obsalt", "voice"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "obsalt voice SLOs",
+  "uid": "obsalt-voice-slos",
+  "version": 1
+}

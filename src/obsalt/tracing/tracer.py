@@ -36,6 +36,7 @@ from obsalt.tracing.conventions import (
     SPAN_LLM,
     SPAN_PLAYOUT,
     SPAN_STT,
+    SPAN_STT_SELECTION,
     SPAN_TRANSCRIPT_FINAL,
     SPAN_TTS,
     SPAN_VAD,
@@ -194,6 +195,9 @@ class SpanHandle:
             start_ns=start_ns,
             end_ns=end_ns,
         )
+
+    def provider_selection(self, *, start_ns: int | None = None, end_ns: int | None = None, **extra: Any) -> SpanHandle:
+        return self._owner._child(SPAN_STT_SELECTION, extra, start_ns=start_ns, end_ns=end_ns)
 
     def llm(
         self,
