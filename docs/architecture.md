@@ -2,139 +2,144 @@
 
 obsalt has two jobs:
 
-1. Turn a voice call into an OpenTelemetry **trace** you can open in Tempo, Jaeger, or Honeycomb.
-2. Keep an **evidence** record of that call — transcript, tools, hangup, hallucinations, evals — that you look up over HTTP.
+1. Turn a voice call into an OpenTelemetry **trace** (where time went).
+2. Keep an **evidence** record (what was said) that you look up over HTTP.
 
-Those jobs share one data model (`CanonicalCall`). They do **not** share one process.
+Those jobs share `CanonicalCall`. They do **not** share one process, and they do **not** share one integration. Read [Choose a path](choose-a-path.md) first.
 
-## What runs where
+## Hierarchy (what runs where)
+
+```
+Your laptop / cluster
+├─ 1. Agent runtime                          Path B only
+│    ├─ Pipecat / LiveKit / custom loop
+│    └─ obsalt SDK  (library, not a server)
+│         ├─ VoiceCall          spans + snapshot
+│         ├─ VoiceCallTracer    spans only
+│         └─ CallRecorder       snapshot only
+│
+├─ 2. Hosted voice platform                  Path A only
+│    └─ Vapi / Retell / Bland cloud
+│         └─ webhook POST ──► 3
+│
+├─ 3. obsalt serve                           HTTP :8080
+│    ├─ /v1/ingest/{vapi,retell,bland,native,openai-realtime}
+│    ├─ adapters → CanonicalCall
+│    ├─ pipeline (latency, hangup, tools, hallucinations, evals)
+│    ├─ MemoryStore  (v0.1 — dies on restart)
+│    └─ emit_call_trace  (Path A, or Path B without live spans)
+│
+└─ 4. Your telemetry backends                not obsalt
+     ├─ OTLP collector :4318  (protocol)
+     ├─ Tempo / Jaeger / Honeycomb   traces
+     ├─ Prometheus / Mimir           metrics
+     └─ Grafana :3000                the UI you actually open
+```
 
 ```mermaid
 flowchart TB
-  subgraph client ["CLIENT — your runtime"]
-    Loop["Audio loop<br/>Pipecat / LiveKit / custom"]
-    SDK["obsalt SDK<br/>VoiceCallTracer"]
-    Rec["obsalt SDK<br/>CallRecorder"]
-    Loop --> SDK
-    Loop --> Rec
+  subgraph pathB ["PATH B — you own the loop"]
+    Agent[Pipecat / LiveKit]
+    SDK[VoiceCall SDK]
+    Agent --> SDK
   end
-
-  subgraph vendor ["VENDOR — hosted voice"]
-    Vapi["Vapi / Retell / Bland"]
+  subgraph pathA ["PATH A — vendor owns the loop"]
+    Vendor[Vapi / Retell / Bland]
   end
-
-  subgraph server ["SERVER — obsalt serve"]
-    HTTP["FastAPI /v1/ingest/*"]
-    Adapters["Provider adapters"]
-    Pipe["IngestPipeline<br/>latency · hangup · tools · hallucinations · evals"]
-    Mem["MemoryStore + search index"]
-    Emit["emit_call_trace"]
-    HTTP --> Adapters --> Pipe
-    Pipe --> Mem
-    Pipe --> Emit
+  subgraph obsalt ["obsalt serve"]
+    HTTP["FastAPI /v1/*"]
+    Pipe[IngestPipeline]
+    Mem[Evidence store]
+    HTTP --> Pipe --> Mem
   end
-
-  subgraph data ["YOUR TELEMETRY BACKENDS"]
-    Tempo["Traces — Tempo / Jaeger / Honeycomb"]
-    Prom["Metrics — Prometheus / Mimir"]
+  subgraph backends ["You bring these"]
+    OTLP["OTLP :4318"]
+    Tempo[Tempo]
+    Prom[Prometheus]
+    Graf[Grafana]
+    OTLP --> Tempo
+    OTLP --> Prom
+    Tempo --> Graf
+    Prom --> Graf
   end
-
-  SDK -->|"OTLP HTTP"| Tempo
-  Rec -->|"POST /v1/ingest/native"| HTTP
-  Vapi -->|"POST /v1/ingest/{provider}"| HTTP
-  Emit -->|"OTLP HTTP"| Tempo
-  Emit --> Prom
-  Mem -->|"GET /v1/calls /search /hangups"| HTTP
+  SDK -->|"OTLP HTTP"| OTLP
+  SDK -->|"NativeSnapshot"| HTTP
+  Vendor -->|"vendor JSON"| HTTP
+  Pipe -->|"reconstructed tree, Path A"| OTLP
+  Mem -->|"GET /v1/calls"| You[You]
+  Graf -->|"paste call.id"| You
 ```
 
-| Surface | Process | What it is | What it is not |
+## Component cheat sheet
+
+| Name | Kind | Port | Role |
 | --- | --- | --- | --- |
-| **SDK** (`VoiceCallTracer`, `setup_tracing`) | Your agent | A library. Wrap STT / LLM / TTS. Spans export over OTLP from *this* process. | It does not store transcripts. It does not run evals. It does not need `obsalt serve`. |
-| **SDK** (`CallRecorder`, `ObsaltClient`) | Your agent | Builds a JSON snapshot and POSTs it. | It does not emit spans unless you also use `VoiceCallTracer`. |
-| **Server** (`obsalt serve`) | Your API host | Webhooks in, evidence out, reconstructed spans to OTLP, analysis. | It is not a UI. It does not place calls. It does not keep data across restarts (v0.1). |
+| `VoiceCall` / `VoiceCallTracer` | Python library | none | Create spans in the agent |
+| OTLP | Protocol | 4318 HTTP | How spans travel |
+| Tempo / Jaeger / Honeycomb | Your service | vendor-specific | Store and query traces |
+| Grafana | Your UI | 3000 typical | Waterfalls + dashboards |
+| `obsalt serve` | HTTP server | 8080 | Ingest + evidence |
+| Native snapshot | JSON document | n/a | Path B evidence packet |
+| Vendor webhook | JSON document | n/a | Path A evidence packet |
 
-Use the SDK when you own the audio loop. Use the server when a hosted platform owns it. Use both when you want a live waterfall **and** searchable evidence.
-
-## Client vs server responsibilities
-
-```mermaid
-flowchart LR
-  subgraph C ["On the client"]
-    C1["Start/end timestamps as they happen"]
-    C2["STT confidence, TTFT, TTFB"]
-    C3["W3C traceparent across processes"]
-    C4["Never put transcript text on spans"]
-  end
-  subgraph S ["On the server"]
-    S1["Parse vendor JSON → CanonicalCall"]
-    S2["Merge live events by provider call id"]
-    S3["Hangup taxonomy, hallucinations, rubrics"]
-    S4["Rebuild the span tree with historical timestamps"]
-    S5["Tenant isolation via API key → org_id"]
-  end
-```
-
-The reconstructed tree from a webhook is the same shape as a live `VoiceCallTracer` tree. See [Trace model](trace-model.md).
+[Glossary](glossary.md) · [What you can see](what-you-see.md).
 
 ## Traces vs evidence
 
-| | Traces (OTLP) | Evidence (store) |
+| | Traces | Evidence |
 | --- | --- | --- |
 | Purpose | “Where did the 1.8s go?” | “What did the agent say?” |
-| Contents | Span names, timings, join keys, debug attributes | Transcript, recording URL, redacted tool args, analysis |
-| Backend | Tempo, Jaeger, Honeycomb | obsalt HTTP API (in-memory today) |
-| PII | Forbidden by default | Stored, redacted where possible |
-| Produced by | SDK live, **or** server reconstruction | Server ingest only |
+| Path A | Server reconstructs after the terminal webhook | Server stores from that webhook |
+| Path B | SDK exports **live** over OTLP | SDK POSTs a snapshot; server analyzes |
+| Backend | Tempo | `GET /v1/calls` |
+| PII | Forbidden on spans | Stored, redacted |
 
-Spans carry pointers (`evidence.transcript_id`, `evidence.recording_id`), not the transcript. That is why a live-instrumented call is invisible to `/v1/search` until you also ingest a snapshot.
+`call.id` (obsalt uuid) joins them. `call.provider_id` is your room/SIP/Vapi id.
 
-Join: `workspace.id` = tenant (`org_id` from the API key). `call.id` = obsalt id (`uuid5` of org + provider + provider call id). Grafana filters on `call.id`; `GET /v1/calls/{that id}` is the evidence.
+Live spans never land in the evidence store by themselves. Path B without `client=` is traces-only.
+
+Path B with `client=` sets `spans_exported: true` on the snapshot so finalize does **not** rebuild a second `call.lifecycle`. Evals still run; eval spans attach to the live trace via `traceparent`.
 
 ## Ingest pipeline (server)
 
-On a **terminal** webhook (`end-of-call-report`, `call_ended`, Bland post-call, native `final: true`):
+On a **terminal** event (`end-of-call-report`, `call_ended`, Bland post-call, native `final: true`):
 
-1. Adapter parses the payload into a `CanonicalCall`.
-2. Live events for the same provider call id are **merged** (idempotent).
-3. Tool argument values are redacted (keys stay; secrets become `<string:redacted>`).
-4. `finalize` runs: latency derivation, tool retries, hangup taxonomy, hallucination flags, rubric evals.
-5. The call is written to the store and indexed for search.
-6. `emit_call_trace` rebuilds the span tree using the call’s real timestamps, not “now”.
+1. Adapter parses JSON → `CanonicalCall`.
+2. Live events for the same `(org, provider, provider_call_id)` merge.
+3. Tool argument values redacted.
+4. Finalize: latency, tool retries, hangup taxonomy, hallucinations, rubrics.
+5. Write store + search index.
+6. If `spans_exported`: record Prometheus metrics; attach eval spans to the live trace. Else: `emit_call_trace` rebuilds the tree with historical timestamps.
 
-Non-terminal events (Vapi `status-update`, Bland live `category=latency`) merge and return without analysis.
-
-Adapters never invent STT fallbacks. One hop in the payload is one `stt.provider.{name}` child.
-
-Detailed sequence: [Data flow](data-flow.md).
+Non-terminal events merge and return. Adapters never invent STT fallbacks.
 
 ## Analysis engines
 
-All of these run against evidence, then attach `evaluation.assertion_check` spans to the same `call.lifecycle` root.
+Run against evidence, then attach `evaluation.assertion_check` spans to the same `call.lifecycle` root (reconstructed or live).
 
-- **Latency** — STT, LLM, TTS, time-to-first-audio. Turn gaps fill TTFA when the provider omitted it.
-- **Hangup** — Provider codes collapse to one taxonomy. Clusters group by reason, party, and last-utterance theme, and surface `lost_customer_call_id`.
-- **Tools** — Success rate, consecutive-failure retries, payload JSON-type shape, time-to-tool.
-- **Hallucinations** — Deterministic claim checks against grounding (prompt + knowledge + tool results + user text).
-- **Evals** — `HeuristicJudge` interprets plain-English rubrics (`hallucination`, `latency`, `frustrated`, …). Swap in `LlmJudge` later on the same `Judge` protocol.
+- **Latency** — STT, LLM, TTS, TTFA. Turn gaps fill TTFA when the provider omitted it.
+- **Hangup** — Provider codes → one taxonomy. Clusters pick `lost_customer_call_id`.
+- **Tools** — Success rate, retries, payload **shapes**.
+- **Hallucinations** — Deterministic checks against grounding.
+- **Evals** — `HeuristicJudge` on plain-English rubrics.
 
-## Metrics
-
-Exported over OTLP when `OBSALT_OTLP_ENDPOINT` is set. Labels are low cardinality: `agent`, `environment`, `stage`, `outcome`, `tool_name`. **Never** `call_id`. See [Metrics and Grafana](grafana.md).
-
-## Package layout (what lives where in the repo)
+## Package layout
 
 | Path | Layer |
 | --- | --- |
-| `obsalt.tracing` | Client **and** server span conventions, `VoiceCallTracer`, OTLP setup |
-| `obsalt.sdk` / `obsalt.client` | Client snapshot builder + HTTP client |
-| `obsalt.adapters` | Server: vendor JSON → `CanonicalCall` |
-| `obsalt.pipeline` | Server: merge, analyze, emit |
-| `obsalt.store` | Server: in-memory evidence + search |
+| `obsalt.session.VoiceCall` | Path B product API |
+| `obsalt.tracing` | Span conventions, `VoiceCallTracer`, OTLP setup, reconstruct |
+| `obsalt.sdk.CallRecorder` | Snapshot builder |
+| `obsalt.integrations.pipecat` | Optional observer |
+| `obsalt.adapters` | Vendor JSON → `CanonicalCall` |
+| `obsalt.pipeline` | Merge, analyze, emit |
+| `obsalt.store` | In-memory evidence + search |
 | `obsalt.api` / `obsalt.cli` | Server process |
 
 ## What this repository does not include
 
-- A web UI. Use Grafana / Tempo / your OTLP vendor.
+- A web UI. Grafana is the UI.
 - Durable storage. `MemoryStore` dies with the process.
 - A voice platform. obsalt observes calls; it does not dial them.
-- An LLM judge or embedding API by default. Those are swap-in types (`LlmJudge`, `OpenAICompatEmbedder`).
+- An LLM judge by default (`LlmJudge` is a swap-in).
+- A hosted OTLP collector. You run Tempo / LGTM / Honeycomb.

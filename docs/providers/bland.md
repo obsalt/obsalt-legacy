@@ -1,6 +1,8 @@
 # Bland
 
-Use this page when **Bland** places the call (pathways or prompts). obsalt accepts Bland’s **post-call** webhook and optional **live** log events (`category` + `message`).
+Use this page when **Bland** places the call (**Path A** — pathways or prompts). obsalt accepts Bland’s **post-call** webhook and optional **live** log events (`category` + `message`).
+
+If you run Pipecat yourself, this is the wrong page — [Custom agents](../custom-agents.md).
 
 ## Architecture
 

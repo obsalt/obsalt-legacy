@@ -126,6 +126,11 @@ class NativeAdapter:
                     )
                 )
         call.transcript_text = as_str(payload.get("transcript_text")) or transcript_from_turns(call)
+        if "spans_exported" in payload:
+            call.metadata["spans_exported"] = bool(payload.get("spans_exported"))
+        traceparent = as_str(payload.get("traceparent"))
+        if traceparent:
+            call.metadata["traceparent"] = traceparent
         hangup_reason = as_str(payload.get("hangup_reason"))
         terminal = bool(payload.get("final", True))
         if hangup_reason:

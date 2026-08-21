@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "obsalt"
 version = "0.1.0"
-description = "Observability for voice AI agents: a tracing SDK and an ingest server for Vapi, Retell, Bland, and OpenAI Realtime"
+description = "Observability for voice AI agents: hosted-provider ingest (Vapi, Retell, Bland) and a Pipecat/custom-agent SDK"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "obsalt" }]
-keywords = ["voice", "observability", "opentelemetry", "vapi", "retell", "bland", "openai-realtime"]
+keywords = ["voice", "observability", "opentelemetry", "pipecat", "vapi", "retell", "bland", "openai-realtime"]
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.32.0",

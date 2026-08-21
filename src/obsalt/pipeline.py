@@ -12,7 +12,7 @@ from obsalt.hangup.analyzer import HangupAnalyzer
 from obsalt.latency.breakdown import enrich_latency
 from obsalt.store import MemoryStore, Store
 from obsalt.tools.telemetry import enrich_call_tools
-from obsalt.tracing.emitter import emit_call_trace
+from obsalt.tracing.emitter import emit_call_trace, emit_eval_spans, record_call_metrics
 from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.util import utcnow
 
@@ -71,7 +71,19 @@ class IngestPipeline:
         call.finalized = True
         call.updated_at = utcnow()
         self.store.upsert_call(call)
-        emit_call_trace(call, metrics=self.metrics, environment=self.environment)
+        if call.metadata.get("spans_exported"):
+            if self.metrics is not None:
+                record_call_metrics(call, self.metrics, environment=self.environment)
+            traceparent = call.metadata.get("traceparent")
+            if isinstance(traceparent, str) and traceparent:
+                emit_eval_spans(
+                    call,
+                    headers={"traceparent": traceparent},
+                    metrics=self.metrics,
+                    environment=self.environment,
+                )
+        else:
+            emit_call_trace(call, metrics=self.metrics, environment=self.environment)
         return call
 
     def reevaluate(self, org_id: str, call_id: str) -> CanonicalCall | None:

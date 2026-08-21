@@ -28,7 +28,7 @@ Provider webhook HMAC is checked in addition to this. See [Ingest webhooks](inge
 
 `POST /v1/ingest/{vapi,retell,bland,openai-realtime,native}`
 
-Body: JSON object (the provider’s webhook, or a `CallRecorder` snapshot).
+Body: JSON object (the provider’s webhook, or a `NativeSnapshot` / `VoiceCall.snapshot()`).
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -44,9 +44,11 @@ Tool argument **values** are redacted before the call is stored. Shapes remain.
 
 ## Calls
 
-`GET /v1/calls?agent_id=`
+`GET /v1/calls?agent_id=&provider_call_id=&provider=`
 
 List summaries for the org, newest first: id, provider, agent, status, duration, hangup reason, loss score, hallucination count, tool count.
+
+Pass `provider_call_id` (and `provider` when you know it) to find a call by the room / SIP / Vapi id you already have.
 
 `GET /v1/calls/{call_id}`
 

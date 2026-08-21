@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from obsalt._version import __version__
 from obsalt.config import Settings
-from obsalt.domain.enums import Provider
+from obsalt.domain.enums import Provider, parse_provider
 from obsalt.evals.judges import new_rubric
 from obsalt.pipeline import IngestPipeline
 from obsalt.security import header_map, verify_bland, verify_retell, verify_vapi
@@ -65,8 +65,9 @@ def create_app(
         title="obsalt",
         version=__version__,
         description=(
-            "Ingest voice-agent calls (Vapi, Retell, Bland, OpenAI Realtime, native) "
-            "and look up evidence. Traces export over OpenTelemetry. "
+            "Ingest voice-agent calls. Path A: Vapi / Retell / Bland webhooks. "
+            "Path B: native snapshots from VoiceCall. "
+            "Look up evidence over HTTP. Traces export over OpenTelemetry. "
             "This API is not a dashboard."
         ),
         openapi_tags=[
@@ -146,8 +147,23 @@ def create_app(
         return await _ingest(Provider.NATIVE, request, org_id)
 
     @app.get("/v1/calls", tags=["calls"])
-    def list_calls(org_id: str = Depends(tenant), agent_id: str | None = Query(default=None)):
-        calls = store.list_calls(org_id, agent_id=agent_id)
+    def list_calls(
+        org_id: str = Depends(tenant),
+        agent_id: str | None = Query(default=None),
+        provider_call_id: str | None = Query(default=None),
+        provider: str | None = Query(default=None),
+    ):
+        if provider_call_id and provider:
+            try:
+                provider_enum = parse_provider(provider)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            call = store.get_by_provider_id(org_id, provider_enum, provider_call_id)
+            calls = [call] if call is not None else []
+        else:
+            calls = store.list_calls(org_id, agent_id=agent_id)
+            if provider_call_id:
+                calls = [c for c in calls if c.provider_call_id == provider_call_id]
         return {"calls": [_call_summary(c) for c in calls], "count": len(calls)}
 
     @app.get("/v1/calls/{call_id}", tags=["calls"])

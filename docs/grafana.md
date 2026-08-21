@@ -1,6 +1,6 @@
 # Metrics and Grafana
 
-obsalt does not ship dashboards. Point Grafana at the OpenTelemetry backends you already run.
+obsalt does not ship dashboards. Point Grafana at the OpenTelemetry backends you already run. For “what is user-facing”, see [What you can see](what-you-see.md).
 
 Local all-in-one (Tempo + Prometheus + Grafana + Loki):
 
@@ -21,10 +21,12 @@ Do not put every signal in Prometheus. Use each backend for what it is good at:
 
 ```mermaid
 flowchart LR
-  obsalt[obsalt SDK or serve]
-  obsalt -->|"OTLP traces"| Tempo
-  obsalt -->|"OTLP metrics"| Prom[Prometheus]
-  obsalt -->|"HTTP evidence"| API["GET /v1/calls"]
+  pathB[VoiceCall in agent]
+  pathA[obsalt serve]
+  pathB -->|"OTLP traces live"| Tempo
+  pathA -->|"OTLP traces reconstructed"| Tempo
+  pathA -->|"OTLP metrics"| Prom[Prometheus]
+  pathA -->|"HTTP evidence"| API["GET /v1/calls"]
   Tempo --> Grafana
   Prom --> Grafana
   Grafana -->|"explore call.id"| API
@@ -57,7 +59,7 @@ Histogram buckets follow voice SLAs (50ms–8s), not generic HTTP buckets.
 
 ## Tempo
 
-Filter on join keys: `call.id`, `workspace.id`, `agent.id`, `turn.index`. Span names are listed in [Trace model](trace-model.md).
+Filter on join keys: `call.id`, `call.provider_id`, `workspace.id`, `agent.id`, `turn.index`. Span names are listed in [Trace model](trace-model.md).
 
 From a span, open evidence with `GET /v1/calls/{call.id}`. The span will not contain the transcript.
 

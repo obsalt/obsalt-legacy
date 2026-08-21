@@ -8,6 +8,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from obsalt.tracing import conventions as c
 from obsalt.tracing.setup import setup_tracing
 from obsalt.tracing.tracer import VoiceCallTracer
+from obsalt.util import call_id_for
 from tests.span_helpers import attrs, span_forest
 
 
@@ -64,11 +65,13 @@ def test_live_span_hierarchy_nests_provider_fallback_and_tools() -> None:
     assert "llm.tool_call.check_inventory" in forest[c.SPAN_LLM]
 
     root = next(s for s in spans if s.name == c.SPAN_CALL)
+    expected_id = call_id_for("acme", "native", "c1")
     for span in spans:
         a = attrs(span)
         for key in c.JOIN_KEYS:
             assert key in a, f"{span.name} missing {key}"
-        assert a[c.CALL_ID] == "c1"
+        assert a[c.CALL_ID] == expected_id
+        assert a[c.PROVIDER_CALL_ID] == "c1"
         assert a[c.WORKSPACE_ID] == "acme"
         assert a[c.AGENT_ID] == "support"
     assert attrs(root)[c.CALL_DURATION_MS] == 45_000

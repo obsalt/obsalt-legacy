@@ -1,8 +1,8 @@
 # Vapi
 
-Use this page when **Vapi** places the call. Your agent prompt, transcriber, and voice live in Vapi. obsalt only sees what Vapi puts on the Server URL.
+Use this page when **Vapi** places the call (**Path A**). Your agent prompt, transcriber, and voice live in Vapi. obsalt only sees what Vapi puts on the Server URL.
 
-If you built the loop yourself (Pipecat talking to Deepgram), this is the wrong page — use [Custom agents](custom-agent.md).
+If you built the loop yourself (Pipecat talking to Deepgram), this is the wrong page — that is **Path B**: [Custom agents](../custom-agents.md).
 
 ## Architecture
 

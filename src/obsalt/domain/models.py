@@ -165,3 +165,36 @@ class IngestResult(BaseModel):
     status: Literal["accepted", "merged", "finalized"]
     created: bool
     finalized: bool = False
+
+
+class NativeSnapshot(BaseModel):
+    """JSON body for ``POST /v1/ingest/native``.
+
+    This is obsalt's own envelope — the equivalent of a Vapi
+    ``end-of-call-report`` when **you** own the audio loop. Hosted platforms
+    never send this; their adapters translate vendor JSON into ``CanonicalCall``
+    instead.
+
+    Built by ``CallRecorder.snapshot()`` / ``VoiceCall.snapshot()``.
+    """
+
+    call_id: str
+    provider: str = "native"
+    agent_id: str = "unknown"
+    agent_name: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    duration_ms: float | None = None
+    hangup_reason: str | None = None
+    final: bool = True
+    transcript_text: str = ""
+    grounding: dict[str, Any] = Field(default_factory=dict)
+    turns: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    latency_samples: list[dict[str, Any]] = Field(default_factory=list)
+    recording_url: str | None = None
+    direction: str | None = None
+    from_number: str | None = None
+    to_number: str | None = None
+    spans_exported: bool = False
+    traceparent: str | None = None

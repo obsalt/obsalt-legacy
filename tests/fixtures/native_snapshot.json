@@ -1,0 +1,55 @@
+{
+  "call_id": "room-42",
+  "provider": "native",
+  "agent_id": "support",
+  "started_at": "2026-08-21T14:00:00+00:00",
+  "ended_at": "2026-08-21T14:00:18+00:00",
+  "duration_ms": 18000,
+  "hangup_reason": "completed",
+  "final": true,
+  "spans_exported": false,
+  "transcript_text": "user: book Friday\nagent: Booked HTL-1.",
+  "grounding": {
+    "system_prompt": "Rooms are $189. Confirmation codes come from the booking tool.",
+    "knowledge": []
+  },
+  "turns": [
+    {
+      "index": 0,
+      "speaker": "user",
+      "text": "book Friday",
+      "stt_ms": 120,
+      "confidence": 0.91,
+      "interrupted": false
+    },
+    {
+      "index": 1,
+      "speaker": "agent",
+      "text": "Booked HTL-1.",
+      "llm_ms": 300,
+      "llm_ttft_ms": 220,
+      "tts_ms": 90,
+      "tts_ttfb_ms": 40,
+      "time_to_first_audio_ms": 40,
+      "interrupted": false
+    }
+  ],
+  "tools": [
+    {
+      "id": "tool-1",
+      "name": "create_booking",
+      "duration_ms": 45,
+      "status": "success",
+      "payload_shape": {"email": "string", "night": "string"},
+      "result_preview": "{'confirmation': 'HTL-1'}",
+      "metadata": {
+        "arguments": {"night": "Friday", "email": "<string:redacted>"}
+      }
+    }
+  ],
+  "latency_samples": [
+    {"component": "stt", "duration_ms": 120, "turn_index": 0, "source": "sdk"},
+    {"component": "llm", "duration_ms": 300, "turn_index": 1, "ttft_ms": 220, "source": "sdk"},
+    {"component": "tts", "duration_ms": 90, "turn_index": 1, "ttfb_ms": 40, "source": "sdk"}
+  ]
+}

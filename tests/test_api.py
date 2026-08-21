@@ -101,3 +101,21 @@ def test_openai_realtime_ingest_endpoint() -> None:
     call = client.get(f"/v1/calls/{response.json()['call_id']}", headers={"X-API-Key": "test-key"}).json()
     assert call["provider"] == "openai_realtime"
     assert any(s["component"] == "stt" for s in call["latency_samples"])
+
+
+def test_lookup_by_provider_call_id() -> None:
+    client = _client()
+    headers = {"X-API-Key": "test-key"}
+    ingested = client.post(
+        "/v1/ingest/vapi", headers=headers, json=load_fixture("vapi_end_of_call.json")
+    )
+    assert ingested.status_code == 200
+    detail = client.get(f"/v1/calls/{ingested.json()['call_id']}", headers=headers).json()
+    listed = client.get(
+        "/v1/calls",
+        headers=headers,
+        params={"provider_call_id": detail["provider_call_id"], "provider": "vapi"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    assert listed.json()["calls"][0]["id"] == ingested.json()["call_id"]
