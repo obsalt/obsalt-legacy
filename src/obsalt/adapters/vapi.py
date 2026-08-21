@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from obsalt.adapters.base import AdapterResult, empty_call, first_present, speaker_from, text_of, transcript_from_turns
+from obsalt.adapters.base import (
+    AdapterResult,
+    empty_call,
+    first_present,
+    text_of,
+    transcript_from_turns,
+)
 from obsalt.domain.enums import (
     CallDirection,
     CallStatus,
@@ -10,11 +16,21 @@ from obsalt.domain.enums import (
     Provider,
     Speaker,
     ToolStatus,
+    speaker_from,
 )
 from obsalt.domain.models import Hangup, LatencySample, ToolInvocation, Turn
 from obsalt.domain.redact import payload_shape, preview_text
 from obsalt.hangup.taxonomy import annotate_hangup, classify_provider_reason
-from obsalt.util import as_float, as_str, canonical_json, dig, duration_ms, ms_from_seconds, parse_datetime, sha256_text
+from obsalt.util import (
+    as_float,
+    as_str,
+    canonical_json,
+    dig,
+    duration_ms,
+    ms_from_seconds,
+    parse_datetime,
+    sha256_text,
+)
 
 
 def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:

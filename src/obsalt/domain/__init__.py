@@ -8,6 +8,8 @@ from obsalt.domain.enums import (
     Provider,
     Speaker,
     ToolStatus,
+    parse_provider,
+    speaker_from,
 )
 from obsalt.domain.models import (
     CanonicalCall,
@@ -44,4 +46,6 @@ __all__ = [
     "ToolInvocation",
     "ToolStatus",
     "Turn",
+    "parse_provider",
+    "speaker_from",
 ]

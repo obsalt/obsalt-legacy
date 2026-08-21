@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from obsalt.adapters.base import AdapterResult, empty_call, speaker_from, transcript_from_turns
+from obsalt.adapters.base import AdapterResult, empty_call, transcript_from_turns
 from obsalt.domain.enums import (
     CallDirection,
     CallStatus,
@@ -13,11 +13,12 @@ from obsalt.domain.enums import (
     Provider,
     Speaker,
     ToolStatus,
+    speaker_from,
 )
 from obsalt.domain.models import Hangup, LatencySample, ToolInvocation, Turn
 from obsalt.domain.redact import payload_shape, preview_text
 from obsalt.hangup.taxonomy import annotate_hangup, classify_provider_reason
-from obsalt.util import as_float, as_str, duration_ms, parse_datetime, sha256_text, canonical_json
+from obsalt.util import as_float, as_str, canonical_json, duration_ms, parse_datetime, sha256_text
 
 _LATENCY_LINE = re.compile(r"(STT|ASR|TTS|LLM|E2E)\s*:\s*(\d+(?:\.\d+)?)\s*ms", re.I)
 _TOOL_LINE = re.compile(r"Executing custom tool:\s*(.+?)\s+with input:\s*(.*)$", re.I)

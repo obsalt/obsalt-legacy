@@ -8,7 +8,7 @@ from obsalt.adapters.native import NativeAdapter
 from obsalt.adapters.openai_realtime import OpenAIRealtimeAdapter
 from obsalt.adapters.retell import RetellAdapter
 from obsalt.adapters.vapi import VapiAdapter
-from obsalt.domain.enums import Provider
+from obsalt.domain.enums import Provider, parse_provider
 from obsalt.domain.models import CanonicalCall, ToolInvocation, Turn
 
 
@@ -28,6 +28,52 @@ class AdapterRegistry:
         if result is None and provider == Provider.OPENAI_REALTIME:
             result = self._adapters[Provider.NATIVE].parse({**payload, "provider": provider.value}, org_id=org_id)
         return result
+
+
+def detect_provider(payload: dict[str, Any]) -> Provider | None:
+    """Guess the ingest adapter from a webhook / snapshot body."""
+    if not isinstance(payload, dict):
+        return None
+    explicit = payload.get("provider")
+    if isinstance(explicit, str) and explicit.strip():
+        try:
+            return parse_provider(explicit)
+        except ValueError:
+            pass
+    message = payload.get("message")
+    if isinstance(message, dict) and (message.get("type") or message.get("call")):
+        return Provider.VAPI
+    event = payload.get("event")
+    if event in {"call_started", "call_ended", "call_analyzed"}:
+        return Provider.RETELL
+    inner = payload.get("call")
+    if isinstance(inner, dict) and inner.get("call_id") and (
+        inner.get("disconnection_reason") is not None
+        or inner.get("transcript_with_tool_calls") is not None
+    ):
+        return Provider.RETELL
+    event_type = payload.get("type")
+    if event_type in {
+        "end-of-call-report",
+        "status-update",
+        "transcript",
+        "tool-calls",
+        "function-call",
+        "user-interrupted",
+    }:
+        return Provider.VAPI
+    if (
+        payload.get("concatenated_transcript") is not None
+        or payload.get("disposition_tag") is not None
+    ):
+        return Provider.BLAND
+    if payload.get("category") in {"latency", "tool", "call"} and payload.get("call_id"):
+        return Provider.BLAND
+    if isinstance(payload.get("events"), list):
+        return Provider.OPENAI_REALTIME
+    if payload.get("turns") is not None or payload.get("final") is not None:
+        return Provider.NATIVE
+    return None
 
 
 def merge_calls(base: CanonicalCall, incoming: CanonicalCall) -> CanonicalCall:

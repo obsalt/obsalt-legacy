@@ -2,11 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from obsalt.adapters.base import AdapterResult, empty_call, speaker_from, transcript_from_turns
-from obsalt.domain.enums import CallDirection, CallStatus, LatencyComponent, Provider, Speaker, ToolStatus
+from obsalt.adapters.base import AdapterResult, empty_call, transcript_from_turns
+from obsalt.domain.enums import (
+    CallDirection,
+    CallStatus,
+    LatencyComponent,
+    Provider,
+    ToolStatus,
+    parse_provider,
+    speaker_from,
+)
 from obsalt.domain.models import Hangup, LatencySample, ToolInvocation, Turn
 from obsalt.hangup.taxonomy import annotate_hangup, classify_provider_reason
-from obsalt.util import as_float, as_str, parse_datetime
+from obsalt.util import as_float, as_str, duration_ms, parse_datetime
 
 
 class NativeAdapter:
@@ -18,16 +26,30 @@ class NativeAdapter:
         provider_call_id = as_str(payload.get("call_id") or payload.get("provider_call_id"))
         if not provider_call_id:
             return None
-        provider = Provider(as_str(payload.get("provider")) or Provider.NATIVE.value)
+        raw_provider = as_str(payload.get("provider")) or Provider.NATIVE.value
+        try:
+            provider = parse_provider(raw_provider)
+        except ValueError:
+            provider = Provider.NATIVE
         # Native snapshots may wrap another provider's id.
         agent_id = as_str(payload.get("agent_id")) or "unknown"
-        call = empty_call(org_id=org_id, provider=provider, provider_call_id=provider_call_id, agent_id=agent_id)
+        call = empty_call(
+            org_id=org_id,
+            provider=provider,
+            provider_call_id=provider_call_id,
+            agent_id=agent_id,
+        )
         call.agent_name = as_str(payload.get("agent_name"))
         direction = as_str(payload.get("direction"))
         if direction in CallDirection._value2member_map_:
             call.direction = CallDirection(direction)
         call.started_at = parse_datetime(payload.get("started_at"))
         call.ended_at = parse_datetime(payload.get("ended_at"))
+        call.duration_ms = as_float(payload.get("duration_ms")) or duration_ms(
+            call.started_at, call.ended_at
+        )
+        call.from_number = as_str(payload.get("from_number"))
+        call.to_number = as_str(payload.get("to_number"))
         call.recording_url = as_str(payload.get("recording_url"))
         call.raw_event_type = as_str(payload.get("event_type")) or "native"
         if isinstance(payload.get("grounding"), dict):
@@ -59,18 +81,30 @@ class NativeAdapter:
             if not isinstance(raw, dict):
                 continue
             status = as_str(raw.get("status")) or "pending"
+            meta = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+            args = raw.get("arguments")
+            if args is None:
+                args = meta.get("arguments")
+            stored_meta = dict(meta)
+            if args is not None:
+                stored_meta["arguments"] = args
             call.tools.append(
                 ToolInvocation(
                     id=as_str(raw.get("id")) or as_str(raw.get("name")) or "tool",
                     name=as_str(raw.get("name")) or "unknown",
                     duration_ms=as_float(raw.get("duration_ms")),
                     time_to_tool_ms=as_float(raw.get("time_to_tool_ms")),
-                    status=ToolStatus(status) if status in ToolStatus._value2member_map_ else ToolStatus.PENDING,
+                    status=(
+                        ToolStatus(status)
+                        if status in ToolStatus._value2member_map_
+                        else ToolStatus.PENDING
+                    ),
                     retry_count=int(raw.get("retry_count") or 0),
                     payload_shape=raw.get("payload_shape"),
+                    argument_hash=as_str(raw.get("argument_hash")),
                     error=as_str(raw.get("error")),
                     result_preview=as_str(raw.get("result_preview")),
-                    metadata={"arguments": raw.get("arguments")},
+                    metadata=stored_meta,
                     started_at=parse_datetime(raw.get("started_at")),
                     ended_at=parse_datetime(raw.get("ended_at")),
                 )
@@ -98,9 +132,16 @@ class NativeAdapter:
             reason, party = classify_provider_reason("native", hangup_reason)
             call.hangup = annotate_hangup(
                 call,
-                Hangup(reason=reason, party=party, provider_reason=hangup_reason, signal=hangup_reason),
+                Hangup(
+                    reason=reason,
+                    party=party,
+                    provider_reason=hangup_reason,
+                    signal=hangup_reason,
+                ),
             )
             call.status = CallStatus.ENDED
         elif terminal:
             call.status = CallStatus.ENDED
-        return AdapterResult(call=call, terminal=terminal, event_type=call.raw_event_type or "native")
+        return AdapterResult(
+            call=call, terminal=terminal, event_type=call.raw_event_type or "native"
+        )

@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from obsalt.adapters.base import AdapterResult, empty_call, first_present, speaker_from, transcript_from_turns
-from obsalt.domain.enums import CallDirection, CallStatus, LatencyComponent, Provider, Speaker, ToolStatus
+from obsalt.adapters.base import AdapterResult, empty_call, first_present, transcript_from_turns
+from obsalt.domain.enums import (
+    CallDirection,
+    CallStatus,
+    LatencyComponent,
+    Provider,
+    Speaker,
+    ToolStatus,
+    speaker_from,
+)
 from obsalt.domain.models import Hangup, LatencySample, ToolInvocation, Turn
 from obsalt.domain.redact import payload_shape, preview_text
 from obsalt.hangup.taxonomy import annotate_hangup, classify_provider_reason
@@ -106,10 +114,15 @@ def _turns_and_tools(items: list[Any]) -> tuple[list[Turn], list[ToolInvocation]
                 payload_shape=payload_shape(args),
                 argument_hash=sha256_text(canonical_json(args)),
                 metadata={"arguments": args},
-                time_to_tool_ms=(None if last_user_ms is None or started is None else None),
             )
-            if last_user_ms is not None and item.get("words"):
-                pass
+            if last_user_ms is not None:
+                mark = None
+                if started is not None:
+                    mark = started.timestamp() * 1000.0
+                else:
+                    mark = as_float(item.get("created_timestamp") or item.get("timestamp"))
+                if mark is not None and mark < 1e11:
+                    tool.time_to_tool_ms = max(0.0, mark - last_user_ms)
             pending[tool_id] = tool
             tools.append(tool)
             continue

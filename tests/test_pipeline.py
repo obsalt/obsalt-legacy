@@ -41,3 +41,15 @@ def test_org_isolation() -> None:
     pipeline.ingest(Provider.RETELL, load_fixture("retell_call_ended.json"), org_id="b")
     assert store.get_call("b", a.call_id) is None
     assert len(store.list_calls("a")) == 1
+
+
+def test_tool_arguments_redacted_on_ingest() -> None:
+    store = MemoryStore()
+    pipeline = IngestPipeline(store=store)
+    result = pipeline.ingest(Provider.VAPI, load_fixture("vapi_end_of_call.json"), org_id="org")
+    call = store.get_call("org", result.call_id)
+    assert call is not None
+    blob = str(call.model_dump(mode="json"))
+    assert "ada@example.com" not in blob
+    lookup = next(t for t in call.tools if t.name == "lookup_order")
+    assert lookup.payload_shape == {"email": "string", "order_id": "string"}
