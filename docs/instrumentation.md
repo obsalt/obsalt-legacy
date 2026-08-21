@@ -1,14 +1,16 @@
 # Instrument an agent
 
-Use this guide when **your process** owns STT, the LLM, tools, and TTS — Pipecat, LiveKit, a custom loop, or an OpenAI Realtime sidecar.
+Use this page as the **span API reference** for Path B (you own STT / LLM / TTS).
 
-You will emit OpenTelemetry spans as the conversation happens. obsalt does not need to be running as a server for this path.
+Product path for Pipecat: [Custom agents](custom-agents.md). Decision: [Choose a path](choose-a-path.md).
 
-If a hosted platform (Vapi, Retell, Bland) runs the call, skip this page and use the [provider guides](providers/index.md).
+If Vapi / Retell / Bland runs the call, skip this page — [provider guides](providers/index.md).
 
-Pipecat / LiveKit sketches: [Custom agents](providers/custom-agent.md). Runnable file: [examples/instrument_agent.py](../examples/instrument_agent.py).
+Prefer **`VoiceCall`** (spans + snapshot). `VoiceCallTracer` is the low-level span helper the server also uses when it reconstructs a tree.
 
 ## 1. Configure export
+
+OTLP is a protocol. Call this in the **agent** process.
 
 ```python
 from obsalt import setup_tracing
@@ -16,9 +18,7 @@ from obsalt import setup_tracing
 setup_tracing(otlp_endpoint="http://localhost:4318", environment="dev")
 ```
 
-`setup_tracing` is process-wide. The HTTP server calls it automatically when `OBSALT_OTLP_ENDPOINT` is set; agent processes must call it themselves.
-
-Production uses `BatchSpanProcessor`. Tests should pass an in-memory exporter and `batch=False` so spans flush immediately:
+Production uses `BatchSpanProcessor`. Tests should pass an in-memory exporter and `batch=False`:
 
 ```python
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -28,7 +28,44 @@ exporter = InMemorySpanExporter()
 setup_tracing(span_exporter=exporter, batch=False)
 ```
 
-## 2. Open a call, then a turn
+## 2. VoiceCall (recommended)
+
+```python
+from obsalt import VoiceCall, ObsaltClient, setup_tracing
+
+setup_tracing(otlp_endpoint="http://localhost:4318")
+client = ObsaltClient(api_key="secret")
+
+with VoiceCall.start(
+    call_id="c1",
+    workspace_id="acme",
+    agent_id="support",
+    client=client,
+) as call:
+    with call.turn(0, "user", text="book Friday") as turn:
+        with turn.stt("deepgram") as stt:
+            stt.set(confidence=0.91, latency_ms=412)
+            with stt.provider_attempt("deepgram"):
+                pass
+        with turn.llm("gpt-4o", provider="openai") as llm:
+            llm.set(ttft_ms=340, tokens_in=200, tokens_out=80, finish_reason="stop")
+            with llm.tool("lookup_order", {"order_id": "1"}) as tool:
+                tool.set(execution_ms=120, status_code=200)
+                tool.set_result({"ok": True})
+        with turn.tts("elevenlabs") as tts:
+            tts.set(synthesis_ms=290, first_audio_ms=70)
+        with turn.playout() as play:
+            play.set(playout_ms=1400)
+    call.set_call_outcome(duration_ms=45_000, status="ended")
+```
+
+`call.obsalt_call_id` is `call.id` on every span (uuid5 of workspace + provider + `call_id`). `call.provider_call_id` is `"c1"`.
+
+`text=` on `turn()` is evidence. It is not a span attribute.
+
+## 3. VoiceCallTracer (spans only)
+
+Same helpers, no snapshot. Use when you truly do not want evidence.
 
 ```python
 from obsalt import VoiceCallTracer
@@ -37,24 +74,10 @@ with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support"
     with call.turn(0, "user") as turn:
         with turn.stt("deepgram") as stt:
             stt.set(confidence=0.91, latency_ms=412)
-            with stt.provider_attempt("deepgram"):
-                pass  # the HTTP call to Deepgram goes here
-        with turn.llm("gpt-4o", provider="openai") as llm:
-            llm.set(ttft_ms=340, tokens_in=200, tokens_out=80, finish_reason="stop")
-            with llm.tool("lookup_order") as tool:
-                tool.set(execution_ms=120, status_code=200)
-        with turn.tts("elevenlabs") as tts:
-            tts.set(synthesis_ms=290, first_audio_ms=70)
-        with turn.playout() as play:
-            play.set(playout_ms=1400)
-    with call.finalize_transcript("written"):
-        pass
     call.set_call_outcome(duration_ms=45_000, status="ended")
 ```
 
-`workspace_id` is your tenant. It becomes `workspace.id` on every span.
-
-Open a child span around each independently failing step. If Deepgram times out and Azure succeeds, record both attempts:
+Open a child span around each independently failing step. If Deepgram times out and Azure succeeds:
 
 ```python
 with stt.provider_attempt("deepgram") as attempt:
@@ -63,34 +86,29 @@ with stt.provider_attempt("azure", fallback=True) as attempt:
     attempt.set(latency_ms=400, confidence=0.91)
 ```
 
-## 3. Continue the trace in another process
+## 4. Continue the trace in another process
 
-A call often starts in one service and continues in another. Inject W3C `traceparent` on the way out; pass the same headers (or extracted context) into `VoiceCallTracer.start`.
+Inject W3C `traceparent` on the way out; pass the same headers into `VoiceCall.start` / `VoiceCallTracer.start`.
 
 ```python
 from obsalt import VoiceCallTracer
 from obsalt.tracing import inject_traceparent, extract_traceparent
 
 with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="web") as call:
-    headers = inject_traceparent({})          # sets headers["traceparent"]
+    headers = inject_traceparent({})
 
-# later, in a worker:
 with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="worker", headers=headers) as call:
     with call.evaluate("grounded-claims") as ev:
         ev.set(**{"assertion.result": "pass", "assertion.score": 1.0})
-
-# equivalent:
-ctx = extract_traceparent(headers)
-VoiceCallTracer.start(..., context=ctx)
 ```
 
 Format: `traceparent: 00-{32-hex-trace-id}-{16-hex-span-id}-01`.
 
-Third-party STT/TTS APIs will not return `traceparent`. Bracket those HTTP calls with `stt.provider.{name}` / `tts.synthesis`. You will not see inside Deepgram; you will see timeout vs fallback.
+Third-party STT/TTS APIs will not return `traceparent`. Bracket those HTTP calls with `stt.provider.{name}` / `tts.synthesis`.
 
 ## What not to put on spans
 
-Do not pass transcript text, prompts, tool arguments, tool results, phone numbers, or emails to `set()`. Store those as evidence (see [Native snapshots](providers/native.md)). Spans should carry timings, model names, and join keys only.
+Do not pass transcript text, prompts, tool arguments, tool results, phone numbers, or emails to `set()`. Store those as evidence (`turn(text=...)`, `tool(..., arguments=)`, snapshot). Spans carry timings, model names, and join keys only.
 
 ## `set()` shortcuts
 
@@ -110,6 +128,6 @@ Do not pass transcript text, prompts, tool arguments, tool results, phone number
 
 Any other keyword is used as the attribute name as-is.
 
-## Evidence
+## Evidence without VoiceCall
 
-`VoiceCallTracer` only emits telemetry. To search transcripts or run evals, also POST a snapshot with [`CallRecorder`](providers/native.md) / `ObsaltClient`.
+[`CallRecorder`](providers/native.md) builds the same snapshot without in-process OTel. The server then reconstructs the span tree.

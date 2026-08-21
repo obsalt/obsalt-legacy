@@ -62,8 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="obsalt",
         description=(
-            "Observability for voice AI agents — ingest server, "
-            "webhook parser, and config tools."
+            "Observability for voice AI agents — Path A webhook ingest "
+            "(Vapi/Retell/Bland) and Path B native snapshots."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(

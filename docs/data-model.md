@@ -52,10 +52,10 @@ erDiagram
 
 | Field | Meaning |
 | --- | --- |
-| `id` | obsalt id — `uuid5(namespace, "{org}:{provider}:{provider_call_id}")`. Stable across re-ingests. |
+| `id` | obsalt id — `uuid5(namespace, "{org}:{provider}:{provider_call_id}")`. Stable across re-ingests. This is `call.id` on spans. |
 | `org_id` | Tenant from the API key, **not** from the JSON body. |
 | `provider` | `vapi` · `retell` · `bland` · `openai_realtime` · `native` |
-| `provider_call_id` | Id the vendor already has (Vapi call id, Retell `call_id`, Bland `c_id`, Realtime `session_id`). |
+| `provider_call_id` | Id you already have (Vapi call id, Pipecat room, Retell `call_id`, Bland `c_id`, Realtime `session_id`). This is `call.provider_id` on spans. |
 | `agent_id` | Assistant / agent / pathway / model name, best-effort from the payload. |
 
 Re-POSTing the same vendor call is idempotent: `created: false`, same `id`.
@@ -126,5 +126,7 @@ If the agent says “order ORD-99999” and that token is in none of the above, 
 - Span objects — those are emitted, not stored
 - Prometheus time series — exported, not stored
 - The vendor’s raw webhook — not persisted (only selected `metadata` / `raw_event_type`)
+
+Path B’s on-the-wire packet **is** in-repo: `NativeSnapshot` (`POST /v1/ingest/native`). [Native snapshots](providers/native.md).
 
 Provider-specific mapping tables: [Vapi](providers/vapi.md), [Retell](providers/retell.md), [Bland](providers/bland.md), [Realtime](providers/openai-realtime.md).

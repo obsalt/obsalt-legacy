@@ -1,6 +1,6 @@
 from obsalt.tracing.context import extract_traceparent, inject_traceparent
 from obsalt.tracing.conventions import JOIN_KEYS, SPAN_CALL
-from obsalt.tracing.emitter import emit_call_trace
+from obsalt.tracing.emitter import emit_call_trace, emit_eval_spans, record_call_metrics
 from obsalt.tracing.events import turn_completed_event
 from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.tracing.setup import setup_tracing
@@ -12,6 +12,8 @@ __all__ = [
     "VoiceCallTracer",
     "VoiceMetrics",
     "emit_call_trace",
+    "emit_eval_spans",
+    "record_call_metrics",
     "extract_traceparent",
     "inject_traceparent",
     "setup_tracing",

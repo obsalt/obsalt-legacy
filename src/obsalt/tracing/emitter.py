@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Mapping
+
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
 
 from obsalt.domain.enums import LatencyComponent, Speaker, ToolStatus
 from obsalt.domain.models import CanonicalCall, ToolInvocation, Turn
 from obsalt.tracing import conventions as c
+from obsalt.tracing.context import extract_traceparent
+from obsalt.tracing.conventions import join_attributes
 from obsalt.tracing.evidence import recording_artifact_id, transcript_artifact_id
 from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.tracing.tracer import VoiceCallTracer, to_unix_ns
@@ -55,9 +61,10 @@ def emit_call_trace(call: CanonicalCall, *, metrics: VoiceMetrics | None = None,
     llm_provider = c.known_provider((call.metadata or {}).get("llm_provider"))
 
     tracer = VoiceCallTracer.start(
-        call_id=call.id,
+        call_id=call.provider_call_id,
         workspace_id=call.org_id,
         agent_id=call.agent_id,
+        provider=call.provider,
         start_ns=to_unix_ns(call.started_at),
         end_ns=to_unix_ns(call.ended_at),
         extra_attributes=extra,
@@ -221,3 +228,103 @@ def _attach_tools(call: CanonicalCall) -> dict[int, list[ToolInvocation]]:
             idx = agent_turns[-1].index if agent_turns else 0
         by_turn.setdefault(idx, []).append(tool)
     return by_turn
+
+
+_STAGE_BY_COMPONENT = {
+    LatencyComponent.STT: "stt",
+    LatencyComponent.LLM: "llm",
+    LatencyComponent.TTS: "tts",
+    LatencyComponent.E2E: "e2e",
+    LatencyComponent.TTFA: "ttfa",
+    LatencyComponent.TOOL: "tool",
+}
+
+
+def record_call_metrics(
+    call: CanonicalCall, metrics: VoiceMetrics, *, environment: str = "prod"
+) -> None:
+    """Prometheus-safe metrics from evidence. Used when live spans already went out."""
+    outcome = (
+        "error"
+        if call.status.value == "error"
+        else (call.hangup.reason.value if call.hangup else call.status.value)
+    )
+    metrics.record_call(agent=call.agent_id, environment=environment, outcome=outcome)
+    for sample in call.latency_samples:
+        stage = _STAGE_BY_COMPONENT.get(sample.component)
+        if stage:
+            metrics.record_stage(stage, sample.duration_ms, agent=call.agent_id, environment=environment)
+    stt_provider = c.known_provider((call.metadata or {}).get("stt_provider")) or "unknown"
+    for turn in call.turns:
+        if turn.confidence is not None and turn.confidence < 0.7:
+            metrics.record_low_confidence(
+                agent=call.agent_id, stt_provider=stt_provider, environment=environment
+            )
+    for tool in call.tools:
+        if tool.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}:
+            metrics.record_tool_failure(
+                agent=call.agent_id,
+                tool_name=tool.name,
+                failure_type=tool.status.value,
+                environment=environment,
+            )
+    for result in call.evals:
+        if not result.passed:
+            metrics.record_assertion_failure(
+                agent=call.agent_id, assertion_type=result.rubric_name, environment=environment
+            )
+    for _flag in call.hallucinations:
+        metrics.record_assertion_failure(
+            agent=call.agent_id, assertion_type="hallucination", environment=environment
+        )
+
+
+def emit_eval_spans(
+    call: CanonicalCall,
+    *,
+    headers: Mapping[str, str],
+    metrics: VoiceMetrics | None = None,
+    environment: str = "prod",
+) -> None:
+    """Attach eval / hallucination spans to an already-exported live ``call.lifecycle``."""
+    del metrics, environment  # recorded separately via record_call_metrics
+    ctx = extract_traceparent(dict(headers))
+    join = join_attributes(
+        call.id, call.org_id, call.agent_id, provider_call_id=call.provider_call_id
+    )
+    extra = {
+        c.EVIDENCE_TRANSCRIPT_ID: transcript_artifact_id(call),
+        c.EVIDENCE_RECORDING_ID: recording_artifact_id(call),
+        c.EVIDENCE_REDACTION: "redacted",
+        "voice.runtime": call.provider.value,
+    }
+    tracer = trace.get_tracer("obsalt.voice")
+
+    def _eval_span(assertion_id: str, *, passed: bool, score: float, fail_type: str) -> None:
+        attrs = {
+            **join,
+            **{k: v for k, v in extra.items() if v is not None},
+            c.ASSERTION_ID: assertion_id,
+            c.ASSERTION_RESULT: "pass" if passed else "fail",
+            c.ASSERTION_SCORE: score,
+        }
+        span = tracer.start_span(c.SPAN_EVAL, context=ctx, kind=SpanKind.INTERNAL, attributes=attrs)
+        if not passed:
+            span.set_status(Status(StatusCode.ERROR, fail_type))
+            span.set_attribute(c.ERROR_TYPE, fail_type)
+        span.end()
+
+    for result in call.evals:
+        _eval_span(
+            result.rubric_id,
+            passed=result.passed,
+            score=result.score,
+            fail_type="assertion_failed",
+        )
+    for flag in call.hallucinations:
+        _eval_span(
+            f"hallucination.{flag.kind.value}",
+            passed=False,
+            score=flag.confidence,
+            fail_type="hallucination",
+        )

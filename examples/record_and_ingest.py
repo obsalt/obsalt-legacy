@@ -1,4 +1,4 @@
-"""Record a call in-process and POST evidence to a running obsalt server."""
+"""Record a call in-process with no OpenTelemetry and POST evidence to obsalt serve."""
 
 from __future__ import annotations
 

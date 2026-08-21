@@ -82,7 +82,7 @@ OBSALT_API_KEYS=acme:sk_live_acme,beta:sk_live_beta
 - The **secret** is what clients send (`X-API-Key` or `Authorization: Bearer`).
 - The **org** becomes `workspace.id` on spans and `org_id` on stored calls.
 - Two orgs must not share a secret (`obsalt doctor` fails if they do).
-- `CallRecorder(org_id=...)` is a client-side label only. The server trusts the API key, not the snapshot.
+- `CallRecorder(org_id=...)` / `VoiceCall(workspace_id=...)` must use the **same** tenant as the API key if you want Tempo `call.id` to equal `GET /v1/calls/{id}`. The server trusts the API key, not the snapshot body, for `org_id`.
 
 ### Auth behavior
 
@@ -134,7 +134,7 @@ obsalt parse ./call.json --json              # full CanonicalCall
 
 ## Library configuration
 
-The HTTP server calls `setup_tracing` when `otlp_endpoint` is set. Agent processes that only use the SDK must call it themselves:
+The HTTP server calls `setup_tracing` when `otlp_endpoint` is set. Agent processes (Path B) that only use the SDK must call it themselves:
 
 ```python
 from obsalt import setup_tracing, Settings
@@ -147,4 +147,4 @@ setup_tracing(
 )
 ```
 
-Tests should pass an in-memory exporter and `batch=False` so spans flush immediately. See [Instrument an agent](instrumentation.md).
+Tests should pass an in-memory exporter and `batch=False` so spans flush immediately. See [Instrument an agent](instrumentation.md) and [Custom agents](custom-agents.md).

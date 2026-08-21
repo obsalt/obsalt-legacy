@@ -12,7 +12,7 @@ from obsalt.domain.enums import (
     parse_provider,
     speaker_from,
 )
-from obsalt.domain.models import CanonicalCall, LatencySample, ToolInvocation, Turn
+from obsalt.domain.models import CanonicalCall, LatencySample, NativeSnapshot, ToolInvocation, Turn
 from obsalt.domain.redact import payload_shape, preview_text, redact_value
 from obsalt.util import call_id_for, canonical_json, new_id, sha256_text, utcnow
 
@@ -39,40 +39,25 @@ class TurnSpan:
         self.tts_ms: float | None = None
         self.tts_ttfb_ms: float | None = None
         self.interrupted = False
+        self.confidence: float | None = None
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:
         elapsed = self.timer.stop()
-        t_ms = self._tracer.now_ms()
-        turn = Turn(
-            index=len(self._tracer.call.turns),
-            speaker=self.speaker,
-            text=self.text,
+        self._tracer.record_turn(
+            self.speaker,
+            self.text,
             duration_ms=elapsed,
-            seconds_from_start=max(0.0, (t_ms - elapsed) / 1000.0),
             stt_ms=self.stt_ms,
             llm_ms=self.llm_ms,
             llm_ttft_ms=self.llm_ttft_ms,
             tts_ms=self.tts_ms,
             tts_ttfb_ms=self.tts_ttfb_ms,
-            time_to_first_audio_ms=self.tts_ttfb_ms or self.llm_ttft_ms,
             interrupted=self.interrupted,
+            confidence=self.confidence,
         )
-        self._tracer.call.turns.append(turn)
-        for component, value, extra in (
-            (LatencyComponent.STT, self.stt_ms, {}),
-            (LatencyComponent.LLM, self.llm_ms, {"ttft_ms": self.llm_ttft_ms}),
-            (LatencyComponent.TTS, self.tts_ms, {"ttfb_ms": self.tts_ttfb_ms}),
-            (LatencyComponent.TTFA, turn.time_to_first_audio_ms, {}),
-            (LatencyComponent.E2E, turn.time_to_first_audio_ms, {}),
-        ):
-            if value is None:
-                continue
-            self._tracer.call.latency_samples.append(
-                LatencySample(component=component, duration_ms=value, turn_index=turn.index, source="sdk", **extra)
-            )
 
 
 class ToolSpan:
@@ -106,20 +91,15 @@ class ToolSpan:
         ttt = None
         if last_user and last_user.seconds_from_start is not None:
             ttt = max(0.0, self._tracer.now_ms() - last_user.seconds_from_start * 1000.0)
-        stored_args = redact_value(None, self.arguments)
-        self._tracer.call.tools.append(
-            ToolInvocation(
-                id=self.id,
-                name=self.name,
-                duration_ms=elapsed,
-                time_to_tool_ms=ttt,
-                status=self.status,
-                payload_shape=payload_shape(self.arguments),
-                argument_hash=sha256_text(canonical_json(stored_args)),
-                error=self.error,
-                result_preview=preview_text(self.result),
-                metadata={"arguments": stored_args},
-            )
+        self._tracer.record_tool(
+            self.name,
+            self.arguments,
+            duration_ms=elapsed,
+            time_to_tool_ms=ttt,
+            status=self.status,
+            error=self.error,
+            result=self.result,
+            tool_id=self.id,
         )
 
 
@@ -129,7 +109,8 @@ class CallRecorder:
     Use this when you do not want to emit OpenTelemetry from the agent process.
     The ingest server stores the snapshot as evidence and reconstructs traces.
 
-    To emit spans in-process instead, use ``obsalt.tracing.VoiceCallTracer``.
+    For live spans **and** evidence from one object, use ``obsalt.VoiceCall``.
+    To emit spans only, use ``obsalt.VoiceCallTracer``.
     """
 
     def __init__(
@@ -141,6 +122,7 @@ class CallRecorder:
         agent_id: str = "unknown",
         agent_name: str | None = None,
         system_prompt: str = "",
+        recording_url: str | None = None,
     ) -> None:
         provider_enum = parse_provider(provider)
         provider_call_id = call_id or new_id()
@@ -153,6 +135,7 @@ class CallRecorder:
             agent_id=agent_id,
             agent_name=agent_name,
             started_at=utcnow(),
+            recording_url=recording_url,
         )
         if system_prompt:
             self.call.grounding.system_prompt = system_prompt
@@ -167,28 +150,123 @@ class CallRecorder:
     def tool(self, name: str, arguments: Any | None = None) -> ToolSpan:
         return ToolSpan(self, name, arguments)
 
-    def snapshot(self, *, hangup_reason: str | None = "completed", final: bool = True) -> dict[str, Any]:
+    def record_turn(
+        self,
+        speaker: Speaker | str,
+        text: str = "",
+        *,
+        duration_ms: float | None = None,
+        stt_ms: float | None = None,
+        llm_ms: float | None = None,
+        llm_ttft_ms: float | None = None,
+        tts_ms: float | None = None,
+        tts_ttfb_ms: float | None = None,
+        interrupted: bool = False,
+        confidence: float | None = None,
+        seconds_from_start: float | None = None,
+    ) -> Turn:
+        sp = speaker if isinstance(speaker, Speaker) else speaker_from(speaker)
+        elapsed = duration_ms if duration_ms is not None else 0.0
+        t_ms = self.now_ms()
+        start_s = seconds_from_start
+        if start_s is None:
+            start_s = max(0.0, (t_ms - elapsed) / 1000.0)
+        turn = Turn(
+            index=len(self.call.turns),
+            speaker=sp,
+            text=text,
+            duration_ms=elapsed,
+            seconds_from_start=start_s,
+            stt_ms=stt_ms,
+            llm_ms=llm_ms,
+            llm_ttft_ms=llm_ttft_ms,
+            tts_ms=tts_ms,
+            tts_ttfb_ms=tts_ttfb_ms,
+            time_to_first_audio_ms=tts_ttfb_ms or llm_ttft_ms,
+            interrupted=interrupted,
+            confidence=confidence,
+        )
+        self.call.turns.append(turn)
+        for component, value, extra in (
+            (LatencyComponent.STT, stt_ms, {}),
+            (LatencyComponent.LLM, llm_ms, {"ttft_ms": llm_ttft_ms}),
+            (LatencyComponent.TTS, tts_ms, {"ttfb_ms": tts_ttfb_ms}),
+            (LatencyComponent.TTFA, turn.time_to_first_audio_ms, {}),
+            (LatencyComponent.E2E, turn.time_to_first_audio_ms, {}),
+        ):
+            if value is None:
+                continue
+            self.call.latency_samples.append(
+                LatencySample(component=component, duration_ms=value, turn_index=turn.index, source="sdk", **extra)
+            )
+        return turn
+
+    def record_tool(
+        self,
+        name: str,
+        arguments: Any | None = None,
+        *,
+        duration_ms: float | None = None,
+        time_to_tool_ms: float | None = None,
+        status: ToolStatus = ToolStatus.SUCCESS,
+        error: str | None = None,
+        result: Any | None = None,
+        tool_id: str | None = None,
+    ) -> ToolInvocation:
+        stored_args = redact_value(None, arguments or {})
+        invocation = ToolInvocation(
+            id=tool_id or new_id(),
+            name=name,
+            duration_ms=duration_ms,
+            time_to_tool_ms=time_to_tool_ms,
+            status=status,
+            payload_shape=payload_shape(arguments or {}),
+            argument_hash=sha256_text(canonical_json(stored_args)),
+            error=error,
+            result_preview=preview_text(result),
+            metadata={"arguments": stored_args},
+        )
+        self.call.tools.append(invocation)
+        return invocation
+
+    def snapshot(
+        self,
+        *,
+        hangup_reason: str | None = "completed",
+        final: bool = True,
+        spans_exported: bool = False,
+        traceparent: str | None = None,
+        recording_url: str | None = None,
+    ) -> dict[str, Any]:
         self.call.ended_at = utcnow()
         if self.call.started_at and self.call.ended_at:
             self.call.duration_ms = (self.call.ended_at - self.call.started_at).total_seconds() * 1000.0
         self.call.transcript_text = "\n".join(f"{t.speaker.value}: {t.text}" for t in self.call.turns if t.text)
-        payload = {
-            "provider": self.call.provider.value,
-            "call_id": self.call.provider_call_id,
-            "agent_id": self.call.agent_id,
-            "agent_name": self.call.agent_name,
-            "started_at": self.call.started_at.isoformat() if self.call.started_at else None,
-            "ended_at": self.call.ended_at.isoformat() if self.call.ended_at else None,
-            "duration_ms": self.call.duration_ms,
-            "hangup_reason": hangup_reason,
-            "final": final,
-            "transcript_text": self.call.transcript_text,
-            "grounding": {"system_prompt": self.call.grounding.system_prompt, "knowledge": self.call.grounding.knowledge},
-            "turns": [t.model_dump(mode="json") for t in self.call.turns],
-            "tools": [t.model_dump(mode="json") for t in self.call.tools],
-            "latency_samples": [s.model_dump(mode="json") for s in self.call.latency_samples],
-        }
-        return payload
+        if recording_url:
+            self.call.recording_url = recording_url
+        payload = NativeSnapshot(
+            provider=self.call.provider.value,
+            call_id=self.call.provider_call_id,
+            agent_id=self.call.agent_id,
+            agent_name=self.call.agent_name,
+            started_at=self.call.started_at.isoformat() if self.call.started_at else None,
+            ended_at=self.call.ended_at.isoformat() if self.call.ended_at else None,
+            duration_ms=self.call.duration_ms,
+            hangup_reason=hangup_reason,
+            final=final,
+            transcript_text=self.call.transcript_text,
+            grounding={
+                "system_prompt": self.call.grounding.system_prompt,
+                "knowledge": self.call.grounding.knowledge,
+            },
+            turns=[t.model_dump(mode="json") for t in self.call.turns],
+            tools=[t.model_dump(mode="json") for t in self.call.tools],
+            latency_samples=[s.model_dump(mode="json") for s in self.call.latency_samples],
+            recording_url=self.call.recording_url,
+            spans_exported=spans_exported,
+            traceparent=traceparent,
+        )
+        return payload.model_dump(mode="json")
 
     def send(self, client: Any, **snapshot_kwargs: Any) -> Any:
         """POST this snapshot through an ``ObsaltClient`` (or anything with ``ingest_native``)."""

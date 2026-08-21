@@ -2,7 +2,7 @@
 
 A voice trace models a **call**, not an HTTP request. One root span covers the whole conversation. Each turn is a child. Each independently failing step (STT attempt, LLM, tool, TTS) is a grandchild.
 
-This is the tree both `VoiceCallTracer` (live) and webhook ingest (reconstructed) produce.
+This is the tree both live `VoiceCall` / `VoiceCallTracer` and webhook ingest (reconstructed) produce.
 
 ## Span tree
 
@@ -67,11 +67,11 @@ Optional cascade spans (`transcript.json_parse`, `transcript.merge.fallback`) ar
 
 Copied onto **every** span:
 
-`call.id` · `workspace.id` · `agent.id` · `gen_ai.conversation.id`
+`call.id` · `call.provider_id` · `workspace.id` · `agent.id` · `gen_ai.conversation.id`
 
 Turn-scoped spans also carry `turn.index`. Optional: `room.id`, `test_run.id`, `scenario.id`.
 
-`workspace.id` is the obsalt tenant (`org_id`). `call.id` joins Tempo to `GET /v1/calls/{id}`.
+`workspace.id` is the obsalt tenant (`org_id`). `call.id` is uuid5(org, provider, your id) and joins Tempo to `GET /v1/calls/{id}`. `call.provider_id` is your room / SIP / Vapi id.
 
 ## Debug attributes
 

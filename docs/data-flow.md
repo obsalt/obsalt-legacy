@@ -1,6 +1,6 @@
 # Data flow
 
-This page is the motion picture for [Architecture](architecture.md) and [Data model](data-model.md): what happens to a byte of JSON, and what happens to a live span.
+Motion picture for [Architecture](architecture.md). Two paths, then join keys.
 
 ## Path A — hosted webhook (server reconstructs the trace)
 
@@ -13,69 +13,58 @@ sequenceDiagram
   participant Pipe as Finalize
   participant OTLP as Your collector
 
-  P->>API: POST /v1/ingest/{provider}<br/>X-API-Key + HMAC
-  API->>API: secret → org_id
+  P->>API: POST /v1/ingest/{provider}<br/>vendor JSON + HMAC
+  API->>API: API key → org_id
   API->>Ad: parse(payload, org_id)
   Ad-->>API: CanonicalCall + terminal?
-  API->>Store: get_by_provider_id (merge if seen)
   alt live event
     API->>Store: upsert (not finalized)
     API-->>P: accepted | merged
   else terminal event
-    API->>Pipe: latency, tools, hangup,<br/>hallucinations, rubrics
-    Pipe->>Store: upsert finalized + search index
+    API->>Pipe: latency, tools, hangup, evals
+    Pipe->>Store: upsert + search index
     Pipe->>OTLP: call.lifecycle tree<br/>(historical start/end)
     API-->>P: finalized + call_id
   end
 ```
 
-**Live** (Vapi `status-update`, `transcript`, `tool-calls`; Bland `category=latency`): merge into the existing call, do not run evals, do not emit a full tree.
+There is no `VoiceCall` in the vendor process. There is no CallRecorder snapshot. The vendor JSON *is* the packet.
 
-**Terminal** (`end-of-call-report`, `call_ended`, Bland post-call, native `final: true`): analyze once. Re-POSTing the same terminal payload is idempotent (`created: false`) and re-finalizes.
+**Live** (Vapi `status-update`, Bland `category=latency`): merge, no evals, no full tree.
 
-The obsalt `call_id` in the response is what you pass to `GET /v1/calls/{id}` and what appears as `call.id` on every span.
+**Terminal** (`end-of-call-report`, `call_ended`, Bland post-call): analyze once. Re-POST is idempotent.
 
-## Path B — in-process SDK (client emits the trace)
+## Path B — VoiceCall (live spans + optional snapshot)
 
 ```mermaid
 sequenceDiagram
-  participant Loop as Your audio loop
-  participant SDK as VoiceCallTracer
+  participant Loop as Pipecat / your loop
+  participant VC as VoiceCall
   participant OTLP as Your collector
-
-  Loop->>SDK: VoiceCallTracer.start(call_id, workspace_id, agent_id)
-  SDK->>OTLP: call.lifecycle (start)
-  Loop->>SDK: turn → stt / llm / tool / tts
-  SDK->>OTLP: child spans as they end
-  Loop->>SDK: set_call_outcome(...)
-  SDK->>OTLP: root ends
-```
-
-Nothing is written to `/v1/calls` on this path. The collector sees a waterfall in real time. Search and evals need Path C as well.
-
-## Path C — native snapshot (client records, server analyzes)
-
-```mermaid
-sequenceDiagram
-  participant Loop as Your audio loop
-  participant Rec as CallRecorder
-  participant CLI as ObsaltClient
   participant API as obsalt serve
 
-  Loop->>Rec: turn("user", text) / tool(...)
-  Rec->>Rec: snapshot(hangup_reason="completed")
-  Rec->>CLI: send(client)
-  CLI->>API: POST /v1/ingest/native
-  Note over API: same Path A terminal flow
+  Loop->>VC: VoiceCall.start(call_id, workspace_id, ...)
+  VC->>OTLP: call.lifecycle (live)
+  Loop->>VC: turn / stt / llm / tts
+  VC->>OTLP: child spans as they end
+  VC->>API: POST /v1/ingest/native<br/>snapshot spans_exported=true
+  Note over API: evidence + evals.<br/>No second call.lifecycle
+  API->>OTLP: evaluation.assertion_check<br/>parented via traceparent
 ```
 
-`CallRecorder.turn("assistant", ...)` is accepted (`assistant` → agent). Tool argument values are redacted before the snapshot leaves the process.
+`workspace_id` must equal the API key’s org or `call.id` on spans will not match `GET /v1/calls/{id}`.
 
-You can run Path B and Path C on the same call. Use the **same** `call_id` / provider call id if you want humans to join them; live spans still will not appear in the evidence store automatically.
+### Path B traces-only
+
+Omit `client=`. Nothing is written to `/v1/calls`. Tempo still shows a waterfall.
+
+### Path B evidence-only (no OTel in-process)
+
+`CallRecorder` → `POST /v1/ingest/native` with `spans_exported: false`. The server reconstructs the tree (same as Path A).
 
 ## Path D — OpenAI Realtime event batch
 
-Your sidecar (not OpenAI) POSTs `{ "session_id", "events": [ { "type", "t_ms", ... }, ... ] }` to `/v1/ingest/openai-realtime`. The adapter derives STT, TTFA, tools from event pairs. See [OpenAI Realtime](providers/openai-realtime.md).
+Your sidecar POSTs `{ "session_id", "events": [ { "type", "t_ms", ... } ] }` to `/v1/ingest/openai-realtime`. See [OpenAI Realtime](providers/openai-realtime.md).
 
 ## Merge rules (live + terminal)
 
@@ -89,29 +78,25 @@ Calls are keyed by `(org_id, provider, provider_call_id)`.
 | Tools | Same tool id updated (pending → success/error) |
 | Latency samples | Appended, de-duplicated by component + turn + ms |
 
-A Bland `TTS: 218ms` live line plus a post-call transcript becomes one finalized call with both the 218 ms sample and turn-gap TTFA.
-
 ## Reconstruction timestamps
 
-`emit_call_trace` does not use “now”. It sets span `start_time` / `end_time` from `started_at` + `seconds_from_start` + per-turn durations so Tempo shows the real call. If those fields are missing, child spans still nest correctly but may collapse toward the root window.
-
-Eval and hallucination spans are attached to the same root after the turns.
+`emit_call_trace` does not use “now”. It sets span `start_time` / `end_time` from `started_at` + `seconds_from_start` + per-turn durations. Path B live spans already have real times.
 
 ## Join keys on every span
 
-Copied onto **every** span (live or reconstructed):
-
-`call.id` · `workspace.id` · `agent.id` · `gen_ai.conversation.id`
+`call.id` · `call.provider_id` · `workspace.id` · `agent.id` · `gen_ai.conversation.id`
 
 Turn-scoped spans also carry `turn.index`.
 
 ```mermaid
 flowchart LR
   Tempo["Tempo span<br/>call.id = 3f1a…"] --> API["GET /v1/calls/3f1a…"]
-  API --> Evidence["transcript, hangup,<br/>hallucinations, evals"]
+  Tempo2["call.provider_id = room-42"] --> API2["GET /v1/calls?provider_call_id=room-42"]
+  API --> Evidence["transcript, hangup, evals"]
+  API2 --> Evidence
 ```
 
-## Auth and tenancy in the flow
+## Auth and tenancy
 
 ```mermaid
 flowchart TD
@@ -124,8 +109,8 @@ flowchart TD
   Call --> Iso["GET /v1/calls filters by org_id"]
 ```
 
-A Retell call ingested as org `acme` is invisible to org `beta` even if they guess the uuid. `workspace.id` on the trace is `acme`.
+A Retell call ingested as org `acme` is invisible to org `beta` even if they guess the uuid.
 
 ## What never flows onto spans
 
-Transcript text, prompts, tool arguments, tool results, phone numbers, emails. The pipeline redacts tool argument **values** in evidence as well. Spans may carry `evidence.transcript_id` (hash of the transcript) so you can prove which recording you opened without putting the words in Tempo.
+Transcript text, prompts, tool arguments, tool results, phone numbers, emails. Spans may carry `evidence.transcript_id` (hash of the transcript) so you can prove which recording you opened without putting the words in Tempo.

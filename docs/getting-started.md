@@ -1,17 +1,15 @@
 # Getting started
 
-This page takes you from a clone to a stored call you can search. It does **not** require Vapi, Retell, or Bland — you can parse a fixture first, then wire a real webhook.
+Pick a path **before** you install: [Choose a path](choose-a-path.md). This page gets you to a stored call you can search, or a live span you can open in Tempo.
 
 ## What you will run
 
-| Piece | Where it lives | Role |
+| Piece | Kind | Role |
 | --- | --- | --- |
-| Your agent or a hosted voice platform | Client / vendor | Places the call |
-| `obsalt serve` | Your server | Ingest, evidence, analysis |
-| An OTLP collector (optional but recommended) | Your infra | Receives traces and metrics |
-| Grafana / Tempo / Jaeger / Honeycomb | Your infra | Waterfalls and dashboards |
-
-obsalt does not include a UI. Grafana at `http://localhost:3000` is the usual local viewer.
+| Your agent **or** a hosted voice platform | Client / vendor | Places the call |
+| `obsalt serve` | HTTP server `:8080` | Ingest + evidence. Required for Path A. Optional for Path B traces-only |
+| An OTLP collector | Protocol `:4318` | Receives traces. Not obsalt. Grafana LGTM is the usual local one |
+| Grafana | UI `:3000` | Waterfalls. obsalt has no UI |
 
 ```mermaid
 sequenceDiagram
@@ -21,13 +19,15 @@ sequenceDiagram
   participant OTLP as OTLP :4318
   participant Grafana as Grafana :3000
 
-  You->>CLI: obsalt init
-  You->>CLI: obsalt doctor
-  You->>API: obsalt serve
-  You->>API: webhook or obsalt parse
-  API->>API: CanonicalCall + analysis
-  API->>OTLP: reconstructed call.lifecycle
-  You->>Grafana: open the trace by call.id
+  You->>CLI: obsalt init / doctor / serve
+  alt Path A hosted
+    You->>API: vendor webhook or fixture
+    API->>OTLP: reconstructed call.lifecycle
+  else Path B custom agent
+    You->>OTLP: VoiceCall live spans
+    You->>API: snapshot on session end
+  end
+  You->>Grafana: filter call.id
   You->>API: GET /v1/calls/{id}
 ```
 
@@ -39,13 +39,7 @@ Python 3.11+.
 git clone https://github.com/coder-with-a-bushido/obsalt.git
 cd obsalt
 pip install -e ".[dev]"
-```
-
-Check the CLI:
-
-```bash
 obsalt version
-obsalt --help
 ```
 
 ## 2. Write config
@@ -54,12 +48,7 @@ obsalt --help
 obsalt init
 ```
 
-That creates:
-
-- `obsalt.toml` — host, port, OTLP, whether auth is required
-- `.env.example` — copy to `.env` for secrets (`OBSALT_API_KEYS`, webhook HMAC)
-
-Edit the API key **before** you expose the process:
+Creates `obsalt.toml` and `.env.example`. Set a real API key before you expose the process:
 
 ```toml
 [auth]
@@ -67,29 +56,25 @@ api_keys = "acme:a-long-random-secret"
 require_auth = true
 ```
 
-Environment variables override the file. Full reference: [Configuration](configuration.md).
+[Configuration](configuration.md).
 
-## 3. (Recommended) local OpenTelemetry backend
-
-[Grafana LGTM](https://github.com/grafana/docker-otel-lgtm) is an all-in-one collector + Grafana + Tempo + Prometheus + Loki:
+## 3. Local OpenTelemetry backend (recommended)
 
 ```bash
 docker run --rm --name lgtm \
   -p 3000:3000 \
   -p 4317:4317 \
-  -p 4318:4318 \
-  grafana/otel-lgtm
+  -p 4318:4318 grafana/otel-lgtm
 ```
 
 | Port | What |
 | --- | --- |
-| 4318 | OTLP HTTP — this is `OBSALT_OTLP_ENDPOINT` |
-| 4317 | OTLP gRPC (optional) |
+| 4318 | OTLP HTTP — `OBSALT_OTLP_ENDPOINT` and `setup_tracing(otlp_endpoint=...)` |
 | 3000 | Grafana (admin / admin on a fresh LGTM) |
 
-obsalt appends `/v1/traces` and `/v1/metrics` to the base URL. Keep `otlp_endpoint = "http://localhost:4318"`.
+obsalt appends `/v1/traces` and `/v1/metrics`. Keep `otlp_endpoint = "http://localhost:4318"`.
 
-You can skip this step. Evidence and evals still work; reconstructed spans have nowhere to go.
+Skip this and evidence still works; spans have nowhere to go.
 
 ## 4. Doctor, then serve
 
@@ -98,46 +83,15 @@ obsalt doctor
 obsalt serve
 ```
 
-You should see something like:
+`GET /health` (no auth) reports `otlp_configured`, `require_auth`, `store: memory`. Interactive API: `http://localhost:8080/docs`.
 
-```text
-obsalt 0.1.0  ingest & evidence API
-  listen     http://127.0.0.1:8080
-  openapi    http://127.0.0.1:8080/docs
-  health     http://127.0.0.1:8080/health
-  otlp       http://localhost:4318
-  auth       open — set OBSALT_REQUIRE_AUTH=true before production
-  orgs       acme
-  store      in-memory (calls vanish on restart)
-```
-
-`GET /health` (no auth):
-
-```json
-{
-  "status": "ok",
-  "service": "obsalt",
-  "version": "0.1.0",
-  "otlp_configured": true,
-  "require_auth": false,
-  "environment": "dev",
-  "store": "memory"
-}
-```
-
-`obsalt --port 8080` is the same as `obsalt serve --port 8080`.
-
-## 5. Ingest a call without a vendor account
-
-The repo ships recorded provider payloads. Parse one without running the server:
+## 5. Path A — ingest without a vendor account
 
 ```bash
 obsalt parse tests/fixtures/vapi_end_of_call.json
 ```
 
-You get a summary: hangup taxonomy, tools, hallucination flags, eval scores. `--json` prints the full `CanonicalCall`. `--provider` is only needed when auto-detect guesses wrong.
-
-To store it in a running server (default key from `obsalt init` is `change-me`):
+Store it:
 
 ```bash
 curl -X POST http://localhost:8080/v1/ingest/vapi \
@@ -146,58 +100,55 @@ curl -X POST http://localhost:8080/v1/ingest/vapi \
   -d @tests/fixtures/vapi_end_of_call.json
 
 curl -H "X-API-Key: change-me" http://localhost:8080/v1/calls
-curl -H "X-API-Key: change-me" "http://localhost:8080/v1/search?q=refund"
 ```
 
-Interactive API: `http://localhost:8080/docs`.
+Real dashboards: [Vapi](providers/vapi.md) · [Retell](providers/retell.md) · [Bland](providers/bland.md).
 
-## 6. Wire a real provider **or** instrument your loop
-
-**Hosted platform** — create a public URL (ngrok, Cloudflare Tunnel, your cluster) and follow the dashboard steps:
-
-| Platform | obsalt path | Guide |
-| --- | --- | --- |
-| Vapi | `/v1/ingest/vapi` | [Vapi](providers/vapi.md) |
-| Retell | `/v1/ingest/retell` | [Retell](providers/retell.md) |
-| Bland | `/v1/ingest/bland` | [Bland](providers/bland.md) |
-
-Also send `X-API-Key` if `require_auth` is true. Provider HMAC is a second check (`OBSALT_VAPI_SECRET`, `OBSALT_RETELL_SECRET`, `OBSALT_BLAND_SECRET`).
-
-**You own STT / LLM / TTS:**
+## 6. Path B — instrument your loop
 
 ```python
-from obsalt import VoiceCallTracer, setup_tracing
+from obsalt import VoiceCall, ObsaltClient, setup_tracing
 
 setup_tracing(otlp_endpoint="http://localhost:4318")
+
+with VoiceCall.start(
+    call_id="room-1",
+    workspace_id="acme",
+    agent_id="support",
+    client=ObsaltClient(api_key="change-me"),
+) as call:
+    with call.turn(0, "user", text="hello") as turn:
+        with turn.stt("deepgram") as stt:
+            stt.set(latency_ms=120, confidence=0.9)
+    call.set_call_outcome(status="ended")
 ```
 
-See [Instrument an agent](instrumentation.md) and [Custom agents](providers/custom-agent.md). Copy [examples/instrument_agent.py](../examples/instrument_agent.py).
+Copy [examples/instrument_agent.py](../examples/instrument_agent.py). Pipecat: [Custom agents](custom-agents.md).
 
-**Evidence without in-process OTel:** [examples/record_and_ingest.py](../examples/record_and_ingest.py) and [Native snapshots](providers/native.md).
+`workspace_id` must be the org for that API key (`acme` above).
 
 ## 7. Look at the result
 
 | Question | Where |
 | --- | --- |
-| Where did 1.8s go on this turn? | Tempo / Jaeger — filter `call.id` |
+| Where did 1.8s go? | Tempo — filter `call.id` |
 | What did the agent say? | `GET /v1/calls/{id}` |
-| Did we invent an order number? | `hallucinations[]` on that call |
-| Are refunds hanging up angry? | `GET /v1/hangups` |
-| Is Deepgram P95 over budget? | Prometheus `voice_response_latency_seconds` or `GET /v1/latency` |
+| Invented an order number? | `hallucinations[]` |
+| Refund hangups? | `GET /v1/hangups` |
+| Deepgram P95? | Prometheus or `GET /v1/latency` |
 
-Join key between Grafana and obsalt: **`call.id`** on every span = the id returned by ingest.
-
-Worked stories: [Scenarios](scenarios.md).
+Join key: **`call.id`**. Your room id is `call.provider_id`. [What you can see](what-you-see.md).
 
 ## Common failures
 
 | Symptom | Likely cause |
 | --- | --- |
-| `401 invalid api key` | Secret does not match `OBSALT_API_KEYS`; or `REQUIRE_AUTH=true` and you omitted the header |
-| `401 invalid vapi/retell/bland signature` | HMAC secret set in obsalt but not on the provider, or the wrong header |
-| `422 missing call id` | Payload is not that provider's webhook — `obsalt parse FILE --provider …` to debug |
-| Health `otlp_configured: false` | `OBSALT_OTLP_ENDPOINT` / `[export] otlp_endpoint` unset |
+| `401 invalid api key` | Secret ≠ `OBSALT_API_KEYS` |
+| `401 invalid vapi/retell/bland signature` | HMAC secret mismatch |
+| `422 missing call id` | Wrong provider payload — `obsalt parse FILE` |
+| Health `otlp_configured: false` | `OBSALT_OTLP_ENDPOINT` unset (server reconstruct path) |
+| Tempo empty on Path B | Agent never called `setup_tracing` |
+| Live waterfall exists, `/v1/search` empty | No snapshot POST — pass `client=` to `VoiceCall` or `observer.close()` |
+| Two `call.lifecycle` roots for one call | Old dual `VoiceCallTracer` + `CallRecorder` without `spans_exported`. Use `VoiceCall` |
+| `GET /v1/calls/{id}` 404 but Tempo shows the room id | You filtered Tempo on `call.provider_id`. Use `call.id`, or `GET /v1/calls?provider_call_id=` |
 | Calls vanish after restart | In-memory store — expected in v0.1 |
-| Live waterfall exists, `/v1/search` is empty | `VoiceCallTracer` does not write evidence — also POST a `CallRecorder` snapshot |
-
-Next: [Architecture](architecture.md) if you want the split of responsibilities, or [Configuration](configuration.md) if you are putting this on a real host.

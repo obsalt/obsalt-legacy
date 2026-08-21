@@ -10,6 +10,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 
+from obsalt.domain.enums import Provider, parse_provider
 from obsalt.tracing.context import extract_traceparent
 from obsalt.tracing.conventions import (
     ASSERTION_ID,
@@ -58,6 +59,7 @@ from obsalt.tracing.conventions import (
     tool_span_name,
     turn_span_name,
 )
+from obsalt.util import call_id_for
 
 _SET_ALIASES: dict[str, tuple[str, ...]] = {
     "confidence": (STT_CONFIDENCE,),
@@ -254,6 +256,13 @@ class SpanHandle:
 class VoiceCallTracer(SpanHandle):
     """Root ``call.lifecycle`` span with helpers for turns, STT, LLM, TTS, and tools.
 
+    ``call_id`` is **your** id (Pipecat room, SIP Call-ID, session id). obsalt
+    stamps ``call.id`` as ``uuid5(workspace_id, provider, call_id)`` so Tempo
+    can join ``GET /v1/calls/{call.id}``. Your original id is ``call.provider_id``.
+
+    This class only emits OpenTelemetry spans. It is not a server. For traces
+    **and** evidence, use ``obsalt.VoiceCall``.
+
     Usage::
 
         with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support") as call:
@@ -263,10 +272,26 @@ class VoiceCallTracer(SpanHandle):
             call.set_call_outcome(duration_ms=45_000, status="ended")
     """
 
-    def __init__(self, span: Span, join: dict[str, Any], *, end_ns: int | None = None) -> None:
+    def __init__(
+        self,
+        span: Span,
+        join: dict[str, Any],
+        *,
+        end_ns: int | None = None,
+        obsalt_call_id: str,
+        provider_call_id: str,
+        workspace_id: str,
+        agent_id: str,
+        provider: Provider,
+    ) -> None:
         super().__init__(span, self, end_ns=end_ns)
         self._join = join
         self._turn_index: int | None = None
+        self.obsalt_call_id = obsalt_call_id
+        self.provider_call_id = provider_call_id
+        self.workspace_id = workspace_id
+        self.agent_id = agent_id
+        self.provider = provider
 
     @classmethod
     def start(
@@ -275,6 +300,7 @@ class VoiceCallTracer(SpanHandle):
         workspace_id: str,
         agent_id: str,
         *,
+        provider: Provider | str = Provider.NATIVE,
         start_ns: int | None = None,
         end_ns: int | None = None,
         extra_attributes: Mapping[str, Any] | None = None,
@@ -284,8 +310,17 @@ class VoiceCallTracer(SpanHandle):
         parent = context
         if parent is None and headers:
             parent = extract_traceparent(dict(headers))
-        join = join_attributes(call_id, workspace_id, agent_id)
+        provider_enum = parse_provider(provider)
+        provider_call_id = call_id
+        obsalt_id = call_id_for(workspace_id, provider_enum.value, provider_call_id)
+        join = join_attributes(
+            obsalt_id,
+            workspace_id,
+            agent_id,
+            provider_call_id=provider_call_id,
+        )
         attrs = dict(join)
+        attrs["voice.runtime"] = provider_enum.value
         attrs.update(_drop_none(extra_attributes))
         kwargs: dict[str, Any] = {}
         if start_ns is not None:
@@ -294,7 +329,16 @@ class VoiceCallTracer(SpanHandle):
             kwargs["context"] = parent
         tracer = trace.get_tracer("obsalt.voice")
         span = tracer.start_span(name=SPAN_CALL, kind=SpanKind.SERVER, attributes=attrs, **kwargs)
-        return cls(span, dict(join), end_ns=end_ns)
+        return cls(
+            span,
+            dict(join),
+            end_ns=end_ns,
+            obsalt_call_id=obsalt_id,
+            provider_call_id=provider_call_id,
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            provider=provider_enum,
+        )
 
     def _child(
         self,

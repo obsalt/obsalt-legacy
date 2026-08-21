@@ -28,6 +28,7 @@ SPAN_EVAL = "evaluation.assertion_check"
 
 # --- Join keys (every span) ---
 CALL_ID = "call.id"
+PROVIDER_CALL_ID = "call.provider_id"
 WORKSPACE_ID = "workspace.id"
 AGENT_ID = "agent.id"
 ROOM_ID = "room.id"
@@ -92,7 +93,7 @@ METRIC_ASSERT_FAIL = "voice_assertion_failures_total"
 
 LATENCY_BUCKETS = (0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0)
 
-JOIN_KEYS = (CALL_ID, WORKSPACE_ID, AGENT_ID, CONVERSATION_ID)
+JOIN_KEYS = (CALL_ID, PROVIDER_CALL_ID, WORKSPACE_ID, AGENT_ID, CONVERSATION_ID)
 
 TURN_SPEAKER = "turn.speaker"
 AUDIO_PLAYOUT_MS = "audio.playout_ms"
@@ -138,13 +139,20 @@ def join_attributes(
     *,
     turn_index: int | None = None,
     conversation_id: str | None = None,
+    provider_call_id: str | None = None,
 ) -> dict[str, str | int]:
-    """Identity keys copied onto every span so traces can join evidence."""
+    """Identity keys copied onto every span so traces can join evidence.
+
+    ``call_id`` is the obsalt id (uuid5 of org + provider + your call id).
+    ``provider_call_id`` is the id you already have (room, SIP, Vapi call id).
+    """
+    your_id = provider_call_id or conversation_id or call_id
     attrs: dict[str, str | int] = {
         CALL_ID: call_id,
+        PROVIDER_CALL_ID: your_id,
         WORKSPACE_ID: workspace_id,
         AGENT_ID: agent_id,
-        CONVERSATION_ID: conversation_id or call_id,
+        CONVERSATION_ID: conversation_id or your_id,
     }
     if turn_index is not None:
         attrs[TURN_INDEX] = int(turn_index)

@@ -23,7 +23,7 @@ sequenceDiagram
 | `t_ms` clock | **You** — milliseconds from session start, or `obsalt_received_at` timestamps |
 | Evidence + reconstructed trace | `obsalt serve` |
 
-If you already wrap each event in `VoiceCallTracer` live, you may skip this ingest path and only POST a `CallRecorder` snapshot for evidence. This adapter is for teams that collect the official event stream and want obsalt to infer timings.
+If you already wrap each event in `VoiceCall` live, skip this ingest path and let `VoiceCall` POST a snapshot for evidence. This adapter is for teams that collect the official event stream and want obsalt to infer timings.
 
 ## Setup
 
@@ -84,5 +84,5 @@ You should see STT 170 ms, a successful `create_booking`, grounded `HTL-4421` / 
 
 ## Related
 
-- Live spans from the same sidecar: [Instrument an agent](../instrumentation.md)
+- Live spans from the same sidecar: [Custom agents](../custom-agents.md) / [Instrument an agent](../instrumentation.md)
 - Snapshot without event algebra: [Native](native.md)

@@ -78,9 +78,21 @@ class ObsaltClient:
     def ingest_native(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.ingest(Provider.NATIVE, payload)
 
-    def list_calls(self, *, agent_id: str | None = None) -> dict[str, Any]:
-        params = {"agent_id": agent_id} if agent_id else None
-        response = self._http.get("/v1/calls", params=params)
+    def list_calls(
+        self,
+        *,
+        agent_id: str | None = None,
+        provider_call_id: str | None = None,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {}
+        if agent_id:
+            params["agent_id"] = agent_id
+        if provider_call_id:
+            params["provider_call_id"] = provider_call_id
+        if provider:
+            params["provider"] = provider
+        response = self._http.get("/v1/calls", params=params or None)
         response.raise_for_status()
         return response.json()
 

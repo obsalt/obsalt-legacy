@@ -1,10 +1,12 @@
 # Scenarios
 
-These are the stories the rest of the docs compress. Each one names what you run, what you send, and what you should see in Tempo vs `GET /v1/calls`.
+These are the stories the rest of the docs compress. Each one names the **path** (hosted vs custom agent), what you send, and what you should see in Tempo vs `GET /v1/calls`.
+
+Path A = vendor webhook. Path B = `VoiceCall` in your process. [Choose a path](choose-a-path.md).
 
 ## 1. Ada calls Vapi support and is quoted a fake order number
 
-**Setup.** You run `obsalt serve` with `OBSALT_API_KEYS=acme:secret` and Vapi’s Server URL = `https://obsalt.example/v1/ingest/vapi`. [Vapi setup](providers/vapi.md).
+**Setup.** Path A. You run `obsalt serve` with `OBSALT_API_KEYS=acme:secret` and Vapi’s Server URL = `https://obsalt.example/v1/ingest/vapi`. [Vapi setup](providers/vapi.md).
 
 **Call.** Ada: “I want a refund.” The assistant calls `lookup_order` (email in the arguments). The tool returns `not_found`. The model still says it processed **ORD-99999** for **$48.50**. Ada: “That number is wrong. This is useless.” She hangs up.
 
@@ -27,14 +29,14 @@ The fixture that produces this: `tests/fixtures/vapi_end_of_call.json`. `obsalt 
 
 ## 2. Your Pipecat agent falls back from Deepgram to Azure
 
-**Setup.** No webhook. The agent process calls `setup_tracing(otlp_endpoint=...)` and `VoiceCallTracer`. [Custom agents](providers/custom-agent.md).
+**Setup.** Path B. The agent process calls `setup_tracing` and `VoiceCall` (or `ObsaltObserver`). [Custom agents](custom-agents.md).
 
 **Call.** User speaks. Deepgram times out. Azure returns text, confidence 0.91. LLM and TTS succeed.
 
 **What you write.**
 
 ```python
-with call.turn(0, "user") as turn:
+with call.turn(0, "user", text=text) as turn:
     with turn.stt("deepgram") as stt:
         with stt.provider_attempt("deepgram") as attempt:
             attempt.fail("timeout")
@@ -42,9 +44,9 @@ with call.turn(0, "user") as turn:
             attempt.set(latency_ms=400, confidence=0.91)
 ```
 
-**What Tempo shows.** `stt.transcription` with children `stt.provider.deepgram` (ERROR) and `stt.provider.fallback.azure`. obsalt will **not** invent a fallback on a Vapi ingest — only your SDK path can express two hops.
+**What Tempo shows.** `stt.transcription` with children `stt.provider.deepgram` (ERROR) and `stt.provider.fallback.azure`. obsalt will **not** invent a fallback on a Vapi ingest — only Path B can express two hops.
 
-**Evidence.** Still empty until you `CallRecorder.snapshot()` and POST native. If you only care about the waterfall, skip that.
+**Evidence.** Empty until the snapshot is POSTed (`client=` on `VoiceCall`, or `observer.close()`). If you only care about the waterfall, skip that.
 
 ## 3. Retell billing bot looks up an invoice that exists
 
@@ -93,13 +95,13 @@ Fixture: `tests/fixtures/openai_realtime_session.json`.
 
 The web gateway starts `VoiceCallTracer.start(..., agent_id="web")`, injects `traceparent` on the queue message. The worker does `VoiceCallTracer.start(..., headers=headers, agent_id="worker")` and runs `call.evaluate("grounded-claims")`.
 
-Tempo shows **one** trace. `workspace.id` and `call.id` match. The worker still does not write evidence; the ingest server does, if you also snapshot.
+Tempo shows **one** trace. `workspace.id`, `call.id`, and `call.provider_id` match. The worker still does not write evidence; `VoiceCall(..., client=)` or a snapshot does.
 
 ## Choosing a scenario as a template
 
 | If you… | Copy |
 | --- | --- |
 | Pay Vapi / Retell / Bland | Scenario 1, 3, or 4 + the matching provider page |
-| Own the loop and care about fallbacks | Scenario 2 |
+| Own the loop (Pipecat) and care about fallbacks | Scenario 2 + [Custom agents](custom-agents.md) |
 | Use gpt-realtime / WebRTC | Scenario 5 |
 | Split ingest and eval across services | Scenario 6 |

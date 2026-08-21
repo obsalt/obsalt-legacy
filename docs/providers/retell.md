@@ -1,6 +1,8 @@
 # Retell
 
-Use this page when **Retell AI** places the call. obsalt consumes Retell’s agent webhooks. It does not sit in Retell’s media path.
+Use this page when **Retell AI** places the call (**Path A**). obsalt consumes Retell’s agent webhooks. It does not sit in Retell’s media path.
+
+If you run Pipecat yourself, this is the wrong page — [Custom agents](../custom-agents.md).
 
 ## Architecture
 

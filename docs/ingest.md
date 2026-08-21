@@ -1,14 +1,16 @@
 # Ingest webhooks
 
-Use this guide when a **hosted platform** runs the call and you receive webhooks — or when you want obsalt to store evidence and run analysis.
+Use this guide for **Path A**: a hosted platform runs the call and you receive webhooks.
+
+Path B (Pipecat / your loop) does not use these vendor URLs. Use [Custom agents](custom-agents.md) and [Native snapshots](providers/native.md).
 
 The server:
 
-1. Accepts a provider payload.
+1. Accepts a provider payload (vendor JSON, or a native snapshot).
 2. Normalizes it to a `CanonicalCall`.
-3. On a terminal event: analyzes the call, stores evidence, and reconstructs the same span tree the SDK would have emitted.
+3. On a terminal event: analyzes the call, stores evidence, and — unless `spans_exported` — reconstructs the span tree.
 
-If you own STT/LLM/TTS in-process and only need a waterfall, use [Instrument an agent](instrumentation.md) instead.
+If you own STT/LLM/TTS in-process, use [Custom agents](custom-agents.md) instead.
 
 Provider-by-provider dashboard steps, headers, and field maps:
 
@@ -67,7 +69,7 @@ Most vendor dashboards **cannot** send `X-API-Key`. Use HMAC + a private listene
 | Retell | `POST /v1/ingest/retell` | `call_ended` |
 | Bland | `POST /v1/ingest/bland` | Post-call webhook; live `category=latency` events merge |
 | OpenAI Realtime | `POST /v1/ingest/openai-realtime` | Batch of session events, each with `t_ms` |
-| Native | `POST /v1/ingest/native` | `CallRecorder.snapshot()` from your code |
+| Native | `POST /v1/ingest/native` | `VoiceCall` / `CallRecorder.snapshot()` from your code |
 
 ```bash
 curl -X POST http://localhost:8080/v1/ingest/vapi \
@@ -112,16 +114,16 @@ After a terminal event, hangup taxonomy, hallucination flags, and rubrics attach
 
 ## Native snapshots
 
-See [Native snapshots](providers/native.md) for `CallRecorder` + `ObsaltClient`. Short form:
+See [Native snapshots](providers/native.md). Short form with `VoiceCall`:
 
 ```python
-from obsalt import CallRecorder, ObsaltClient
+from obsalt import VoiceCall, ObsaltClient, setup_tracing
 
-rec = CallRecorder(provider="openai_realtime", call_id=session_id, agent_id="concierge")
-with rec.turn("user", "book Friday") as turn:
-    turn.stt_ms = 120
-payload = rec.snapshot(hangup_reason="completed")
-ObsaltClient(api_key="secret").ingest_native(payload)
+setup_tracing(otlp_endpoint="http://localhost:4318")
+with VoiceCall.start(call_id=session_id, workspace_id="acme", agent_id="concierge", client=ObsaltClient(api_key="secret")) as call:
+    with call.turn(0, "user", text="book Friday") as turn:
+        with turn.stt("deepgram") as stt:
+            stt.set(latency_ms=120)
 ```
 
 ## Look up a call
