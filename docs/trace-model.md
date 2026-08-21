@@ -6,6 +6,26 @@ This is the tree both `VoiceCallTracer` (live) and webhook ingest (reconstructed
 
 ## Span tree
 
+```mermaid
+flowchart TD
+  root["call.lifecycle"]
+  t0["turn.0"]
+  t1["turn.1"]
+  root --> t0
+  root --> t1
+  root --> wh["webhook.dispatch"]
+  root --> tf["transcript.finalization"]
+  root --> ev["evaluation.assertion_check"]
+  t0 --> vad["vad.end_of_utterance"]
+  t0 --> stt["stt.transcription"]
+  stt --> dg["stt.provider.deepgram"]
+  stt --> az["stt.provider.fallback.azure"]
+  t0 --> llm["llm.inference"]
+  llm --> tool["llm.tool_call.check_inventory"]
+  t0 --> tts["tts.synthesis"]
+  t0 --> play["audio.playout"]
+```
+
 ```
 call.lifecycle
 ├── turn.0

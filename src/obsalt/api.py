@@ -5,6 +5,7 @@ import json
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from obsalt._version import __version__
 from obsalt.config import Settings
 from obsalt.domain.enums import Provider
 from obsalt.evals.judges import new_rubric
@@ -48,21 +49,28 @@ def create_app(
     settings = settings or Settings()
     store = store or MemoryStore()
     if settings.otlp_endpoint:
-        _, _, otel_metrics = setup_tracing(otlp_endpoint=settings.otlp_endpoint, batch=True)
-        pipeline = pipeline or IngestPipeline(store=store, metrics=otel_metrics)
+        _, _, otel_metrics = setup_tracing(
+            otlp_endpoint=settings.otlp_endpoint,
+            batch=True,
+            service_name=settings.service_name,
+            environment=settings.environment,
+        )
+        pipeline = pipeline or IngestPipeline(
+            store=store, metrics=otel_metrics, environment=settings.environment
+        )
     else:
-        pipeline = pipeline or IngestPipeline(store=store)
+        pipeline = pipeline or IngestPipeline(store=store, environment=settings.environment)
 
     app = FastAPI(
         title="obsalt",
-        version="0.1.0",
+        version=__version__,
         description=(
-            "Ingest voice-agent calls and look up evidence. "
-            "Traces export over OpenTelemetry to Tempo, Jaeger, or Honeycomb. "
+            "Ingest voice-agent calls (Vapi, Retell, Bland, OpenAI Realtime, native) "
+            "and look up evidence. Traces export over OpenTelemetry. "
             "This API is not a dashboard."
         ),
         openapi_tags=[
-            {"name": "health", "description": "Liveness."},
+            {"name": "health", "description": "Liveness and operator-safe config."},
             {"name": "ingest", "description": "Provider webhooks and native snapshots."},
             {"name": "calls", "description": "Evidence lookup, search, and rollups."},
             {"name": "evals", "description": "Rubrics scored against stored calls."},
@@ -79,8 +87,16 @@ def create_app(
         return _org_from_key(settings, authorization, x_api_key)
 
     @app.get("/health", tags=["health"])
-    def health() -> dict[str, str]:
-        return {"status": "ok", "service": "obsalt"}
+    def health() -> dict[str, object]:
+        return {
+            "status": "ok",
+            "service": "obsalt",
+            "version": __version__,
+            "otlp_configured": bool(settings.otlp_endpoint),
+            "require_auth": settings.require_auth,
+            "environment": settings.environment,
+            "store": "memory",
+        }
 
     async def _ingest(provider: Provider, request: Request, org_id: str):
         body = await request.body()
@@ -92,7 +108,13 @@ def create_app(
         if provider == Provider.BLAND and not verify_bland(headers, settings.bland_secret):
             raise HTTPException(status_code=401, detail="invalid bland signature")
         try:
-            payload = json.loads(body.decode("utf-8") or "null")
+            text = body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=400, detail="body must be utf-8 json") from exc
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="json object required")
+        try:
+            payload = json.loads(text)
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=400, detail="invalid json") from exc
         if not isinstance(payload, dict):

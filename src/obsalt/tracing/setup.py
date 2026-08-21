@@ -8,6 +8,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
 
+from obsalt._version import __version__
 from obsalt.tracing.metrics import VoiceMetrics
 
 
@@ -35,13 +36,17 @@ def setup_tracing(
     metric_reader: InMemoryMetricReader | PeriodicExportingMetricReader | None = None,
     otlp_endpoint: str | None = None,
     batch: bool = True,
+    environment: str | None = None,
 ) -> tuple[TracerProvider, MeterProvider | None, VoiceMetrics]:
     """Configure process-wide providers.
 
     Production uses BatchSpanProcessor + OTLP. Tests pass in-memory exporters
     and batch=False (SimpleSpanProcessor) so spans flush immediately.
     """
-    resource = Resource.create({"service.name": service_name, "service.version": "0.1.0"})
+    resource_attrs = {"service.name": service_name, "service.version": __version__}
+    if environment:
+        resource_attrs["deployment.environment"] = environment
+    resource = Resource.create(resource_attrs)
     tracer_provider = TracerProvider(resource=resource)
     if span_exporter is not None:
         processor = BatchSpanProcessor(span_exporter) if batch else SimpleSpanProcessor(span_exporter)

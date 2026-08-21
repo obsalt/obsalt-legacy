@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from obsalt.adapters.base import AdapterResult, empty_call, speaker_from, transcript_from_turns
-from obsalt.domain.enums import CallDirection, CallStatus, LatencyComponent, Provider, Speaker, ToolStatus
+from obsalt.adapters.base import AdapterResult, empty_call, transcript_from_turns
+from obsalt.domain.enums import (
+    CallDirection,
+    CallStatus,
+    LatencyComponent,
+    Provider,
+    Speaker,
+    ToolStatus,
+)
 from obsalt.domain.models import Hangup, LatencySample, ToolInvocation, Turn
 from obsalt.domain.redact import payload_shape, preview_text
 from obsalt.hangup.taxonomy import annotate_hangup, classify_provider_reason

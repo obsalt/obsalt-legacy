@@ -4,9 +4,16 @@ import time
 from types import TracebackType
 from typing import Any, Self
 
-from obsalt.domain.enums import LatencyComponent, Provider, Speaker, ToolStatus
+from obsalt.domain.enums import (
+    LatencyComponent,
+    Provider,
+    Speaker,
+    ToolStatus,
+    parse_provider,
+    speaker_from,
+)
 from obsalt.domain.models import CanonicalCall, LatencySample, ToolInvocation, Turn
-from obsalt.domain.redact import payload_shape, preview_text
+from obsalt.domain.redact import payload_shape, preview_text, redact_value
 from obsalt.util import call_id_for, canonical_json, new_id, sha256_text, utcnow
 
 
@@ -99,6 +106,7 @@ class ToolSpan:
         ttt = None
         if last_user and last_user.seconds_from_start is not None:
             ttt = max(0.0, self._tracer.now_ms() - last_user.seconds_from_start * 1000.0)
+        stored_args = redact_value(None, self.arguments)
         self._tracer.call.tools.append(
             ToolInvocation(
                 id=self.id,
@@ -107,10 +115,10 @@ class ToolSpan:
                 time_to_tool_ms=ttt,
                 status=self.status,
                 payload_shape=payload_shape(self.arguments),
-                argument_hash=sha256_text(canonical_json(self.arguments)),
+                argument_hash=sha256_text(canonical_json(stored_args)),
                 error=self.error,
                 result_preview=preview_text(self.result),
-                metadata={"arguments": self.arguments},
+                metadata={"arguments": stored_args},
             )
         )
 
@@ -134,7 +142,7 @@ class CallRecorder:
         agent_name: str | None = None,
         system_prompt: str = "",
     ) -> None:
-        provider_enum = provider if isinstance(provider, Provider) else Provider(provider)
+        provider_enum = parse_provider(provider)
         provider_call_id = call_id or new_id()
         self._t0 = time.perf_counter()
         self.call = CanonicalCall(
@@ -153,7 +161,7 @@ class CallRecorder:
         return (time.perf_counter() - self._t0) * 1000.0
 
     def turn(self, speaker: Speaker | str, text: str = "") -> TurnSpan:
-        sp = speaker if isinstance(speaker, Speaker) else Speaker(speaker)
+        sp = speaker if isinstance(speaker, Speaker) else speaker_from(speaker)
         return TurnSpan(self, sp, text)
 
     def tool(self, name: str, arguments: Any | None = None) -> ToolSpan:
@@ -171,6 +179,7 @@ class CallRecorder:
             "agent_name": self.call.agent_name,
             "started_at": self.call.started_at.isoformat() if self.call.started_at else None,
             "ended_at": self.call.ended_at.isoformat() if self.call.ended_at else None,
+            "duration_ms": self.call.duration_ms,
             "hangup_reason": hangup_reason,
             "final": final,
             "transcript_text": self.call.transcript_text,
@@ -180,3 +189,7 @@ class CallRecorder:
             "latency_samples": [s.model_dump(mode="json") for s in self.call.latency_samples],
         }
         return payload
+
+    def send(self, client: Any, **snapshot_kwargs: Any) -> Any:
+        """POST this snapshot through an ``ObsaltClient`` (or anything with ``ingest_native``)."""
+        return client.ingest_native(self.snapshot(**snapshot_kwargs))

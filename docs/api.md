@@ -1,8 +1,10 @@
 # HTTP API
 
-Base URL: the host you pass to `obsalt --port` (default `http://localhost:8080`).
+Base URL: the host you pass to `obsalt serve` (default `http://localhost:8080`).
 
 Interactive docs: `GET /docs`. This API is ingest and evidence lookup. It is not a dashboard.
+
+Python: `ObsaltClient` (`from obsalt import ObsaltClient`) wraps these routes.
 
 ## Auth
 
@@ -18,8 +20,9 @@ Every `/v1/*` route reads a secret and maps it to `org_id`.
 - Valid secret → that org.
 - `OBSALT_REQUIRE_AUTH=true` and missing/invalid secret → `401`.
 - `REQUIRE_AUTH` off and no key → first configured org, or `demo`.
+- Any unknown secret → `401` even if `REQUIRE_AUTH` is off.
 
-Provider webhook HMAC is checked in addition to this. See [Ingest webhooks](ingest.md).
+Provider webhook HMAC is checked in addition to this. See [Ingest webhooks](ingest.md) and each [provider page](providers/index.md).
 
 ## Ingest
 
@@ -37,6 +40,8 @@ Body: JSON object (the provider’s webhook, or a `CallRecorder` snapshot).
 
 Errors: `400` invalid JSON, `401` auth/HMAC, `422` payload missing a call id.
 
+Tool argument **values** are redacted before the call is stored. Shapes remain.
+
 ## Calls
 
 `GET /v1/calls?agent_id=`
@@ -45,7 +50,7 @@ List summaries for the org, newest first: id, provider, agent, status, duration,
 
 `GET /v1/calls/{call_id}`
 
-Full `CanonicalCall` JSON: turns, tools, latency samples, hangup, hallucinations, evals, grounding, recording URL, transcript.
+Full `CanonicalCall` JSON: turns, tools, latency samples, hangup, hallucinations, evals, grounding, recording URL, transcript. See [Data model](data-model.md).
 
 `404` if the id is missing or belongs to another org.
 
@@ -83,4 +88,16 @@ The default `HeuristicJudge` scores from words in `description` (`hallucin`, `la
 
 ## Health
 
-`GET /health` → `{ "status": "ok", "service": "obsalt" }` (no auth).
+`GET /health` (no auth):
+
+```json
+{
+  "status": "ok",
+  "service": "obsalt",
+  "version": "0.1.0",
+  "otlp_configured": true,
+  "require_auth": false,
+  "environment": "dev",
+  "store": "memory"
+}
+```

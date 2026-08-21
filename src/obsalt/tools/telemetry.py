@@ -29,11 +29,15 @@ def parse_arguments(raw: Any) -> Any:
 
 
 def enrich_tool(tool: ToolInvocation, arguments: Any | None = None, result: Any | None = None) -> ToolInvocation:
-    parsed = parse_arguments(arguments) if arguments is not None else parse_arguments(tool.metadata.get("arguments"))
-    shape = payload_shape(parsed)
-    tool.payload_shape = shape
-    redacted = redact_value(None, parsed)
-    tool.argument_hash = sha256_text(canonical_json({"shape": shape, "args": redacted}))
+    raw_args = arguments if arguments is not None else tool.metadata.get("arguments")
+    parsed = parse_arguments(raw_args) if raw_args not in (None, "") else None
+    if parsed not in (None, {}, []):
+        tool.payload_shape = payload_shape(parsed)
+        redacted = redact_value(None, parsed)
+        tool.metadata["arguments"] = redacted
+        tool.argument_hash = sha256_text(canonical_json({"shape": tool.payload_shape, "args": redacted}))
+    elif tool.payload_shape is None:
+        tool.payload_shape = payload_shape(parsed or {})
     if result is not None and tool.result_preview is None:
         tool.result_preview = preview_text(result)
     if tool.status == ToolStatus.PENDING and result is not None:

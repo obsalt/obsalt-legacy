@@ -10,6 +10,7 @@ build/
 .venv/
 venv/
 .env
+obsalt.toml
 *.db
 *.sqlite
 .coverage

@@ -4,21 +4,25 @@ Use this guide when **your process** owns STT, the LLM, tools, and TTS — Pipec
 
 You will emit OpenTelemetry spans as the conversation happens. obsalt does not need to be running as a server for this path.
 
-If a hosted platform (Vapi, Retell, Bland) runs the call, skip this page and use [Ingest webhooks](ingest.md).
+If a hosted platform (Vapi, Retell, Bland) runs the call, skip this page and use the [provider guides](providers/index.md).
+
+Pipecat / LiveKit sketches: [Custom agents](providers/custom-agent.md). Runnable file: [examples/instrument_agent.py](../examples/instrument_agent.py).
 
 ## 1. Configure export
 
 ```python
-from obsalt.tracing import setup_tracing
+from obsalt import setup_tracing
 
-setup_tracing(otlp_endpoint="http://localhost:4318")
+setup_tracing(otlp_endpoint="http://localhost:4318", environment="dev")
 ```
+
+`setup_tracing` is process-wide. The HTTP server calls it automatically when `OBSALT_OTLP_ENDPOINT` is set; agent processes must call it themselves.
 
 Production uses `BatchSpanProcessor`. Tests should pass an in-memory exporter and `batch=False` so spans flush immediately:
 
 ```python
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from obsalt.tracing import setup_tracing
+from obsalt import setup_tracing
 
 exporter = InMemorySpanExporter()
 setup_tracing(span_exporter=exporter, batch=False)
@@ -27,7 +31,7 @@ setup_tracing(span_exporter=exporter, batch=False)
 ## 2. Open a call, then a turn
 
 ```python
-from obsalt.tracing import VoiceCallTracer
+from obsalt import VoiceCallTracer
 
 with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support") as call:
     with call.turn(0, "user") as turn:
@@ -56,7 +60,7 @@ Open a child span around each independently failing step. If Deepgram times out 
 with stt.provider_attempt("deepgram") as attempt:
     attempt.fail("timeout")
 with stt.provider_attempt("azure", fallback=True) as attempt:
-    attempt.set(**{"stt.latency_ms": 400, "stt.confidence": 0.91})
+    attempt.set(latency_ms=400, confidence=0.91)
 ```
 
 ## 3. Continue the trace in another process
@@ -64,7 +68,8 @@ with stt.provider_attempt("azure", fallback=True) as attempt:
 A call often starts in one service and continues in another. Inject W3C `traceparent` on the way out; pass the same headers (or extracted context) into `VoiceCallTracer.start`.
 
 ```python
-from obsalt.tracing import VoiceCallTracer, inject_traceparent, extract_traceparent
+from obsalt import VoiceCallTracer
+from obsalt.tracing import inject_traceparent, extract_traceparent
 
 with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="web") as call:
     headers = inject_traceparent({})          # sets headers["traceparent"]
@@ -85,7 +90,7 @@ Third-party STT/TTS APIs will not return `traceparent`. Bracket those HTTP calls
 
 ## What not to put on spans
 
-Do not pass transcript text, prompts, tool arguments, tool results, phone numbers, or emails to `set()`. Store those as evidence (see [Ingest webhooks](ingest.md#native-snapshots)). Spans should carry timings, model names, and join keys only.
+Do not pass transcript text, prompts, tool arguments, tool results, phone numbers, or emails to `set()`. Store those as evidence (see [Native snapshots](providers/native.md)). Spans should carry timings, model names, and join keys only.
 
 ## `set()` shortcuts
 
@@ -100,9 +105,11 @@ Do not pass transcript text, prompts, tool arguments, tool results, phone number
 | `status_code` | `tool.status_code` |
 | `synthesis_ms` / `first_audio_ms` | `tts.*` |
 | `playout_ms` | `audio.playout_ms` |
+| `end_of_utterance_ms` | `vad.end_of_utterance_ms` |
+| `retry_count` | `tool.retry_count` |
 
 Any other keyword is used as the attribute name as-is.
 
 ## Evidence
 
-`VoiceCallTracer` only emits telemetry. To search transcripts or run evals, also POST a snapshot to the server with [`CallRecorder`](ingest.md#native-snapshots).
+`VoiceCallTracer` only emits telemetry. To search transcripts or run evals, also POST a snapshot with [`CallRecorder`](providers/native.md) / `ObsaltClient`.

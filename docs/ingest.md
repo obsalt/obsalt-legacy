@@ -10,15 +10,33 @@ The server:
 
 If you own STT/LLM/TTS in-process and only need a waterfall, use [Instrument an agent](instrumentation.md) instead.
 
+Provider-by-provider dashboard steps, headers, and field maps:
+
+- [Vapi](providers/vapi.md)
+- [Retell](providers/retell.md)
+- [Bland](providers/bland.md)
+- [OpenAI Realtime](providers/openai-realtime.md)
+- [Native snapshots](providers/native.md)
+
+Pipeline detail: [Data flow](data-flow.md).
+
 ## Run the server
+
+```bash
+obsalt init
+obsalt doctor
+obsalt serve --host 0.0.0.0 --port 8080
+```
+
+Equivalent env-only form:
 
 ```bash
 export OBSALT_OTLP_ENDPOINT=http://localhost:4318   # omit to skip trace export
 export OBSALT_API_KEYS=acme:secret
-obsalt --host 0.0.0.0 --port 8080
+obsalt serve --host 0.0.0.0 --port 8080
 ```
 
-Interactive OpenAPI: `http://localhost:8080/docs`. Health: `GET /health`.
+Interactive OpenAPI: `http://localhost:8080/docs`. Health: `GET /health`. Config reference: [Configuration](configuration.md).
 
 Without `OBSALT_OTLP_ENDPOINT`, evidence is still stored and analyzed. Reconstructed spans have nowhere to go.
 
@@ -39,6 +57,8 @@ Provider HMAC is separate. Empty secret = signature check skipped (local only).
 | `OBSALT_RETELL_SECRET` | `x-retell-signature` (HMAC-SHA256 of the body) |
 | `OBSALT_BLAND_SECRET` | `x-webhook-secret` or `Authorization: Bearer …` |
 
+Most vendor dashboards **cannot** send `X-API-Key`. Use HMAC + a private listener, or a proxy that injects the API key. Details on each provider page.
+
 ## Point the provider at obsalt
 
 | Provider | obsalt path | Typical trigger |
@@ -49,13 +69,17 @@ Provider HMAC is separate. Empty secret = signature check skipped (local only).
 | OpenAI Realtime | `POST /v1/ingest/openai-realtime` | Batch of session events, each with `t_ms` |
 | Native | `POST /v1/ingest/native` | `CallRecorder.snapshot()` from your code |
 
-Example:
-
 ```bash
 curl -X POST http://localhost:8080/v1/ingest/vapi \
   -H "X-API-Key: secret" \
   -H "Content-Type: application/json" \
   -d @end-of-call-report.json
+```
+
+Local dry-run (no server):
+
+```bash
+obsalt parse end-of-call-report.json
 ```
 
 Response:
@@ -80,6 +104,7 @@ Response:
 | Retell `call_ended` | `latency.asr/llm/tts.values[]` as per-turn samples, `transcript_with_tool_calls`, `disconnection_reason` | Inside-provider spans |
 | Bland post-call + `category=latency` | Transcript timestamp gaps as e2e/TTFA, `TTS: 218ms` lines, disposition | Fine-grained STT vendor |
 | OpenAI Realtime events with `t_ms` | STT = speech_stopped → transcription.completed; TTFA = speech_stopped → first audio delta; tools from function_call events | Provider-internal TTS |
+| Native snapshot | Whatever you put on `CallRecorder` | Whatever you omitted |
 
 obsalt does not invent fallbacks. One STT hop in the payload is one `stt.provider.{name}` child.
 
@@ -87,31 +112,17 @@ After a terminal event, hangup taxonomy, hallucination flags, and rubrics attach
 
 ## Native snapshots
 
-Use `CallRecorder` when you own the loop but do not want OpenTelemetry in the agent process — or when you already emit live spans and also want evidence/evals.
+See [Native snapshots](providers/native.md) for `CallRecorder` + `ObsaltClient`. Short form:
 
 ```python
-from obsalt import CallRecorder
-from obsalt.domain.enums import Speaker
-import httpx
+from obsalt import CallRecorder, ObsaltClient
 
 rec = CallRecorder(provider="openai_realtime", call_id=session_id, agent_id="concierge")
-with rec.turn(Speaker.USER, "book Friday") as turn:
+with rec.turn("user", "book Friday") as turn:
     turn.stt_ms = 120
-with rec.tool("create_booking", {"night": "Friday"}) as tool:
-    tool.set_result({"confirmation": "HTL-1"})
-with rec.turn(Speaker.AGENT, "Booked HTL-1") as turn:
-    turn.llm_ms = 300
-    turn.tts_ms = 90
 payload = rec.snapshot(hangup_reason="completed")
-
-httpx.post(
-    "http://localhost:8080/v1/ingest/native",
-    json=payload,
-    headers={"X-API-Key": "secret"},
-)
+ObsaltClient(api_key="secret").ingest_native(payload)
 ```
-
-The server reconstructs traces from this packet the same way it does for Vapi.
 
 ## Look up a call
 

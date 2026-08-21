@@ -5,14 +5,15 @@ from typing import Any
 from obsalt.adapters.registry import AdapterRegistry, merge_calls
 from obsalt.domain.enums import Provider
 from obsalt.domain.models import CanonicalCall, IngestResult
+from obsalt.domain.redact import redact_value
 from obsalt.evals.judges import HeuristicJudge, Judge
 from obsalt.hallucination.detector import detect_hallucinations
 from obsalt.hangup.analyzer import HangupAnalyzer
 from obsalt.latency.breakdown import enrich_latency
-from obsalt.tracing.emitter import emit_call_trace
-from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.store import MemoryStore, Store
 from obsalt.tools.telemetry import enrich_call_tools
+from obsalt.tracing.emitter import emit_call_trace
+from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.util import utcnow
 
 
@@ -24,12 +25,14 @@ class IngestPipeline:
         metrics: VoiceMetrics | None = None,
         judge: Judge | None = None,
         analyzer: HangupAnalyzer | None = None,
+        environment: str = "dev",
     ) -> None:
         self.store = store or MemoryStore()
         self.registry = registry or AdapterRegistry()
         self.metrics = metrics
         self.judge = judge or HeuristicJudge()
         self.analyzer = analyzer or HangupAnalyzer()
+        self.environment = environment
 
     def ingest(self, provider: Provider, payload: dict[str, Any], *, org_id: str) -> IngestResult:
         parsed = self.registry.parse(provider, payload, org_id=org_id)
@@ -40,6 +43,7 @@ class IngestPipeline:
         created = existing is None
         call = incoming if existing is None else merge_calls(existing, incoming)
         call.updated_at = utcnow()
+        _sanitize_tools(call)
 
         if parsed.terminal:
             call = self.finalize(call)
@@ -67,7 +71,7 @@ class IngestPipeline:
         call.finalized = True
         call.updated_at = utcnow()
         self.store.upsert_call(call)
-        emit_call_trace(call, metrics=self.metrics)
+        emit_call_trace(call, metrics=self.metrics, environment=self.environment)
         return call
 
     def reevaluate(self, org_id: str, call_id: str) -> CanonicalCall | None:
@@ -75,3 +79,11 @@ class IngestPipeline:
         if call is None:
             return None
         return self.finalize(call)
+
+
+def _sanitize_tools(call: CanonicalCall) -> None:
+    """Strip secrets from tool argument values as soon as a payload is stored."""
+    for tool in call.tools:
+        args = tool.metadata.get("arguments")
+        if args is not None:
+            tool.metadata["arguments"] = redact_value(None, args)

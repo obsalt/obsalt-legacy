@@ -32,7 +32,11 @@ def _client() -> TestClient:
 def test_health() -> None:
     response = TestClient(create_app()).get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "obsalt"
+    assert "version" in body
+    assert body["store"] == "memory"
 
 
 def test_ingest_to_search_latency_hangup_tools() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from obsalt.domain.enums import CallStatus, Provider, Speaker
+from obsalt.domain.enums import CallStatus, Provider
 from obsalt.domain.models import CanonicalCall, GroundingContext
 from obsalt.util import as_str, call_id_for, utcnow
 
@@ -19,21 +19,6 @@ class Adapter(Protocol):
     provider: Provider
 
     def parse(self, payload: dict[str, Any], *, org_id: str) -> AdapterResult | None: ...
-
-
-def speaker_from(role: str | None) -> Speaker:
-    if not role:
-        return Speaker.UNKNOWN
-    value = role.strip().lower()
-    if value in {"user", "customer", "human", "caller"}:
-        return Speaker.USER
-    if value in {"agent", "assistant", "bot", "ai", "model"}:
-        return Speaker.AGENT
-    if value in {"system"}:
-        return Speaker.SYSTEM
-    if value in {"tool", "function", "tool_call_result", "tool_call_invocation", "agent-action"}:
-        return Speaker.TOOL
-    return Speaker.UNKNOWN
 
 
 def empty_call(

@@ -11,6 +11,41 @@ class Provider(str, Enum):
     NATIVE = "native"
 
 
+_PROVIDER_ALIASES = {
+    "openai": "openai_realtime",
+    "realtime": "openai_realtime",
+    "openai_realtime": "openai_realtime",
+    "s2s": "openai_realtime",
+}
+
+
+def parse_provider(value: str | Provider) -> Provider:
+    if isinstance(value, Provider):
+        return value
+    slug = value.strip().lower().replace("-", "_")
+    slug = _PROVIDER_ALIASES.get(slug, slug)
+    try:
+        return Provider(slug)
+    except ValueError as exc:
+        known = ", ".join(p.value for p in Provider)
+        raise ValueError(f"Unknown provider {value!r}. Expected one of: {known}") from exc
+
+
+def speaker_from(role: str | None) -> Speaker:
+    if not role:
+        return Speaker.UNKNOWN
+    value = role.strip().lower()
+    if value in {"user", "customer", "human", "caller"}:
+        return Speaker.USER
+    if value in {"agent", "assistant", "bot", "ai", "model"}:
+        return Speaker.AGENT
+    if value in {"system"}:
+        return Speaker.SYSTEM
+    if value in {"tool", "function", "tool_call_result", "tool_call_invocation", "agent-action"}:
+        return Speaker.TOOL
+    return Speaker.UNKNOWN
+
+
 class Speaker(str, Enum):
     USER = "user"
     AGENT = "agent"
