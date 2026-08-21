@@ -1,0 +1,47 @@
+{
+  "event": "call_ended",
+  "call": {
+    "call_type": "phone_call",
+    "from_number": "+12137771234",
+    "to_number": "+12137771235",
+    "direction": "inbound",
+    "call_id": "retell-call-happy-1",
+    "agent_id": "billing-agent",
+    "agent_name": "Billing",
+    "call_status": "ended",
+    "start_timestamp": 1755777600000,
+    "end_timestamp": 1755777720000,
+    "duration_ms": 120000,
+    "disconnection_reason": "agent_hangup",
+    "transcript": "Agent: Hi, billing department.\nUser: Can you look up invoice INV-1001?\nAgent: I found invoice INV-1001 for $20.00. You're all set.\nUser: Perfect, thanks.\nAgent: Glad I could help. Goodbye.",
+    "recording_url": "https://example.com/retell/happy.wav",
+    "retell_llm_dynamic_variables": { "customer_name": "Ada" },
+    "call_cost": { "combined_cost": 42, "total_duration_seconds": 120, "total_duration_unit_price": 1, "product_costs": [] },
+    "latency": {
+      "e2e": { "p50": 620, "p95": 900, "num": 2, "values": [580, 900] },
+      "asr": { "p50": 110, "p95": 140, "num": 2, "values": [100, 140] },
+      "llm": { "p50": 300, "p95": 420, "num": 2, "values": [280, 420] },
+      "tts": { "p50": 80, "p95": 110, "num": 2, "values": [70, 110] }
+    },
+    "transcript_with_tool_calls": [
+      { "role": "agent", "content": "Hi, billing department.", "words": [{ "word": "Hi", "start": 400, "end": 700 }] },
+      { "role": "user", "content": "Can you look up invoice INV-1001?", "words": [{ "word": "Can", "start": 2100, "end": 2300 }] },
+      {
+        "role": "tool_call_invocation",
+        "tool_call_id": "tc-1",
+        "name": "lookup_invoice",
+        "arguments": "{\"invoice_id\":\"INV-1001\"}"
+      },
+      {
+        "role": "tool_call_result",
+        "tool_call_id": "tc-1",
+        "content": "{\"invoice_id\":\"INV-1001\",\"amount\":\"$20.00\",\"status\":\"paid\"}",
+        "successful": true
+      },
+      { "role": "agent", "content": "I found invoice INV-1001 for $20.00. You're all set.", "words": [{ "word": "I", "start": 4200, "end": 4300 }] },
+      { "role": "user", "content": "Perfect, thanks.", "words": [{ "word": "Perfect", "start": 8000, "end": 8400 }] },
+      { "role": "agent", "content": "Glad I could help. Goodbye.", "words": [{ "word": "Glad", "start": 9000, "end": 9300 }] }
+    ],
+    "call_analysis": { "call_summary": "Looked up a paid invoice.", "user_sentiment": "Positive", "call_successful": true }
+  }
+}

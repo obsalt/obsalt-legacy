@@ -1,0 +1,50 @@
+{
+  "session_id": "rt-session-1",
+  "agent_id": "realtime-concierge",
+  "model": "gpt-realtime",
+  "final": true,
+  "hangup_reason": "user_hangup",
+  "events": [
+    {
+      "type": "session.created",
+      "t_ms": 0,
+      "session": {
+        "model": "gpt-realtime",
+        "instructions": "Hotel concierge. Rooms cost $189 per night. Confirmation codes come from the booking tool."
+      }
+    },
+    { "type": "input_audio_buffer.speech_started", "t_ms": 400, "item_id": "user-1", "audio_start_ms": 350 },
+    { "type": "input_audio_buffer.speech_stopped", "t_ms": 1800, "item_id": "user-1", "audio_end_ms": 1750 },
+    {
+      "type": "conversation.item.input_audio_transcription.completed",
+      "t_ms": 1920,
+      "item_id": "user-1",
+      "transcript": "Can you book a room for Friday?"
+    },
+    { "type": "response.created", "t_ms": 2000, "response": { "id": "resp-1" } },
+    { "type": "response.function_call_arguments.done", "t_ms": 2300, "call_id": "fn-1", "name": "create_booking", "arguments": "{\"night\":\"Friday\"}" },
+    {
+      "type": "conversation.item.created",
+      "t_ms": 2600,
+      "item": { "type": "function_call_output", "call_id": "fn-1", "output": "{\"confirmation\":\"HTL-4421\",\"rate\":\"$189\"}" }
+    },
+    { "type": "response.audio.delta", "t_ms": 2680, "response_id": "resp-1" },
+    {
+      "type": "response.audio_transcript.done",
+      "t_ms": 3100,
+      "response_id": "resp-1",
+      "transcript": "Booked. Your confirmation is HTL-4421 at $189 a night."
+    },
+    { "type": "response.audio.done", "t_ms": 4200, "response_id": "resp-1" },
+    { "type": "response.done", "t_ms": 4250, "response_id": "resp-1", "response": { "id": "resp-1", "output": [] } },
+    { "type": "input_audio_buffer.speech_started", "t_ms": 5000, "item_id": "user-2", "audio_start_ms": 4950 },
+    { "type": "input_audio_buffer.speech_stopped", "t_ms": 6200, "item_id": "user-2", "audio_end_ms": 6150 },
+    {
+      "type": "conversation.item.input_audio_transcription.completed",
+      "t_ms": 6300,
+      "item_id": "user-2",
+      "transcript": "Great, thanks."
+    },
+    { "type": "obsalt.session_end", "t_ms": 6400, "reason": "user_hangup" }
+  ]
+}
