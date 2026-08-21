@@ -27,7 +27,7 @@ def _ingest_vapi():
     return result, store, exporter, reader
 
 
-def test_vapi_webhook_reconstructs_hamming_tree_without_pii() -> None:
+def test_vapi_webhook_reconstructs_span_tree_without_pii() -> None:
     result, store, exporter, reader = _ingest_vapi()
     spans = list(exporter.get_finished_spans())
     names = {s.name for s in spans}

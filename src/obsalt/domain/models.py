@@ -165,11 +165,3 @@ class IngestResult(BaseModel):
     status: Literal["accepted", "merged", "finalized"]
     created: bool
     finalized: bool = False
-
-
-class NativeEvent(BaseModel):
-    """Sidecar / SDK event. Timestamps are session-relative milliseconds."""
-
-    type: str
-    t_ms: float
-    payload: dict[str, Any] = Field(default_factory=dict)

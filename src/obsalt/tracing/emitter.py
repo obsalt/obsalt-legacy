@@ -41,7 +41,7 @@ def _shift(start_ns: int | None, ms: float | None) -> int | None:
 
 
 def emit_call_trace(call: CanonicalCall, *, metrics: VoiceMetrics | None = None, environment: str = "prod") -> None:
-    """Reconstruct Hamming's span tree from an evidence packet (provider webhook)."""
+    """Rebuild the conversation span tree from a stored call."""
     metrics = metrics or VoiceMetrics()
     extra = {
         c.EVIDENCE_TRANSCRIPT_ID: transcript_artifact_id(call),

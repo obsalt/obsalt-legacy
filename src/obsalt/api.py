@@ -53,7 +53,21 @@ def create_app(
     else:
         pipeline = pipeline or IngestPipeline(store=store)
 
-    app = FastAPI(title="obsalt", version="0.1.0", description="Observability for voice AI")
+    app = FastAPI(
+        title="obsalt",
+        version="0.1.0",
+        description=(
+            "Ingest voice-agent calls and look up evidence. "
+            "Traces export over OpenTelemetry to Tempo, Jaeger, or Honeycomb. "
+            "This API is not a dashboard."
+        ),
+        openapi_tags=[
+            {"name": "health", "description": "Liveness."},
+            {"name": "ingest", "description": "Provider webhooks and native snapshots."},
+            {"name": "calls", "description": "Evidence lookup, search, and rollups."},
+            {"name": "evals", "description": "Rubrics scored against stored calls."},
+        ],
+    )
     app.state.settings = settings
     app.state.store = store
     app.state.pipeline = pipeline
@@ -64,7 +78,7 @@ def create_app(
     ) -> str:
         return _org_from_key(settings, authorization, x_api_key)
 
-    @app.get("/health")
+    @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "obsalt"}
 
@@ -89,43 +103,43 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return result.model_dump()
 
-    @app.post("/v1/ingest/vapi")
+    @app.post("/v1/ingest/vapi", tags=["ingest"])
     async def ingest_vapi(request: Request, org_id: str = Depends(tenant)):
         return await _ingest(Provider.VAPI, request, org_id)
 
-    @app.post("/v1/ingest/retell")
+    @app.post("/v1/ingest/retell", tags=["ingest"])
     async def ingest_retell(request: Request, org_id: str = Depends(tenant)):
         return await _ingest(Provider.RETELL, request, org_id)
 
-    @app.post("/v1/ingest/bland")
+    @app.post("/v1/ingest/bland", tags=["ingest"])
     async def ingest_bland(request: Request, org_id: str = Depends(tenant)):
         return await _ingest(Provider.BLAND, request, org_id)
 
-    @app.post("/v1/ingest/openai-realtime")
+    @app.post("/v1/ingest/openai-realtime", tags=["ingest"])
     async def ingest_openai(request: Request, org_id: str = Depends(tenant)):
         return await _ingest(Provider.OPENAI_REALTIME, request, org_id)
 
-    @app.post("/v1/ingest/native")
+    @app.post("/v1/ingest/native", tags=["ingest"])
     async def ingest_native(request: Request, org_id: str = Depends(tenant)):
         return await _ingest(Provider.NATIVE, request, org_id)
 
-    @app.get("/v1/calls")
+    @app.get("/v1/calls", tags=["calls"])
     def list_calls(org_id: str = Depends(tenant), agent_id: str | None = Query(default=None)):
         calls = store.list_calls(org_id, agent_id=agent_id)
         return {"calls": [_call_summary(c) for c in calls], "count": len(calls)}
 
-    @app.get("/v1/calls/{call_id}")
+    @app.get("/v1/calls/{call_id}", tags=["calls"])
     def get_call(call_id: str, org_id: str = Depends(tenant)):
         call = store.get_call(org_id, call_id)
         if call is None:
             raise HTTPException(status_code=404, detail="call not found")
         return call.model_dump(mode="json")
 
-    @app.get("/v1/latency")
+    @app.get("/v1/latency", tags=["calls"])
     def latency(org_id: str = Depends(tenant), agent_id: str | None = Query(default=None)):
         return {"components": [s.model_dump() for s in store.latency_rollup(org_id, agent_id=agent_id)]}
 
-    @app.get("/v1/hangups")
+    @app.get("/v1/hangups", tags=["calls"])
     def hangups(org_id: str = Depends(tenant)):
         clusters = store.hangup_clusters(org_id)
         return {
@@ -144,7 +158,7 @@ def create_app(
             ]
         }
 
-    @app.get("/v1/tools")
+    @app.get("/v1/tools", tags=["calls"])
     def tools(org_id: str = Depends(tenant), agent_id: str | None = Query(default=None)):
         return {
             "tools": [
@@ -161,27 +175,27 @@ def create_app(
             ]
         }
 
-    @app.post("/v1/search")
+    @app.post("/v1/search", tags=["calls"])
     def search(body: SearchIn, org_id: str = Depends(tenant)):
         hits = store.search(org_id, body.query, limit=body.limit)
         return {"hits": [{"call_id": h.call_id, "score": h.score, "snippet": h.snippet} for h in hits]}
 
-    @app.get("/v1/search")
+    @app.get("/v1/search", tags=["calls"])
     def search_get(q: str = Query(min_length=1), limit: int = 10, org_id: str = Depends(tenant)):
         hits = store.search(org_id, q, limit=limit)
         return {"hits": [{"call_id": h.call_id, "score": h.score, "snippet": h.snippet} for h in hits]}
 
-    @app.get("/v1/evals")
+    @app.get("/v1/evals", tags=["evals"])
     def list_evals(org_id: str = Depends(tenant)):
         return {"rubrics": [r.model_dump(mode="json") for r in store.list_rubrics(org_id)]}
 
-    @app.post("/v1/evals/rubrics")
+    @app.post("/v1/evals/rubrics", tags=["evals"])
     def create_rubric(body: RubricIn, org_id: str = Depends(tenant)):
         rubric = new_rubric(org_id, body.name, body.description, body.threshold)
         store.upsert_rubric(rubric)
         return rubric.model_dump(mode="json")
 
-    @app.post("/v1/evals/run/{call_id}")
+    @app.post("/v1/evals/run/{call_id}", tags=["evals"])
     def run_eval(call_id: str, org_id: str = Depends(tenant)):
         call = pipeline.reevaluate(org_id, call_id)
         if call is None:

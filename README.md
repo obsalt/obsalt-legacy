@@ -1,82 +1,50 @@
 # obsalt
 
-Voice-agent observability using Hamming’s [3-layer OpenTelemetry model](https://hamming.ai/resources/opentelemetry-voice-agents-tracing-guide): a conversation-shaped span tree, voice-specific attributes, and one export plane (`traceparent` + OTLP).
+Observability for voice AI agents.
 
-This is **not** a dashboard product. Grafana / Tempo / Prometheus / Loki are the UI. obsalt is the voice span SDK, the provider-webhook reconstruction into that same tree, and an evidence store (transcripts, recordings, hangup/hallucination/eval analysis) joined by `call.id`.
+obsalt records each call as an OpenTelemetry **trace** (where time went) and an **evidence** record (what was said). It is both:
 
-Purpose-built for **Vapi**, **Retell**, **Bland**, OpenAI Realtime, and custom stacks (Pipecat, LiveKit).
+1. A **Python SDK** you call from agent code.
+2. An **HTTP server** you point provider webhooks at.
 
-## Why not Langfuse / generic GenAI tracing?
+It is **not** a dashboard. Traces and metrics go to Grafana, Tempo, Jaeger, Honeycomb, or any OpenTelemetry backend. The HTTP API is ingest plus lookup.
 
-A voice turn is not a chat completion. Time-to-first-audio is VAD + STT + LLM TTFT + TTS TTFB. Hamming’s point: LLM dashboards stay green while users hear silence, because the failure was an STT fallback, a language-routing decision, or a transcript that never finalized.
+## Which integration?
 
-OpenTelemetry GenAI conventions cover `llm.inference` and tools. They do **not** standardize STT, TTS, VAD, barge-in, or SIP. obsalt uses GenAI names on LLM/tool spans and Hamming’s voice names everywhere else.
+| You run | Use |
+| --- | --- |
+| Your own STT / LLM / TTS loop (Pipecat, LiveKit, custom) | [Instrument the agent](docs/instrumentation.md) with `VoiceCallTracer` |
+| **Vapi**, **Retell**, or **Bland** | [Run the ingest server](docs/ingest.md) and point the provider's webhook at it |
+| OpenAI Realtime (event batch with `t_ms`) | `POST /v1/ingest/openai-realtime` |
+| The loop, but you do not want OpenTelemetry in-process | [`CallRecorder`](docs/ingest.md#native-snapshots) → `POST /v1/ingest/native` |
 
-## Three layers
+The SDK emits spans as the conversation happens. The server reconstructs the **same** span tree from webhooks after the call, stores the transcript, and runs hangup / hallucination / eval analysis.
 
-```
- Live VoiceCallTracer          Vapi / Retell / Bland / Realtime webhooks
-        │                                    │
-        │  live spans                        │  reconstruct the same tree
-        └────────────────┬───────────────────┘
-                         ▼
-              call.lifecycle
-                turn.{i}
-                  vad.end_of_utterance
-                  stt.transcription
-                    stt.provider.{name}
-                    stt.provider.fallback.{name}
-                  llm.inference          gen_ai.operation.name=chat
-                    llm.tool_call.{name} gen_ai.operation.name=execute_tool
-                  tts.synthesis
-                  audio.playout
-                webhook.dispatch
-                transcript.finalization
-                evaluation.assertion_check
-                         ▼
-         OTLP ──► Tempo / Jaeger / Honeycomb
-         OTLP ──► Prometheus  (no call_id labels)
-         JSON ──► Loki        (canonical_call_id in the body)
-         pointers ──► evidence store
-```
+Live spans never land in the evidence store on their own. If you want both a live waterfall **and** search/evals, instrument with `VoiceCallTracer` and also POST a `CallRecorder` snapshot.
 
-Join keys on every span: `call.id`, `workspace.id`, `agent.id`, `gen_ai.conversation.id`. Turn-scoped spans also carry `turn.index`.
-
-**Hamming 12** (debugging attributes, not PII): `stt.provider` `stt.confidence` `stt.latency_ms` `llm.model` `llm.ttft_ms` `llm.tokens.input` `llm.tokens.output` `tts.provider` `tts.synthesis_ms` `tool.name` `tool.execution_ms` `call.duration_ms`.
-
-Spans are reviewer-safe by default. Transcripts, prompts, tool arguments/results, emails, and phone numbers stay in the evidence packet. Spans carry `evidence.transcript_id` / `evidence.recording_id` / `evidence.redaction_state=redacted`.
-
-Docs: [trace model](docs/trace-model.md) · [live instrumentation](docs/instrumentation.md) · [provider ingest](docs/provider-ingest.md) · [Grafana routing](docs/grafana.md) · [rewrite plan](docs/rewrite-plan.md)
-
-## Quick start
+## Install
 
 ```bash
 pip install -e ".[dev]"
-OBSALT_OTLP_ENDPOINT=http://localhost:4318 obsalt --port 8080
 ```
 
-Point Vapi’s Server URL at `POST /v1/ingest/vapi`, Retell at `/v1/ingest/retell`, Bland at `/v1/ingest/bland`. For OpenAI Realtime, stamp `t_ms` on each event and `POST /v1/ingest/openai-realtime`.
+Requires Python 3.11+.
 
-Auth: `OBSALT_API_KEYS=acme:secret` (format `org:secret,...`). Webhook HMAC: `OBSALT_VAPI_SECRET`, `OBSALT_RETELL_SECRET`, `OBSALT_BLAND_SECRET`.
+## Quick start: instrument an agent
 
-The HTTP API is ingest + evidence lookup (`/v1/calls/{id}`, search, hangups, latency rollups). The waterfall lives in Tempo.
-
-## Live SDK (you own STT/LLM/TTS)
+Use this when **your process** owns STT, the LLM, tools, and TTS.
 
 ```python
-from obsalt.tracing import VoiceCallTracer, inject_traceparent, setup_tracing
+from obsalt.tracing import VoiceCallTracer, setup_tracing
 
-setup_tracing(otlp_endpoint="http://localhost:4318")  # BatchSpanProcessor
+setup_tracing(otlp_endpoint="http://localhost:4318")
 
 with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support") as call:
-    headers = inject_traceparent({})  # W3C traceparent for the next process
     with call.turn(0, "user") as turn:
         with turn.stt("deepgram") as stt:
             stt.set(confidence=0.91, latency_ms=412)
-            with stt.provider_attempt("deepgram"):
-                pass
         with turn.llm("gpt-4o", provider="openai") as llm:
-            llm.set(ttft_ms=340, tokens_in=200, tokens_out=80, finish_reason="stop")
+            llm.set(ttft_ms=340, tokens_in=200, tokens_out=80)
             with llm.tool("lookup_order") as tool:
                 tool.set(execution_ms=120, status_code=200)
         with turn.tts("elevenlabs") as tts:
@@ -84,45 +52,69 @@ with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support"
     call.set_call_outcome(duration_ms=45_000, status="ended")
 ```
 
-A worker continues the same trace:
+Do not put transcript text, prompts, or tool payloads on spans. Those belong in evidence. Full guide: [Instrument an agent](docs/instrumentation.md).
 
-```python
-with VoiceCallTracer.start(call_id="c1", workspace_id="acme", agent_id="support", headers=headers) as call:
-    with call.evaluate("grounded-claims") as ev:
-        ev.set(**{"assertion.result": "pass", "assertion.score": 1.0})
+## Quick start: ingest Vapi / Retell / Bland
+
+Use this when a **hosted platform** runs the call and you receive webhooks.
+
+```bash
+export OBSALT_OTLP_ENDPOINT=http://localhost:4318
+export OBSALT_API_KEYS=acme:secret
+obsalt --port 8080
 ```
 
-Production uses `BatchSpanProcessor` (Hamming measures 1–3% added latency). Tests use `setup_tracing(..., batch=False)` with in-memory exporters.
+| Provider | Webhook URL |
+| --- | --- |
+| Vapi | `POST /v1/ingest/vapi` |
+| Retell | `POST /v1/ingest/retell` |
+| Bland | `POST /v1/ingest/bland` |
+| OpenAI Realtime | `POST /v1/ingest/openai-realtime` |
 
-## Evidence SDK (native ingest without owning OTel)
+Auth: `X-API-Key: secret` (or `Authorization: Bearer secret`). HMAC: `OBSALT_VAPI_SECRET`, `OBSALT_RETELL_SECRET`, `OBSALT_BLAND_SECRET`.
 
-`VoiceTracer` still builds a `CanonicalCall` snapshot you can POST to `/v1/ingest/native`. The pipeline reconstructs the Hamming tree from that packet.
+A terminal webhook stores the call, rebuilds the span tree with historical timestamps, and runs analysis. Then:
 
-```python
-from obsalt.sdk import VoiceTracer
-from obsalt.domain.enums import Speaker
-
-tracer = VoiceTracer(provider="openai_realtime", call_id=session_id, agent_id="concierge")
-with tracer.turn(Speaker.USER, transcript) as turn:
-    turn.stt_ms = stt_ms
-with tracer.tool("create_booking", {"night": "Friday"}) as tool:
-    tool.set_result(result)
-payload = tracer.snapshot(hangup_reason="user_hangup")
+```bash
+curl -H "X-API-Key: secret" http://localhost:8080/v1/calls
+curl -H "X-API-Key: secret" http://localhost:8080/v1/calls/{id}
 ```
 
-## Analysis (same `call.lifecycle`)
+The waterfall still lives in Tempo. Full guide: [Ingest webhooks](docs/ingest.md).
 
-After a terminal webhook, obsalt runs latency breakdown, hangup taxonomy, tool telemetry, hallucination detection, and English-language evals **against the evidence packet**, then attaches `evaluation.assertion_check` spans to the reconstructed root. Search stays on the evidence store, not on span attributes.
+## What you get
 
-## Metrics
+**Traces** — one `call.lifecycle` root per call, nested turns, STT attempts (including fallbacks), LLM, tools, TTS. Join every span to evidence with `call.id`. See [Trace model](docs/trace-model.md).
 
-Prometheus-safe, **never** `call_id` as a label:
+**Metrics** — Prometheus-safe histograms and counters. Never `call_id` as a label. See [Metrics and Grafana](docs/grafana.md).
 
-- `voice_calls_total{agent,environment,outcome}`
-- `voice_response_latency_seconds{agent,environment,stage}`
-- `voice_tool_failures_total{agent,tool_name,failure_type}`
-- `voice_low_confidence_turns_total{agent,stt_provider}`
-- `voice_assertion_failures_total{agent,assertion_type}`
+**Evidence** — transcript, recording URL, tool payload *shapes* (not secrets), hangup taxonomy, hallucination flags, eval scores. Query via the [HTTP API](docs/api.md).
+
+**Why not Langfuse / generic GenAI tracing?** A voice turn is not a chat completion. Time-to-first-audio is VAD + STT + LLM TTFT + TTS TTFB. LLM dashboards stay green while the caller hears silence because STT fell back, a tool timed out, or the transcript never finalized. OpenTelemetry GenAI conventions cover LLM and tools. They do not standardize STT, TTS, VAD, barge-in, or SIP.
+
+## Documentation
+
+| Guide | When to read it |
+| --- | --- |
+| [Architecture](docs/architecture.md) | How the SDK, server, traces, and evidence store fit together |
+| [Instrument an agent](docs/instrumentation.md) | `VoiceCallTracer` in your process |
+| [Ingest webhooks](docs/ingest.md) | Run the server; Vapi / Retell / Bland / Realtime / native |
+| [Trace model](docs/trace-model.md) | Span names, attributes, PII rules |
+| [HTTP API](docs/api.md) | Auth, endpoints, responses |
+| [Metrics and Grafana](docs/grafana.md) | What belongs in Prometheus vs Tempo vs Loki |
+
+## Configuration
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `OBSALT_OTLP_ENDPOINT` | OTLP HTTP base, e.g. `http://localhost:4318` | unset (no export) |
+| `OBSALT_API_KEYS` | `org:secret,org2:secret2` | `demo:demo-secret` |
+| `OBSALT_REQUIRE_AUTH` | Reject requests without a valid key | `false` |
+| `OBSALT_VAPI_SECRET` | Vapi `x-vapi-secret` | empty (skip check) |
+| `OBSALT_RETELL_SECRET` | Retell HMAC | empty (skip check) |
+| `OBSALT_BLAND_SECRET` | Bland webhook secret | empty (skip check) |
+
+Interactive API: `http://localhost:8080/docs`.
 
 ## Tests
 
@@ -130,11 +122,6 @@ Prometheus-safe, **never** `call_id` as a label:
 python3 -m pytest
 ```
 
-Coverage includes Hamming span parenting, reviewer-safe attributes, W3C `traceparent` continuation, provider reconstruction with historical timestamps (no invented fallbacks), metric cardinality, Loki event envelopes, adapters, hangup/hallucination/evals, and hybrid search.
+## Status
 
-## Roadmap (not in this slice)
-
-- Postgres + object storage for the evidence packet
-- Tail sampling that does not drop silent quality degradations
-- Claude/GPT judge wired to `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
-- Streaming OTLP from the Realtime WebSocket without a sidecar
+v0.1. Evidence is in-memory (a restart loses calls). Default evals are heuristic, not an LLM judge. There is no hosted UI.
