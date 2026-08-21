@@ -1,3 +1,3 @@
-from obsalt.otel.instrumentation import VoiceTelemetry, setup_telemetry
+from obsalt.tracing import emit_call_trace, setup_tracing
 
-__all__ = ["VoiceTelemetry", "setup_telemetry"]
+__all__ = ["emit_call_trace", "setup_tracing"]

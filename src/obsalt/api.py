@@ -11,6 +11,7 @@ from obsalt.evals.judges import new_rubric
 from obsalt.pipeline import IngestPipeline
 from obsalt.security import header_map, verify_bland, verify_retell, verify_vapi
 from obsalt.store import MemoryStore, Store
+from obsalt.tracing.setup import setup_tracing
 
 
 class RubricIn(BaseModel):
@@ -46,7 +47,11 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     store = store or MemoryStore()
-    pipeline = pipeline or IngestPipeline(store=store)
+    if settings.otlp_endpoint:
+        _, _, otel_metrics = setup_tracing(otlp_endpoint=settings.otlp_endpoint, batch=True)
+        pipeline = pipeline or IngestPipeline(store=store, metrics=otel_metrics)
+    else:
+        pipeline = pipeline or IngestPipeline(store=store)
 
     app = FastAPI(title="obsalt", version="0.1.0", description="Observability for voice AI")
     app.state.settings = settings

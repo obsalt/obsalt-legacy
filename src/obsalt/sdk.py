@@ -116,7 +116,10 @@ class ToolSpan:
 
 
 class VoiceTracer:
-    """In-process span API for OpenAI Realtime sidecars and custom stacks."""
+    """Build a CanonicalCall evidence snapshot for POST /v1/ingest/native.
+
+    For live Hamming OTel spans, use ``obsalt.tracing.VoiceCallTracer``.
+    """
 
     def __init__(
         self,

@@ -9,7 +9,8 @@ from obsalt.evals.judges import HeuristicJudge, Judge
 from obsalt.hallucination.detector import detect_hallucinations
 from obsalt.hangup.analyzer import HangupAnalyzer
 from obsalt.latency.breakdown import enrich_latency
-from obsalt.otel.instrumentation import VoiceTelemetry
+from obsalt.tracing.emitter import emit_call_trace
+from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.store import MemoryStore, Store
 from obsalt.tools.telemetry import enrich_call_tools
 from obsalt.util import utcnow
@@ -20,13 +21,13 @@ class IngestPipeline:
         self,
         store: Store | None = None,
         registry: AdapterRegistry | None = None,
-        telemetry: VoiceTelemetry | None = None,
+        metrics: VoiceMetrics | None = None,
         judge: Judge | None = None,
         analyzer: HangupAnalyzer | None = None,
     ) -> None:
         self.store = store or MemoryStore()
         self.registry = registry or AdapterRegistry()
-        self.telemetry = telemetry or VoiceTelemetry()
+        self.metrics = metrics
         self.judge = judge or HeuristicJudge()
         self.analyzer = analyzer or HangupAnalyzer()
 
@@ -66,7 +67,7 @@ class IngestPipeline:
         call.finalized = True
         call.updated_at = utcnow()
         self.store.upsert_call(call)
-        self.telemetry.emit_call(call)
+        emit_call_trace(call, metrics=self.metrics)
         return call
 
     def reevaluate(self, org_id: str, call_id: str) -> CanonicalCall | None:

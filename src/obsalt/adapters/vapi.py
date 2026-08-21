@@ -115,6 +115,16 @@ class VapiAdapter:
         prompt_messages = model.get("messages") if isinstance(model.get("messages"), list) else []
         prompts = [text_of(m) for m in prompt_messages if isinstance(m, dict) and m.get("role") == "system"]
         call.grounding.system_prompt = "\n".join(p for p in prompts if p)
+        transcriber = assistant_obj.get("transcriber") if isinstance(assistant_obj.get("transcriber"), dict) else {}
+        voice = assistant_obj.get("voice") if isinstance(assistant_obj.get("voice"), dict) else {}
+        if transcriber.get("provider"):
+            call.metadata["stt_provider"] = transcriber.get("provider")
+        if voice.get("provider"):
+            call.metadata["tts_provider"] = voice.get("provider")
+        if model.get("provider"):
+            call.metadata["llm_provider"] = model.get("provider")
+        if model.get("model"):
+            call.metadata["llm_model"] = model.get("model")
 
         analysis = message.get("analysis") if isinstance(message.get("analysis"), dict) else {}
         if analysis.get("summary"):
