@@ -1,8 +1,11 @@
-"""Hamming voice-agent OpenTelemetry conventions.
+"""OpenTelemetry conventions for voice-agent traces.
 
-Span names and the Hamming 12 attributes follow
-https://hamming.ai/resources/opentelemetry-voice-agents-tracing-guide
-GenAI attributes are used only on LLM and tool spans.
+A call is the unit of work, not an HTTP request. Span names follow the
+conversation: call → turn → STT / LLM / TTS / tools.
+
+OpenTelemetry GenAI semantic conventions apply to LLM and tool spans only.
+STT, TTS, VAD, and telephony use obsalt voice attributes until a stable
+OTel voice spec exists.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ CONVERSATION_ID = "gen_ai.conversation.id"
 TEST_RUN_ID = "test_run.id"
 SCENARIO_ID = "scenario.id"
 
-# --- Hamming 12 ---
+# --- Voice debug attributes (low cardinality, never PII) ---
 STT_PROVIDER = "stt.provider"
 STT_CONFIDENCE = "stt.confidence"
 STT_LATENCY_MS = "stt.latency_ms"
@@ -48,7 +51,6 @@ TOOL_NAME = "tool.name"
 TOOL_EXECUTION_MS = "tool.execution_ms"
 CALL_DURATION_MS = "call.duration_ms"
 
-# --- Extra voice debugging (still low cardinality) ---
 LLM_FINISH_REASON = "llm.finish_reason"
 TTS_FIRST_AUDIO_MS = "tts.first_audio_ms"
 TTS_VOICE_ID = "tts.voice_id"
@@ -89,21 +91,6 @@ METRIC_LOW_CONFIDENCE = "voice_low_confidence_turns_total"
 METRIC_ASSERT_FAIL = "voice_assertion_failures_total"
 
 LATENCY_BUCKETS = (0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0)
-
-HAMMING_12 = (
-    STT_PROVIDER,
-    STT_CONFIDENCE,
-    STT_LATENCY_MS,
-    LLM_MODEL,
-    LLM_TTFT_MS,
-    LLM_TOKENS_IN,
-    LLM_TOKENS_OUT,
-    TTS_PROVIDER,
-    TTS_SYNTHESIS_MS,
-    TOOL_NAME,
-    TOOL_EXECUTION_MS,
-    CALL_DURATION_MS,
-)
 
 JOIN_KEYS = (CALL_ID, WORKSPACE_ID, AGENT_ID, CONVERSATION_ID)
 
@@ -152,7 +139,7 @@ def join_attributes(
     turn_index: int | None = None,
     conversation_id: str | None = None,
 ) -> dict[str, str | int]:
-    """Identity keys copied onto every span so Tempo can join evidence."""
+    """Identity keys copied onto every span so traces can join evidence."""
     attrs: dict[str, str | int] = {
         CALL_ID: call_id,
         WORKSPACE_ID: workspace_id,

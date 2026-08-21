@@ -1,4 +1,4 @@
-"""Live Hamming-shaped span tree for in-process voice agents."""
+"""Live conversation span tree for in-process voice agents."""
 
 from __future__ import annotations
 
@@ -252,7 +252,7 @@ class SpanHandle:
 
 
 class VoiceCallTracer(SpanHandle):
-    """Root ``call.lifecycle`` plus Hamming child helpers.
+    """Root ``call.lifecycle`` span with helpers for turns, STT, LLM, TTS, and tools.
 
     Usage::
 

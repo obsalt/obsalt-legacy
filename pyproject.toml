@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "obsalt"
 version = "0.1.0"
-description = "Production-grade observability for voice AI — Vapi, Retell, Bland, and OpenAI Realtime"
+description = "Observability for voice AI agents: a tracing SDK and an ingest server for Vapi, Retell, Bland, and OpenAI Realtime"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }

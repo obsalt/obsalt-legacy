@@ -21,7 +21,7 @@ class _Timer:
 
 
 class TurnSpan:
-    def __init__(self, tracer: VoiceTracer, speaker: Speaker, text: str = "") -> None:
+    def __init__(self, tracer: CallRecorder, speaker: Speaker, text: str = "") -> None:
         self._tracer = tracer
         self.speaker = speaker
         self.text = text
@@ -69,7 +69,7 @@ class TurnSpan:
 
 
 class ToolSpan:
-    def __init__(self, tracer: VoiceTracer, name: str, arguments: Any | None = None) -> None:
+    def __init__(self, tracer: CallRecorder, name: str, arguments: Any | None = None) -> None:
         self._tracer = tracer
         self.name = name
         self.arguments = arguments or {}
@@ -115,10 +115,13 @@ class ToolSpan:
         )
 
 
-class VoiceTracer:
-    """Build a CanonicalCall evidence snapshot for POST /v1/ingest/native.
+class CallRecorder:
+    """Build a call snapshot and POST it to ``/v1/ingest/native``.
 
-    For live Hamming OTel spans, use ``obsalt.tracing.VoiceCallTracer``.
+    Use this when you do not want to emit OpenTelemetry from the agent process.
+    The ingest server stores the snapshot as evidence and reconstructs traces.
+
+    To emit spans in-process instead, use ``obsalt.tracing.VoiceCallTracer``.
     """
 
     def __init__(

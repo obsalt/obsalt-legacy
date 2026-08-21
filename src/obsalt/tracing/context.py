@@ -4,9 +4,6 @@ from typing import Any
 
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract, inject
-from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-
-_propagator = TraceContextTextMapPropagator()
 
 
 def inject_traceparent(carrier: dict[str, str] | None = None) -> dict[str, str]:
@@ -24,10 +21,3 @@ def extract_traceparent(carrier: dict[str, str] | None) -> Any:
     if "traceparent" not in lowered:
         return otel_context.get_current()
     return extract(lowered)
-
-
-def parse_traceparent(header: str) -> tuple[str, str] | None:
-    parts = header.split("-")
-    if len(parts) < 4 or parts[0] != "00":
-        return None
-    return parts[1], parts[2]
