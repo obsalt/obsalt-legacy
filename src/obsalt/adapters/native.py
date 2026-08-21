@@ -73,8 +73,10 @@ class NativeAdapter:
                     tts_ttfb_ms=as_float(raw.get("tts_ttfb_ms")),
                     time_to_first_audio_ms=as_float(raw.get("time_to_first_audio_ms")),
                     interrupted=bool(raw.get("interrupted")),
+                    confidence=as_float(raw.get("confidence")),
                     started_at=parse_datetime(raw.get("started_at")),
                     ended_at=parse_datetime(raw.get("ended_at")),
+                    metadata=raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {},
                 )
             )
         for raw in payload.get("tools") or []:
@@ -107,6 +109,7 @@ class NativeAdapter:
                     metadata=stored_meta,
                     started_at=parse_datetime(raw.get("started_at")),
                     ended_at=parse_datetime(raw.get("ended_at")),
+                    turn_index=int(raw["turn_index"]) if raw.get("turn_index") is not None else None,
                 )
             )
         for raw in payload.get("latency_samples") or []:
@@ -126,7 +129,11 @@ class NativeAdapter:
                     )
                 )
         call.transcript_text = as_str(payload.get("transcript_text")) or transcript_from_turns(call)
+        extra_meta = payload.get("metadata")
+        if isinstance(extra_meta, dict):
+            call.metadata.update({k: v for k, v in extra_meta.items() if k not in {"org_id", "id"}})
         if "spans_exported" in payload:
+            call.metadata["spans_exported"] = bool(payload.get("spans_exported"))
             call.metadata["spans_exported"] = bool(payload.get("spans_exported"))
         traceparent = as_str(payload.get("traceparent"))
         if traceparent:

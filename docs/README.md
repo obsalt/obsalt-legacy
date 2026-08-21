@@ -5,7 +5,7 @@ obsalt records each voice call as an OpenTelemetry **trace** (where time went) a
 ## Start here
 
 1. **[Choose a path](choose-a-path.md)** — hosted platform vs Pipecat / your loop. Do this before installing anything.
-2. **[What you can see](what-you-see.md)** — Grafana, Tempo, Prometheus, HTTP API. There is no obsalt UI.
+2. **[What you can see](what-you-see.md)** — Grafana (fleet), `/v1/ui` (one call), HTTP API. Transcripts are not span attributes.
 3. **[Glossary](glossary.md)** — OTLP is a protocol. `VoiceCallTracer` is a Python class. `obsalt serve` is the HTTP server.
 4. **[Getting started](getting-started.md)** — `obsalt init`, first fixture, first instrumented turn.
 
@@ -43,5 +43,5 @@ OpenAI Realtime event batches: [guide](providers/openai-realtime.md).
 | Page | Contents |
 | --- | --- |
 | [HTTP API](api.md) | Auth, ingest, lookup, search, rollups |
-| [Metrics and Grafana](grafana.md) | Prometheus vs Tempo vs Loki vs evidence |
+| [Metrics and Grafana](grafana.md) | Prometheus vs Tempo vs Loki vs the per-call join view |
 | [Configuration](configuration.md) | `obsalt.toml`, env, production checklist |

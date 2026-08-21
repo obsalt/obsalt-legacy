@@ -2,7 +2,7 @@
 
 Observability for voice AI agents. One **trace** for where time went, one **evidence** record for what was said.
 
-obsalt is software you run. It is not a hosted dashboard. Traces go to Grafana Tempo (or Jaeger, Honeycomb). Transcripts, tools, hangups, and evals stay in obsalt and are queried over HTTP.
+obsalt is software you run. It is not a hosted dashboard. Traces go to Grafana Tempo (or Jaeger, Honeycomb). Transcripts, tools, hangups, and evals stay in obsalt and are queried over HTTP. Open `/v1/ui` to see one call's span tree next to its transcript without copying `call.id` between tools.
 
 There are **two integrations**. Mixing them on the same call is almost always a mistake.
 
@@ -38,8 +38,8 @@ flowchart LR
   Vendor -->|"their JSON webhook"| Server
   SDK -->|"OTLP protocol"| OTLP
   SDK -->|"snapshot JSON"| Server
-  Store -->|"GET /v1/calls"| You["You"]
-  Graf -->|"paste call.id"| You
+  Store -->|"GET /v1/ui"| You["You"]
+  Graf -->|"fleet SLOs"| You
 ```
 
 ## Path A — hosted platform
@@ -88,12 +88,11 @@ Pipecat: `from obsalt.integrations.pipecat import ObsaltObserver`. Guide: [Custo
 
 | Question | Where |
 | --- | --- |
-| Where did 1.8s go? | Grafana → Tempo, filter `call.id` |
-| What did the agent say? | `GET /v1/calls/{call.id}` |
-| Hangup clusters / evals | `GET /v1/hangups`, `evals` on the call |
-| P95 STT | Prometheus or `GET /v1/latency` |
+| Where did 1.8s go **and** what was said? | `http://localhost:8080/v1/ui` (per-call join view) |
+| Fleet waterfalls / P95 | Grafana → Tempo / Prometheus |
+| Hangup clusters / search | `GET /v1/hangups`, `GET /v1/search` |
 
-There is no obsalt UI. [What you can see](docs/what-you-see.md).
+The join view does **not** put transcripts on OpenTelemetry spans. Grafana remains the fleet UI. [What you can see](docs/what-you-see.md).
 
 ## Install
 
@@ -120,13 +119,14 @@ curl -X POST http://localhost:8080/v1/ingest/vapi \
   -d @tests/fixtures/vapi_end_of_call.json
 
 curl -H "X-API-Key: change-me" http://localhost:8080/v1/calls
+# then open http://localhost:8080/v1/ui
 ```
 
 Auth header: `X-API-Key` (secret from `obsalt.toml` / `OBSALT_API_KEYS`). Walkthrough: [Getting started](docs/getting-started.md).
 
 ## Why not Langfuse / generic GenAI tracing?
 
-A voice turn is not a chat completion. Time-to-first-audio is VAD + STT + LLM TTFT + TTS TTFB. LLM dashboards stay green while the caller hears silence because STT fell back, a tool timed out, or the transcript never finalized. OpenTelemetry GenAI conventions cover LLM and tools. They do not standardize STT, TTS, VAD, barge-in, or SIP.
+A voice turn is not a chat completion. Time-to-first-audio is VAD + STT + LLM TTFT + TTS TTFB. LLM dashboards stay green while the caller hears silence because STT fell back, a tool timed out, or the transcript never finalized. OpenTelemetry GenAI conventions cover LLM and tools. They do not standardize STT, TTS, VAD, barge-in, or SIP. obsalt follows that split: spans stay reviewer-safe; `/v1/ui` joins them to evidence. The span tree matches the [conversation-shaped voice-agent model](https://hamming.ai/resources/opentelemetry-voice-agents-tracing-guide) (call → turn → STT/LLM/TTS), including the rule that transcripts do not belong on span attributes.
 
 ## Documentation
 

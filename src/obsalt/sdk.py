@@ -164,6 +164,7 @@ class CallRecorder:
         interrupted: bool = False,
         confidence: float | None = None,
         seconds_from_start: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Turn:
         sp = speaker if isinstance(speaker, Speaker) else speaker_from(speaker)
         elapsed = duration_ms if duration_ms is not None else 0.0
@@ -185,6 +186,7 @@ class CallRecorder:
             time_to_first_audio_ms=tts_ttfb_ms or llm_ttft_ms,
             interrupted=interrupted,
             confidence=confidence,
+            metadata=dict(metadata or {}),
         )
         self.call.turns.append(turn)
         for component, value, extra in (
@@ -212,6 +214,7 @@ class CallRecorder:
         error: str | None = None,
         result: Any | None = None,
         tool_id: str | None = None,
+        turn_index: int | None = None,
     ) -> ToolInvocation:
         stored_args = redact_value(None, arguments or {})
         invocation = ToolInvocation(
@@ -225,6 +228,7 @@ class CallRecorder:
             error=error,
             result_preview=preview_text(result),
             metadata={"arguments": stored_args},
+            turn_index=turn_index,
         )
         self.call.tools.append(invocation)
         return invocation
@@ -265,6 +269,7 @@ class CallRecorder:
             recording_url=self.call.recording_url,
             spans_exported=spans_exported,
             traceparent=traceparent,
+            metadata={k: v for k, v in self.call.metadata.items() if k not in {"spans_exported", "traceparent"}},
         )
         return payload.model_dump(mode="json")
 

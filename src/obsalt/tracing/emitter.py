@@ -12,6 +12,7 @@ from obsalt.tracing import conventions as c
 from obsalt.tracing.context import extract_traceparent
 from obsalt.tracing.conventions import join_attributes
 from obsalt.tracing.evidence import recording_artifact_id, transcript_artifact_id
+from obsalt.tracing.layout import stt_attempts_for, tools_by_turn
 from obsalt.tracing.metrics import VoiceMetrics
 from obsalt.tracing.tracer import VoiceCallTracer, to_unix_ns
 
@@ -69,7 +70,7 @@ def emit_call_trace(call: CanonicalCall, *, metrics: VoiceMetrics | None = None,
         end_ns=to_unix_ns(call.ended_at),
         extra_attributes=extra,
     )
-    tools_by_turn = _attach_tools(call)
+    attached_tools = tools_by_turn(call)
     with tracer:
         outcome = (
             "error"
@@ -92,14 +93,18 @@ def emit_call_trace(call: CanonicalCall, *, metrics: VoiceMetrics | None = None,
             t_start, t_end = _turn_window(call, turn)
             with tracer.turn(turn.index, turn.speaker.value, start_ns=t_start, end_ns=t_end) as turn_span:
                 if turn.speaker == Speaker.USER:
-                    if turn.stt_ms is not None or turn.confidence is not None:
+                    vad_ms = turn.metadata.get("vad.end_of_utterance_ms")
+                    if vad_ms is not None:
+                        with turn_span.vad(start_ns=t_start, end_ns=_shift(t_start, float(vad_ms))) as vad:
+                            vad.set(end_of_utterance_ms=vad_ms)
+                    if turn.stt_ms is not None or turn.confidence is not None or stt_attempts_for(turn):
                         _emit_stt(turn_span, turn, stt_provider, t_start, metrics, call.agent_id, environment)
                     continue
                 if turn.speaker == Speaker.AGENT:
                     _emit_agent_turn(
                         turn_span,
                         turn,
-                        tools_by_turn.get(turn.index, []),
+                        attached_tools.get(turn.index, []),
                         call=call,
                         llm_model=llm_model,
                         llm_provider=llm_provider,
@@ -151,10 +156,33 @@ def _emit_stt(
     agent: str,
     environment: str,
 ) -> None:
-    stt_end = _shift(t_start, turn.stt_ms)
+    attempts = stt_attempts_for(turn)
+    if attempts:
+        provider = attempts[-1].get("provider") or provider
+    stt_ms = turn.stt_ms
+    if stt_ms is None and attempts:
+        known = [float(a["latency_ms"]) for a in attempts if a.get("latency_ms") is not None]
+        stt_ms = sum(known) if known else None
+    stt_end = _shift(t_start, stt_ms)
     with turn_span.stt(provider, start_ns=t_start, end_ns=stt_end) as stt:
         stt.set(confidence=turn.confidence, latency_ms=turn.stt_ms)
-        if provider:
+        hop_start = t_start
+        if attempts:
+            for hop in attempts:
+                hop_ms = hop.get("latency_ms")
+                hop_end = _shift(hop_start, hop_ms) if hop_ms is not None else stt_end
+                with stt.provider_attempt(
+                    str(hop["provider"]),
+                    fallback=bool(hop.get("fallback")),
+                    start_ns=hop_start,
+                    end_ns=hop_end,
+                ) as attempt:
+                    attempt.set(**{c.STT_LATENCY_MS: hop_ms, c.STT_CONFIDENCE: hop.get("confidence")})
+                    if hop.get("error"):
+                        attempt.fail(str(hop["error"]))
+                if hop_ms is not None and hop_start is not None:
+                    hop_start = hop_start + int(float(hop_ms) * 1_000_000)
+        elif provider:
             with stt.provider_attempt(provider, start_ns=t_start, end_ns=stt_end) as attempt:
                 attempt.set(**{c.STT_LATENCY_MS: turn.stt_ms, c.STT_CONFIDENCE: turn.confidence})
     if turn.stt_ms is not None:
@@ -201,33 +229,15 @@ def _emit_agent_turn(
             tts.set(synthesis_ms=turn.tts_ms, first_audio_ms=turn.tts_ttfb_ms)
         if turn.tts_ms:
             metrics.record_stage("tts", turn.tts_ms, agent=agent, environment=environment)
+    playout_ms = turn.metadata.get("audio.playout_ms")
+    if playout_ms is not None:
+        play_end = _shift(t_start, (turn.tts_ms or 0) + float(playout_ms))
+        play_start = _shift(t_start, turn.tts_ms) or t_start
+        with turn_span.playout(start_ns=play_start, end_ns=play_end) as play:
+            play.set(playout_ms=playout_ms)
     if turn.time_to_first_audio_ms is not None:
         metrics.record_stage("ttfa", turn.time_to_first_audio_ms, agent=agent, environment=environment)
         metrics.record_stage("e2e", turn.time_to_first_audio_ms, agent=agent, environment=environment)
-
-
-def _attach_tools(call: CanonicalCall) -> dict[int, list[ToolInvocation]]:
-    """Nest tools under the agent turn that used them — never as call-level orphans."""
-    by_turn: dict[int, list[ToolInvocation]] = {}
-    agent_turns = [t for t in call.turns if t.speaker == Speaker.AGENT]
-    for tool in call.tools:
-        idx = tool.turn_index
-        if idx is None and agent_turns:
-            if tool.started_at:
-                later = [t for t in agent_turns if t.started_at and t.started_at >= tool.started_at]
-                earlier = [t for t in agent_turns if t.started_at and t.started_at <= tool.started_at]
-                if later:
-                    idx = later[0].index
-                elif earlier:
-                    idx = earlier[-1].index
-                else:
-                    idx = agent_turns[0].index
-            else:
-                idx = agent_turns[-1].index
-        if idx is None:
-            idx = agent_turns[-1].index if agent_turns else 0
-        by_turn.setdefault(idx, []).append(tool)
-    return by_turn
 
 
 _STAGE_BY_COMPONENT = {

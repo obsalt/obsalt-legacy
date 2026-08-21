@@ -386,6 +386,7 @@ def print_banner(settings: Settings, host: str, port: int) -> None:
     lines = [
         f"obsalt {__version__}  ingest & evidence API",
         f"  listen     {base}",
+        f"  ui         {base}/v1/ui",
         f"  openapi    {base}/docs",
         f"  health     {base}/health",
         f"  otlp       {otlp}",

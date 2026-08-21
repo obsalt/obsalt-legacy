@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from obsalt._version import __version__
@@ -13,6 +14,8 @@ from obsalt.pipeline import IngestPipeline
 from obsalt.security import header_map, verify_bland, verify_retell, verify_vapi
 from obsalt.store import MemoryStore, Store
 from obsalt.tracing.setup import setup_tracing
+from obsalt.tracing.timeline import build_call_view, coverage_summary
+from obsalt.view import render_call_html, render_index_html, render_login_html
 
 
 class RubricIn(BaseModel):
@@ -68,12 +71,14 @@ def create_app(
             "Ingest voice-agent calls. Path A: Vapi / Retell / Bland webhooks. "
             "Path B: native snapshots from VoiceCall. "
             "Look up evidence over HTTP. Traces export over OpenTelemetry. "
-            "This API is not a dashboard."
+            "GET /v1/ui joins the conversation span tree to transcripts without putting PII on spans. "
+            "Fleet dashboards remain Grafana."
         ),
         openapi_tags=[
             {"name": "health", "description": "Liveness and operator-safe config."},
             {"name": "ingest", "description": "Provider webhooks and native snapshots."},
             {"name": "calls", "description": "Evidence lookup, search, and rollups."},
+            {"name": "view", "description": "Join traces to evidence for one call."},
             {"name": "evals", "description": "Rubrics scored against stored calls."},
         ],
     )
@@ -173,6 +178,45 @@ def create_app(
             raise HTTPException(status_code=404, detail="call not found")
         return call.model_dump(mode="json")
 
+    def _ui_org(
+        authorization: str | None = Header(default=None),
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> str | None:
+        try:
+            return _org_from_key(settings, authorization, x_api_key)
+        except HTTPException:
+            return None
+
+    @app.get("/v1/calls/{call_id}/view", tags=["view"])
+    def get_call_view(call_id: str, org_id: str = Depends(tenant)):
+        call = store.get_call(org_id, call_id)
+        if call is None:
+            raise HTTPException(status_code=404, detail="call not found")
+        return build_call_view(call).model_dump(mode="json")
+
+    @app.get("/v1/ui", tags=["view"], response_class=HTMLResponse)
+    def ui_index(org_id: str | None = Depends(_ui_org)):
+        if org_id is None:
+            return HTMLResponse(render_login_html(next_path="/v1/ui", require_auth=True), status_code=401)
+        calls = [_call_summary(c) for c in store.list_calls(org_id)]
+        return HTMLResponse(
+            render_index_html(org_id=org_id, calls=calls, require_auth=settings.require_auth)
+        )
+
+    @app.get("/v1/calls/{call_id}/ui", tags=["view"], response_class=HTMLResponse)
+    def ui_call(call_id: str, org_id: str | None = Depends(_ui_org)):
+        if org_id is None:
+            return HTMLResponse(
+                render_login_html(next_path=f"/v1/calls/{call_id}/ui", require_auth=True),
+                status_code=401,
+            )
+        call = store.get_call(org_id, call_id)
+        if call is None:
+            raise HTTPException(status_code=404, detail="call not found")
+        return HTMLResponse(
+            render_call_html(build_call_view(call), org_id=org_id, require_auth=settings.require_auth)
+        )
+
     @app.get("/v1/latency", tags=["calls"])
     def latency(org_id: str = Depends(tenant), agent_id: str | None = Query(default=None)):
         return {"components": [s.model_dump() for s in store.latency_rollup(org_id, agent_id=agent_id)]}
@@ -244,6 +288,7 @@ def create_app(
 
 
 def _call_summary(call) -> dict:
+    coverage = coverage_summary(call)
     return {
         "id": call.id,
         "provider": call.provider.value,
@@ -256,6 +301,8 @@ def _call_summary(call) -> dict:
         "hallucinations": len(call.hallucinations),
         "tool_count": len(call.tools),
         "finalized": call.finalized,
+        "coverage": coverage,
+        "view_path": coverage["view_path"],
     }
 
 

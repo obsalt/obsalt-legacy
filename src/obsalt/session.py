@@ -11,7 +11,14 @@ from opentelemetry import context as otel_context
 from obsalt.domain.enums import Provider, Speaker, ToolStatus, parse_provider, speaker_from
 from obsalt.sdk import CallRecorder
 from obsalt.tracing.context import inject_traceparent
-from obsalt.tracing.conventions import EVIDENCE_REDACTION, EVIDENCE_TRANSCRIPT_ID
+from obsalt.tracing.conventions import (
+    CALL_LANGUAGES,
+    EVIDENCE_REDACTION,
+    EVIDENCE_TRANSCRIPT_ID,
+    ROOM_ID,
+    SCENARIO_ID,
+    TEST_RUN_ID,
+)
 from obsalt.tracing.evidence import transcript_artifact_id
 from obsalt.tracing.tracer import SpanHandle, VoiceCallTracer
 
@@ -41,6 +48,10 @@ class _BoundSpan:
         self._tool_ok = True
         self._tool_error: str | None = None
         self._t0 = 0.0
+        self._attempt_provider: str | None = None
+        self._attempt_fallback = False
+        self._attempt_latency: float | None = None
+        self._attempt_confidence: float | None = None
 
     def set(self, **kwargs: Any) -> Self:
         self._handle.set(**kwargs)
@@ -52,6 +63,17 @@ class _BoundSpan:
                 turn.stt_ms = float(kwargs["latency_ms"])
             if kwargs.get("confidence") is not None:
                 turn.confidence = float(kwargs["confidence"])
+        elif self._kind == "stt_attempt":
+            if kwargs.get("latency_ms") is not None:
+                self._attempt_latency = float(kwargs["latency_ms"])
+            if kwargs.get("confidence") is not None:
+                self._attempt_confidence = float(kwargs["confidence"])
+        elif self._kind == "playout":
+            if kwargs.get("playout_ms") is not None:
+                turn.playout_ms = float(kwargs["playout_ms"])
+        elif self._kind == "vad":
+            if kwargs.get("end_of_utterance_ms") is not None:
+                turn.vad_eou_ms = float(kwargs["end_of_utterance_ms"])
         elif self._kind == "llm":
             if kwargs.get("ttft_ms") is not None:
                 turn.llm_ttft_ms = float(kwargs["ttft_ms"])
@@ -83,18 +105,27 @@ class _BoundSpan:
 
     def stt(self, provider: str | None = None, **extra: Any) -> _BoundSpan:
         assert self._turn is not None
+        if provider:
+            self._turn.stt_provider = provider
         return _BoundSpan(self._handle.stt(provider, **extra), self._session, kind="stt", turn=self._turn)
 
     def provider_attempt(self, provider: str, *, fallback: bool = False, **extra: Any) -> _BoundSpan:
-        return _BoundSpan(
+        child = _BoundSpan(
             self._handle.provider_attempt(provider, fallback=fallback, **extra),
             self._session,
             kind="stt_attempt",
             turn=self._turn,
         )
+        child._attempt_provider = provider
+        child._attempt_fallback = fallback
+        return child
 
     def llm(self, model: str | None = None, provider: str | None = None, **extra: Any) -> _BoundSpan:
         assert self._turn is not None
+        if model:
+            self._turn.llm_model = model
+        if provider:
+            self._turn.llm_provider = provider
         return _BoundSpan(self._handle.llm(model, provider, **extra), self._session, kind="llm", turn=self._turn)
 
     def tool(
@@ -117,6 +148,8 @@ class _BoundSpan:
 
     def tts(self, provider: str | None = None, **extra: Any) -> _BoundSpan:
         assert self._turn is not None
+        if provider:
+            self._turn.tts_provider = provider
         return _BoundSpan(self._handle.tts(provider, **extra), self._session, kind="tts", turn=self._turn)
 
     def playout(self, **extra: Any) -> _BoundSpan:
@@ -146,6 +179,21 @@ class _BoundSpan:
                 turn.llm_ms = elapsed_ms
             elif self._kind == "tts" and turn.tts_ms is None:
                 turn.tts_ms = elapsed_ms
+        if self._kind == "stt_attempt" and self._turn is not None and self._attempt_provider:
+            latency = self._attempt_latency if self._attempt_latency is not None else elapsed_ms
+            self._turn.stt_attempts.append(
+                {
+                    "provider": self._attempt_provider,
+                    "fallback": self._attempt_fallback,
+                    "latency_ms": latency,
+                    "confidence": self._attempt_confidence,
+                    "error": self._tool_error,
+                }
+            )
+        if self._kind == "vad" and self._turn is not None and self._turn.vad_eou_ms is None:
+            self._turn.vad_eou_ms = elapsed_ms
+        if self._kind == "playout" and self._turn is not None and self._turn.playout_ms is None:
+            self._turn.playout_ms = elapsed_ms
         if self._kind == "tool" and self._tool_name:
             duration = getattr(self, "_tool_duration", elapsed_ms)
             status = ToolStatus.SUCCESS if self._tool_ok and exc is None else ToolStatus.ERROR
@@ -158,6 +206,7 @@ class _BoundSpan:
                 error=error,
                 result=self._tool_result,
                 tool_id=self._tool_id,
+                turn_index=self._turn.index if self._turn else None,
             )
 
 
@@ -174,6 +223,13 @@ class _BoundTurn(_BoundSpan):
         self.tts_ttfb_ms: float | None = None
         self.interrupted = False
         self.confidence: float | None = None
+        self.stt_attempts: list[dict[str, Any]] = []
+        self.vad_eou_ms: float | None = None
+        self.playout_ms: float | None = None
+        self.stt_provider: str | None = None
+        self.tts_provider: str | None = None
+        self.llm_model: str | None = None
+        self.llm_provider: str | None = None
 
     def __exit__(
         self,
@@ -183,6 +239,22 @@ class _BoundTurn(_BoundSpan):
     ) -> None:
         elapsed_ms = (time.perf_counter() - self._t0) * 1000.0
         self._handle.__exit__(exc_type, exc, tb)
+        metadata: dict[str, Any] = {}
+        if self.stt_attempts:
+            metadata["stt_attempts"] = self.stt_attempts
+        if self.vad_eou_ms is not None:
+            metadata["vad.end_of_utterance_ms"] = self.vad_eou_ms
+        if self.playout_ms is not None:
+            metadata["audio.playout_ms"] = self.playout_ms
+        meta = self._session._recorder.call.metadata
+        if self.stt_provider:
+            meta.setdefault("stt_provider", self.stt_provider)
+        if self.tts_provider:
+            meta.setdefault("tts_provider", self.tts_provider)
+        if self.llm_model:
+            meta.setdefault("llm_model", self.llm_model)
+        if self.llm_provider:
+            meta.setdefault("llm_provider", self.llm_provider)
         self._session._recorder.record_turn(
             self.speaker,
             self.text,
@@ -194,6 +266,7 @@ class _BoundTurn(_BoundSpan):
             tts_ttfb_ms=self.tts_ttfb_ms,
             interrupted=self.interrupted,
             confidence=self.confidence,
+            metadata=metadata or None,
         )
 
 
@@ -258,6 +331,10 @@ class VoiceCall:
             system_prompt=system_prompt,
             recording_url=recording_url,
         )
+        if extra_attributes:
+            for key in (ROOM_ID, TEST_RUN_ID, SCENARIO_ID, CALL_LANGUAGES):
+                if extra_attributes.get(key) is not None:
+                    recorder.call.metadata[key] = extra_attributes[key]
         auto = ingest_on_exit if ingest_on_exit is not None else client is not None
         return cls(tracer, recorder, client=client, ingest_on_exit=auto)
 

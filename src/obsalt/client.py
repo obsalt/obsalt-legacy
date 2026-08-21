@@ -101,6 +101,12 @@ class ObsaltClient:
         response.raise_for_status()
         return response.json()
 
+    def view_call(self, call_id: str) -> dict[str, Any]:
+        """Joined conversation span tree + evidence packet for one call."""
+        response = self._http.get(f"/v1/calls/{call_id}/view")
+        response.raise_for_status()
+        return response.json()
+
     def search(self, query: str, *, limit: int = 10) -> dict[str, Any]:
         response = self._http.post("/v1/search", json={"query": query, "limit": limit})
         response.raise_for_status()

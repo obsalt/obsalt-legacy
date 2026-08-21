@@ -69,6 +69,7 @@ Guide: [Custom agents (Pipecat)](custom-agents.md).
 | Live waterfall | No — reconstructed when the webhook lands | Yes — spans export while the caller is talking |
 | Transcript / search / evals | Yes, from the webhook | Yes, if `VoiceCall` POSTs a snapshot (pass `client=`) |
 | STT fallback hops (Deepgram then Azure) | Not in vendor JSON — obsalt will not invent them | Yes — `stt.provider_attempt(..., fallback=True)` |
+| Per-call waterfall + transcript | `/v1/ui` (reconstructed tree) | `/v1/ui` after snapshot; Tempo live during the call |
 | `CallRecorder` snapshot | Never. Vendors do not speak obsalt JSON | Optional. `VoiceCall` builds it for you |
 | `obsalt serve` | Required | Optional for traces-only; required for evidence |
 
@@ -82,4 +83,4 @@ Realtime is neither a Vapi-style webhook nor a Pipecat loop. Your sidecar stamps
 - Do not use `VoiceCallTracer` plus a separate `CallRecorder` unless you are doing something advanced. `VoiceCall` is both.
 - `workspace_id` on the SDK must equal the org on the API key, or Tempo `call.id` will not match `GET /v1/calls/{id}`.
 
-Next: [What you can see](what-you-see.md) (Grafana vs the HTTP API) or [Getting started](getting-started.md).
+Next: [What you can see](what-you-see.md) (join view vs Grafana vs the HTTP API) or [Getting started](getting-started.md).

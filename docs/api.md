@@ -2,7 +2,7 @@
 
 Base URL: the host you pass to `obsalt serve` (default `http://localhost:8080`).
 
-Interactive docs: `GET /docs`. This API is ingest and evidence lookup. It is not a dashboard.
+Interactive docs: `GET /docs`. This API is ingest, evidence lookup, and the per-call join view. Grafana remains the fleet dashboard.
 
 Python: `ObsaltClient` (`from obsalt import ObsaltClient`) wraps these routes.
 
@@ -46,7 +46,7 @@ Tool argument **values** are redacted before the call is stored. Shapes remain.
 
 `GET /v1/calls?agent_id=&provider_call_id=&provider=`
 
-List summaries for the org, newest first: id, provider, agent, status, duration, hangup reason, loss score, hallucination count, tool count.
+List summaries for the org, newest first: id, provider, agent, status, duration, hangup reason, loss score, hallucination count, tool count, plus `coverage` (signals, gap ids, completeness) and `view_path`.
 
 Pass `provider_call_id` (and `provider` when you know it) to find a call by the room / SIP / Vapi id you already have.
 
@@ -55,6 +55,25 @@ Pass `provider_call_id` (and `provider` when you know it) to find a call by the 
 Full `CanonicalCall` JSON: turns, tools, latency samples, hangup, hallucinations, evals, grounding, recording URL, transcript. See [Data model](data-model.md).
 
 `404` if the id is missing or belongs to another org.
+
+## Join view
+
+`GET /v1/calls/{call_id}/view`
+
+JSON packet for one call: a conversation-shaped span tree **and** the evidence it joins to, without putting transcripts on span attributes.
+
+| Field | Contents |
+| --- | --- |
+| `join` | `call.id`, `call.provider_id`, `workspace.id`, `agent.id`, `gen_ai.conversation.id` |
+| `trace.spans` | Span names (`call.lifecycle`, `turn.N`, `stt.transcription`, …). Timings and join keys only |
+| `trace.source` | `live` if the agent already exported OTLP (`spans_exported`), else `reconstructed` |
+| `evidence` | turns + transcript, recording URL, tools (shapes, not secrets), hangup, evals, hallucinations |
+| `coverage` | Which signals are present, and whether a gap is **structural** (this path cannot produce it) or **missing** (this call did not) |
+| `links` | `call`, `view`, `ui` |
+
+`GET /v1/ui` and `GET /v1/calls/{call_id}/ui` render the same packet as HTML (API key required when `OBSALT_REQUIRE_AUTH=true`).
+
+Python: `ObsaltClient.view_call(call_id)`.
 
 ## Search
 

@@ -7,9 +7,9 @@ Pick a path **before** you install: [Choose a path](choose-a-path.md). This page
 | Piece | Kind | Role |
 | --- | --- | --- |
 | Your agent **or** a hosted voice platform | Client / vendor | Places the call |
-| `obsalt serve` | HTTP server `:8080` | Ingest + evidence. Required for Path A. Optional for Path B traces-only |
+| `obsalt serve` | HTTP `:8080` | Ingest + evidence + `/v1/ui`. Required for Path A. Optional for Path B traces-only |
 | An OTLP collector | Protocol `:4318` | Receives traces. Not obsalt. Grafana LGTM is the usual local one |
-| Grafana | UI `:3000` | Waterfalls. obsalt has no UI |
+| Grafana | UI `:3000` | Fleet waterfalls. Per-call join is `/v1/ui` |
 
 ```mermaid
 sequenceDiagram
@@ -28,6 +28,7 @@ sequenceDiagram
     You->>API: snapshot on session end
   end
   You->>Grafana: filter call.id
+  You->>API: GET /v1/ui  (one call: tree + transcript)
   You->>API: GET /v1/calls/{id}
 ```
 
@@ -71,6 +72,7 @@ docker run --rm --name lgtm \
 | --- | --- |
 | 4318 | OTLP HTTP — `OBSALT_OTLP_ENDPOINT` and `setup_tracing(otlp_endpoint=...)` |
 | 3000 | Grafana (admin / admin on a fresh LGTM) |
+| 8080 | obsalt serve — ingest, evidence, `/v1/ui` |
 
 obsalt appends `/v1/traces` and `/v1/metrics`. Keep `otlp_endpoint = "http://localhost:4318"`.
 
@@ -83,7 +85,7 @@ obsalt doctor
 obsalt serve
 ```
 
-`GET /health` (no auth) reports `otlp_configured`, `require_auth`, `store: memory`. Interactive API: `http://localhost:8080/docs`.
+`GET /health` (no auth) reports `otlp_configured`, `require_auth`, `store: memory`. Interactive API: `http://localhost:8080/docs`. Join view: `http://localhost:8080/v1/ui`.
 
 ## 5. Path A — ingest without a vendor account
 
@@ -100,6 +102,7 @@ curl -X POST http://localhost:8080/v1/ingest/vapi \
   -d @tests/fixtures/vapi_end_of_call.json
 
 curl -H "X-API-Key: change-me" http://localhost:8080/v1/calls
+# open http://localhost:8080/v1/ui
 ```
 
 Real dashboards: [Vapi](providers/vapi.md) · [Retell](providers/retell.md) · [Bland](providers/bland.md).
@@ -131,8 +134,9 @@ Copy [examples/instrument_agent.py](../examples/instrument_agent.py). Pipecat: [
 
 | Question | Where |
 | --- | --- |
-| Where did 1.8s go? | Tempo — filter `call.id` |
-| What did the agent say? | `GET /v1/calls/{id}` |
+| This call, waterfall + transcript | `http://localhost:8080/v1/ui` |
+| Where did 1.8s go? (fleet) | Tempo — filter `call.id` |
+| What did the agent say? | Join view, or `GET /v1/calls/{id}` |
 | Invented an order number? | `hallucinations[]` |
 | Refund hangups? | `GET /v1/hangups` |
 | Deepgram P95? | Prometheus or `GET /v1/latency` |

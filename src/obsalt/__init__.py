@@ -10,8 +10,8 @@ Two ways in. Pick one:
   snapshot builder if you do not want in-process OTel.
 
 Traces go to your OpenTelemetry backend (OTLP is a protocol, not an obsalt
-server). Transcripts and analysis live in obsalt's evidence store. There is no
-obsalt dashboard.
+server). Transcripts and analysis live in obsalt's evidence store. Open
+``/v1/ui`` to join them for one call. Grafana remains the fleet UI.
 """
 
 from obsalt._version import __version__

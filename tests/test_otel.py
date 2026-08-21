@@ -84,3 +84,21 @@ def test_vapi_webhook_reconstructs_span_tree_without_pii() -> None:
                     keys = set((point.attributes or {}).keys())
                     assert "call_id" not in keys
                     assert c.CALL_ID not in keys
+
+
+def test_reconstruction_emits_recorded_fallback_hops_only() -> None:
+    exporter = InMemorySpanExporter()
+    setup_tracing(span_exporter=exporter, batch=False)
+    store = MemoryStore()
+    pipeline = IngestPipeline(store=store)
+    payload = load_fixture("native_snapshot.json")
+    payload["turns"][0]["metadata"] = {
+        "stt_attempts": [
+            {"provider": "deepgram", "fallback": False, "error": "timeout", "latency_ms": 800},
+            {"provider": "azure", "fallback": True, "confidence": 0.91, "latency_ms": 400},
+        ]
+    }
+    pipeline.ingest(Provider.NATIVE, payload, org_id="org")
+    names = {s.name for s in exporter.get_finished_spans()}
+    assert "stt.provider.deepgram" in names
+    assert "stt.provider.fallback.azure" in names
