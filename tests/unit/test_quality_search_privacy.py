@@ -12,7 +12,6 @@ from obsalt.ingest.receive import receive_webhook
 from obsalt.ops.privacy import apply_deletion
 from obsalt.query import quality_rollup, search_calls
 from obsalt.search.index import MemorySearchIndex
-from obsalt.util import utcnow
 from obsalt.worker.drain import drain_once
 from obsalt_example.plugin import ExamplePlugin
 from tests.helpers import EXAMPLE_FIXTURES, example_headers, example_state
@@ -113,9 +112,12 @@ def test_range_deletion_tombstones_later_ingest() -> None:
     state = example_state()
     raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
     plugin = ExamplePlugin()
-    now = utcnow()
+    event_time = datetime(2026, 8, 22, 12, 0, 1, tzinfo=UTC)
     apply_deletion(
-        state, org_id="acme", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
+        state,
+        org_id="acme",
+        start=event_time - timedelta(hours=1),
+        end=event_time + timedelta(hours=1),
     )
     result = receive_webhook(
         provider="example",

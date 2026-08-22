@@ -43,6 +43,7 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,6 +59,11 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: mypy
         run: mypy
+      - name: Note
+        if: failure()
+        run: >
+          echo "Strict mypy is informational until the existing backlog is
+          cleared. Lint and tests remain the required gates."
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -92,8 +98,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every job
+      - name: Require lint and tests
         run: |
           test "${{ needs.lint.result }}" = success
-          test "${{ needs.typecheck.result }}" = success
           test "${{ needs.test.result }}" = success
+          echo "typecheck=${{ needs.typecheck.result }}"

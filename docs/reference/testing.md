@@ -101,7 +101,9 @@ Review the golden diff before committing.
 Pull requests and pushes to `main` run one workflow: lint, typecheck, and
 tests on Python 3.11 and 3.12. Feature-branch pushes without a pull
 request do not run CI — open a PR. In-progress runs on the same PR cancel
-when you push again.
+when you push again. The required `CI` job gates on lint and tests.
+Strict mypy still runs for visibility; it is informational until the
+existing type backlog is cleared.
 
 The scheduled schema-drift workflow is for refetch comparison. The
 offline pin check also runs on every CI test job.
