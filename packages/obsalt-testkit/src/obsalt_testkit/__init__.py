@@ -9,7 +9,12 @@ from obsalt_testkit.conformance import (
     load_ignore_fields,
     stable_event_dump,
 )
-from obsalt_testkit.schema import FixtureSuite, blocking_errors, validate_raw_fixtures, vendor_only_errors
+from obsalt_testkit.schema import (
+    FixtureSuite,
+    blocking_errors,
+    validate_raw_fixtures,
+    vendor_only_errors,
+)
 
 __all__ = [
     "DEFAULT_IGNORE_FIELDS",

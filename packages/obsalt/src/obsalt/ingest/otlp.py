@@ -6,13 +6,13 @@ ingest acknowledgement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind
 from obsalt.ingest.receive import Inbox, ObjectStore, ReceiveLimits, object_key_for
-from obsalt.otel.span_identity import SpanIdentityIndex, otlp_delivery_key as span_delivery_key
+from obsalt.otel.span_identity import SpanIdentityIndex
+from obsalt.otel.span_identity import otlp_delivery_key as span_delivery_key
 from obsalt.plugin.types import RawEnvelope, ReadableSpan, TombstoneHints
 from obsalt.util import new_id, sha256_bytes, utcnow
 

@@ -14,7 +14,7 @@ DEFAULT_PEPPER = "obsalt-privacy"
 
 def caller_token(org_id: str, caller: str, master_key: bytes | str) -> str:
     key = master_key.encode("utf-8") if isinstance(master_key, str) else master_key
-    material = f"{org_id}\0{caller.strip()}".encode("utf-8")
+    material = f"{org_id}\0{caller.strip()}".encode()
     return hmac.new(key, material, hashlib.sha256).hexdigest()
 
 

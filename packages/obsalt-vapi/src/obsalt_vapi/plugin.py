@@ -339,7 +339,6 @@ class VapiPlugin:
             return BackfillPage(items=[], next_cursor=None, truncated_by_retention=True)
         try:
             import httpx
-
             from obsalt.egress import validate_destination
 
             url = "https://api.vapi.ai/call"
