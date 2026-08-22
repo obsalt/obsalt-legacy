@@ -4,6 +4,11 @@
 <h1>Calls</h1>
 <p>org <code>{{ org_id }}</code></p>
 <p>API list requires a bounded time range.</p>
+<form method="get">
+  <label>Agent <input name="agent_id" value="{{ agent_id }}"></label>
+  <label>Outcome <input name="outcome" value="{{ outcome }}" placeholder="user_hangup"></label>
+  <button type="submit">Filter</button>
+</form>
 <table>
   <thead>
     <tr><th>Call</th><th>Agent</th><th>Source</th><th>Fidelity</th><th>Hangup</th></tr>

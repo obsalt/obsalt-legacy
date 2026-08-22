@@ -54,8 +54,12 @@ class MemoryInbox:
 
     def is_tombstoned(self, hints: dict[str, Any]) -> bool:
         for stone in self.tombstones:
-            if all(hints.get(k) == v for k, v in stone.items() if v is not None):
-                return True
+            if stone.get("org_id") != hints.get("org_id"):
+                continue
+            for key in ("source_call_id", "call_id", "caller_token"):
+                value = hints.get(key)
+                if value and stone.get(key) == value:
+                    return True
         return False
 
     def accept(

@@ -180,6 +180,8 @@ class Runtime:
                 .values
             )
             self.search_vectors[(revision.org_id, revision.call_id)] = vec
+            if self.durable is not None:
+                self.durable.upsert_search(revision.org_id, revision.call_id, revision.revision, text, vec)
         if self.durable is None:
             self.rollup_generation += 1
 
@@ -208,6 +210,13 @@ class Runtime:
         if envelope is None:
             return None
         body = raw if raw is not None else self.objects.get(envelope.object_key)
+        if envelope.provider == "otlp":
+            from obsalt.ingest.otlp import assemble_stored_otlp
+
+            revision = assemble_stored_otlp(self, envelope, body)
+            if revision is not None:
+                self.inbox.mark_assembled(envelope_id, revision.revision)
+            return revision
         loaded = envelope.model_copy(update={"body": body})
         try:
             plugin = self.host.webhook(envelope.provider)
@@ -218,6 +227,8 @@ class Runtime:
             revision = decode_loaded(self, loaded, plugin, blobs)
         except Exception:
             return None
+        if self._revision_tombstoned(revision):
+            return None
         existing = self.get_revision(revision.org_id, revision.call_id)
         if existing:
             revision = revision.model_copy(update={"revision": existing.revision + 1})
@@ -227,6 +238,27 @@ class Runtime:
         self.put_blobs(revision.org_id, blobs)
         self.inbox.mark_assembled(envelope_id, revision.revision)
         return revision
+
+    def _revision_tombstoned(self, revision: CallRevision) -> bool:
+        hints = [
+            {"org_id": revision.org_id, "source_call_id": revision.identity.source_call_id},
+            {"org_id": revision.org_id, "call_id": revision.call_id},
+        ]
+        return any(self.inbox.is_tombstoned(hint) for hint in hints)
+
+    def delete_call(self, org_id: str, call_id: str, *, source_call_id: str | None = None) -> None:
+        revision = self.get_revision(org_id, call_id)
+        source = source_call_id or (revision.identity.source_call_id if revision else None)
+        self.calls.pop((org_id, call_id), None)
+        self.active.pop((org_id, call_id), None)
+        self.search_vectors.pop((org_id, call_id), None)
+        for key in [k for k in self.revisions if k[0] == org_id and k[1] == call_id]:
+            self.revisions.pop(key, None)
+        for key in [k for k in self.analysis if k[0] == org_id and k[1] == call_id]:
+            self.analysis.pop(key, None)
+        self.inbox.add_tombstone(org_id=org_id, source_call_id=source, call_id=call_id, kind="call")
+        if self.durable is not None:
+            self.durable.add_tombstone(org_id=org_id, source_call_id=source, call_id=call_id, kind="call")
 
     def drain_outbox(self, limit: int = 32) -> int:
         claimed = self.inbox.claim(limit)

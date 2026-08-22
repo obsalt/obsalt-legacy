@@ -1,20 +1,34 @@
 from __future__ import annotations
 
+import time
 from importlib.resources import files
 from pathlib import Path
 
 from obsalt.assemble.assembler import fold_events, stamp_events
 from obsalt.assemble.timeline import timeline_view
+from obsalt.auth.primitives import hmac_hex
 from obsalt.domain.enums import MeasurementPlacement, TimelineFidelity
 from obsalt.domain.events import AggregateObserved, StageObserved, TurnObserved
 from obsalt.plugin.protocol import RawEnvelope
 from obsalt_retell.plugin import RetellPlugin
-from obsalt_testkit.conformance import DecoderConformanceTests, UnitsConformanceTests
+from obsalt_testkit.conformance import AuthConformanceTests, DecoderConformanceTests, UnitsConformanceTests
+
+_RETELL_BODY = Path(str(files("obsalt_retell") / "fixtures" / "raw" / "call_ended.json")).read_bytes()
+_RETELL_TS = str(int(time.time() * 1000))
+_RETELL_SIG = hmac_hex("retell-api-key", _RETELL_BODY + _RETELL_TS.encode())
 
 
 class TestRetellDecoder(DecoderConformanceTests):
     plugin_cls = RetellPlugin
     fixtures_dir = Path(str(files("obsalt_retell") / "fixtures"))
+
+
+class TestRetellAuth(AuthConformanceTests):
+    plugin_cls = RetellPlugin
+    valid_body = _RETELL_BODY
+    valid_headers = [(b"x-retell-signature", f"v={_RETELL_TS},d={_RETELL_SIG}".encode())]
+    secret_field = "api_key"
+    secret = "retell-api-key"
 
 
 class TestRetellUnits(UnitsConformanceTests):

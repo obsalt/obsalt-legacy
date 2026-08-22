@@ -78,6 +78,11 @@ class DurableBackend:
         except Exception:
             return None
 
+    def upsert_search(
+        self, org_id: str, call_id: str, revision: int, transcript: str, embedding: list[float]
+    ) -> None:
+        self.pg.upsert_search_document(org_id, call_id, revision, transcript, embedding)
+
     def write_and_cas(self, revision: CallRevision, *, expected: int | None) -> None:
         self.ch.write_revision(revision)
         self.ch.verify(revision)

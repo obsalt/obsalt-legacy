@@ -15,13 +15,14 @@ from fastapi.responses import Response
 from obsalt.assemble.assembler import fold_events, stamp_events
 from obsalt.domain.events import CallObserved
 from obsalt.domain.identity import content_hash, sha256_bytes
+from obsalt.domain.models import CallRevision
 from obsalt.otel.mappers import decode_spans, span_from_mapping
 from obsalt.plugin.protocol import RawEnvelope
 
 MAX_BODY = 8 * 1024 * 1024
 
 
-async def handle_otlp_http(request: Request, runtime: Any) -> Response:
+async def handle_otlp_http(request: Request, runtime: Any, background_tasks: Any | None = None) -> Response:
     content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
     if content_type not in {"application/x-protobuf", "application/json"}:
         return Response(status_code=415, content=b"unsupported content type")
@@ -65,6 +66,7 @@ async def handle_otlp_http(request: Request, runtime: Any) -> Response:
         connection_id="otlp",
         object_key=key,
         body=body,
+        headers=[("content-type", content_type)],
         delivery_key=f"otlp:{org}:{sha256_bytes(body)[:24]}",
         received_at=datetime.now(UTC).isoformat(),
     )
@@ -77,6 +79,32 @@ async def handle_otlp_http(request: Request, runtime: Any) -> Response:
     except Exception:
         stored_id = envelope_id
         runtime.inbox.envelopes[envelope_id] = envelope
+    _ = spans, content_hash
+    if background_tasks is not None:
+        background_tasks.add_task(runtime.process_envelope, stored_id, body)
+    else:
+        runtime.process_envelope(stored_id, body)
+    return Response(
+        status_code=200,
+        content=_partial(rejected=False),
+        media_type="application/x-protobuf" if content_type.endswith("protobuf") else "application/json",
+    )
+
+
+def assemble_stored_otlp(runtime: Any, envelope: Any, body: bytes) -> CallRevision | None:
+    """Decode a persisted OTLP envelope. Called from the worker, not the ACK path."""
+    content_type = ""
+    for key, value in envelope.headers or []:
+        if str(key).lower() == "content-type":
+            content_type = str(value)
+            break
+    if "json" in content_type or body[:1] in {b"{", b"["}:
+        payload = json.loads(body.decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        spans = _spans_from_json(payload)
+    else:
+        spans = _spans_from_protobuf(body)
     views = [span_from_mapping(span) for span in spans]
     events = decode_spans(runtime.host, views)
     calls: dict[str, list[Any]] = {}
@@ -87,41 +115,39 @@ async def handle_otlp_http(request: Request, runtime: Any) -> Response:
         else:
             pending.append(event)
     if not calls and pending:
-        calls["unrooted"] = pending
-        pending = []
+        return None
+    last = None
     for source_call_id, group in calls.items():
         stream = group + pending
         stamped = stamp_events(
             stream,
-            org_id=org,
+            org_id=envelope.org_id,
             source=_source_name(views),
-            envelope_id=stored_id,
+            envelope_id=envelope.envelope_id,
             decoder_version="otlp/1",
-            processing_run_id=stored_id,
-            source_call_id=source_call_id if source_call_id != "unrooted" else None,
+            processing_run_id=envelope.envelope_id,
+            source_call_id=source_call_id,
         )
-        if source_call_id == "unrooted":
-            continue
         revision = fold_events(
             stamped,
-            org_id=org,
+            org_id=envelope.org_id,
             source=_source_name(views),
             source_call_id=source_call_id,
-            processing_run_id=stored_id,
+            processing_run_id=envelope.envelope_id,
             allow_unrooted=False,
         )
-        existing = runtime.get_revision(org, revision.call_id)
+        if runtime.inbox.is_tombstoned(
+            {"org_id": revision.org_id, "source_call_id": revision.identity.source_call_id}
+        ) or runtime.inbox.is_tombstoned({"org_id": revision.org_id, "call_id": revision.call_id}):
+            continue
+        existing = runtime.get_revision(revision.org_id, revision.call_id)
         if existing:
             revision = revision.model_copy(update={"revision": existing.revision + 1})
-            runtime.store_revision(revision, expected=existing.revision)
+            revision, _ = runtime.store_revision(revision, expected=existing.revision)
         else:
-            runtime.store_revision(revision, expected=None)
-    _ = content_hash
-    return Response(
-        status_code=200,
-        content=_partial(rejected=False),
-        media_type="application/x-protobuf" if content_type.endswith("protobuf") else "application/json",
-    )
+            revision, _ = runtime.store_revision(revision, expected=None)
+        last = revision
+    return last
 
 
 def _source_name(views: list[Any]) -> str:

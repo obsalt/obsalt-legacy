@@ -135,3 +135,34 @@ def test_duplicate_delivery_resumes() -> None:
     assert first.created is True
     assert second.created is False
     assert first.envelope_id == second.envelope_id
+
+
+def test_crash_after_blob_before_inbox_is_retryable() -> None:
+    cfg = ConnectionConfig(
+        org_id="o", provider="example", connection_id="c", credentials={"shared_secret": "s"}
+    )
+
+    class BoomInbox(MemoryInbox):
+        def accept(self, *args: object, **kwargs: object) -> tuple[str, bool]:
+            raise RuntimeError("crash after blob")
+
+    objects = MemoryObjects()
+    host = PluginHost()
+    host._register(ExamplePlugin(), source="test")
+    boom = ReceiveService(
+        host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=BoomInbox()
+    )
+    body = b'{"event":"call.completed","call_id":"c1"}'
+    headers = [(b"x-example-secret", b"s")]
+    try:
+        boom.handle(provider="example", ingest_key="k", raw=body, headers=headers)
+        raise AssertionError("expected crash")
+    except RuntimeError:
+        pass
+    assert objects.blobs
+    recovered = ReceiveService(
+        host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=MemoryInbox()
+    )
+    result = recovered.handle(provider="example", ingest_key="k", raw=body, headers=headers)
+    assert result.created is True
+    assert result.state is EnvelopeState.QUEUED

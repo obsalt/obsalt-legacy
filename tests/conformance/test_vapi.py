@@ -6,7 +6,7 @@ from pathlib import Path
 from obsalt.domain.enums import MeasurementPlacement, Provenance, Stage
 from obsalt.domain.events import StageObserved
 from obsalt.plugin.protocol import RawEnvelope
-from obsalt_testkit.conformance import DecoderConformanceTests
+from obsalt_testkit.conformance import AuthConformanceTests, DecoderConformanceTests
 from obsalt_vapi.ended_reasons import coverage
 from obsalt_vapi.plugin import VapiPlugin
 
@@ -14,6 +14,14 @@ from obsalt_vapi.plugin import VapiPlugin
 class TestVapiDecoder(DecoderConformanceTests):
     plugin_cls = VapiPlugin
     fixtures_dir = Path(str(files("obsalt_vapi") / "fixtures"))
+
+
+class TestVapiAuth(AuthConformanceTests):
+    plugin_cls = VapiPlugin
+    valid_body = (Path(str(files("obsalt_vapi") / "fixtures" / "raw" / "end_of_call.json"))).read_bytes()
+    valid_headers = [(b"x-vapi-secret", b"vapi-secret")]
+    secret_field = "shared_secret"
+    secret = "vapi-secret"
 
 
 def test_vapi_reads_published_latency_keys() -> None:

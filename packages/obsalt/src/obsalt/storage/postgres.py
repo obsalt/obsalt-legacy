@@ -182,13 +182,49 @@ class PostgresStore:
     def claim(self, limit: int = 32) -> list[str]:
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT envelope_id FROM outbox WHERE done_at IS NULL "
-                "ORDER BY id ASC LIMIT %s FOR UPDATE SKIP LOCKED",
+                "UPDATE outbox SET leased_until = now() + interval '30 seconds', "
+                "lease_owner = 'worker', attempts = attempts + 1 "
+                "WHERE id IN ("
+                "  SELECT id FROM outbox "
+                "  WHERE done_at IS NULL AND (leased_until IS NULL OR leased_until < now()) "
+                "  ORDER BY id ASC LIMIT %s FOR UPDATE SKIP LOCKED"
+                ") RETURNING envelope_id",
                 (limit,),
             )
             rows = [row[0] for row in cur.fetchall()]
         self.conn.commit()
         return rows
+
+    def upsert_search_document(
+        self,
+        org_id: str,
+        call_id: str,
+        revision: int,
+        transcript: str,
+        embedding: list[float],
+    ) -> None:
+        vector = "[" + ",".join(f"{value:.7f}" for value in embedding) + "]"
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO search_documents "
+                "(org_id, call_id, revision, transcript, tsv, embedding, index_version, embedder_version) "
+                "VALUES (%s, %s, %s, %s, to_tsvector('simple', %s), %s::vector, %s, %s) "
+                "ON CONFLICT (org_id, call_id) DO UPDATE SET "
+                "revision = EXCLUDED.revision, transcript = EXCLUDED.transcript, "
+                "tsv = EXCLUDED.tsv, embedding = EXCLUDED.embedding, "
+                "index_version = EXCLUDED.index_version, embedder_version = EXCLUDED.embedder_version",
+                (
+                    org_id,
+                    call_id,
+                    revision,
+                    transcript,
+                    transcript,
+                    vector,
+                    "index/1",
+                    "ngram/1",
+                ),
+            )
+        self.conn.commit()
 
     def mark_assembled(self, envelope_id: str, revision: int) -> None:
         with self.conn.cursor() as cur:

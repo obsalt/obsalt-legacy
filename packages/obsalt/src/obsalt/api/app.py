@@ -17,8 +17,9 @@ from obsalt.api.auth import require_scope
 from obsalt.api.sessions import SESSION_COOKIE, dump_session, load_session
 from obsalt.assemble.timeline import timeline_view
 from obsalt.config import Settings
+from obsalt.domain.time import parse_datetime
 from obsalt.ingest.otlp import handle_otlp_http
-from obsalt.plugin.protocol import ConnectionConfig
+from obsalt.plugin.protocol import BackfillCursor, ConnectionConfig
 from obsalt.runtime import ApiPrincipal, Runtime
 from obsalt.search.hybrid import hybrid_search
 
@@ -74,28 +75,54 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         )
 
     @app.post("/v1/traces")
-    async def traces(request: Request) -> Response:
-        return await handle_otlp_http(request, runtime)
+    async def traces(request: Request, background_tasks: BackgroundTasks) -> Response:
+        return await handle_otlp_http(request, runtime, background_tasks)
 
     @app.get("/v1/calls")
     def list_calls(
         principal: ApiPrincipal = Depends(require_scope("read")),
         agent_id: str | None = None,
+        outcome: str | None = None,
+        latency_ms: float | None = None,
         from_ts: str | None = Query(default=None, alias="from"),
         to_ts: str | None = Query(default=None, alias="to"),
         cursor: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         _require_range(from_ts, to_ts)
+        start_at = parse_datetime(from_ts)
+        end_at = parse_datetime(to_ts)
         calls = runtime.list_calls(principal.org_id)
         if agent_id:
             calls = [c for c in calls if c.identity.agent_id == agent_id]
-        calls = sorted(calls, key=lambda c: c.identity.call_id)
-        start = int(cursor or 0)
-        page = calls[start : start + limit]
+        if outcome:
+            calls = [c for c in calls if c.hangup and c.hangup.reason.value == outcome]
+        if latency_ms is not None:
+            calls = [c for c in calls if any(m.value_ms >= latency_ms for m in c.stage_measurements)]
+        if start_at and end_at:
+            bounded: list[Any] = []
+            for call in calls:
+                started = _call_started(call)
+                if started is None:
+                    continue
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=start_at.tzinfo)
+                if start_at <= started <= end_at:
+                    bounded.append(call)
+            calls = bounded
+        calls = sorted(
+            calls, key=lambda c: (c.lifecycle.started_at or c.identity.call_id, c.identity.call_id)
+        )
+        offset = _cursor_offset(cursor)
+        page = calls[offset : offset + limit]
+        next_cursor = None
+        if offset + limit < len(calls) and page:
+            last = page[-1]
+            next_cursor = f"{offset + limit}|{last.call_id}|{last.revision}"
         return {
             "items": [_call_list_item(c) for c in page],
-            "next_cursor": str(start + limit) if start + limit < len(calls) else None,
+            "next_cursor": next_cursor,
+            "as_of_generation": runtime.rollup_generation,
         }
 
     @app.get("/v1/calls/{call_id}")
@@ -319,7 +346,49 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     def backfill(
         body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
     ) -> dict[str, Any]:
-        return {"accepted": True, "connection_id": body.get("connection_id")}
+        connection_id = str(body.get("connection_id") or "")
+        cfg = runtime.connections.get(connection_id)
+        if cfg is None or cfg.org_id != principal.org_id:
+            raise HTTPException(status_code=404, detail="connection not found")
+        try:
+            plugin = runtime.host.get(cfg.provider).instance
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail="plugin not installed") from exc
+        if not hasattr(plugin, "scan") or not hasattr(plugin, "hydrate"):
+            return {"accepted": False, "reason": "plugin does not declare rest_backfill"}
+        page = plugin.scan(
+            cfg,
+            BackfillCursor(
+                token=body.get("cursor"),
+                started_after=body.get("started_after"),
+                started_before=body.get("started_before"),
+            ),
+        )
+        hydrated = 0
+        for item in page.items:
+            envelope = plugin.hydrate(cfg, item)
+            envelope = envelope.model_copy(
+                update={"org_id": principal.org_id, "connection_id": cfg.connection_id}
+            )
+            raw = envelope.body or b""
+            if not raw:
+                continue
+            key = f"raw/{principal.org_id}/{cfg.provider}/backfill/{item.upstream_entity_id}"
+            runtime.objects.put(key, raw, headers={})
+            envelope = envelope.model_copy(update={"object_key": key})
+            stored_id, created = runtime.inbox.accept(
+                envelope,
+                delivery_key=envelope.delivery_key,
+                tombstone_hints={"org_id": principal.org_id, "source_call_id": item.upstream_entity_id},
+            )
+            if created and runtime.process_envelope(stored_id, raw) is not None:
+                hydrated += 1
+        return {
+            "accepted": True,
+            "hydrated": hydrated,
+            "next_cursor": page.next_cursor.model_dump() if page.next_cursor else None,
+            "truncated_by_retention": page.truncated_by_retention,
+        }
 
     @app.post("/v1/privacy/deletion-requests")
     def deletion(
@@ -328,9 +397,11 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         runtime.tombstones.append({"org_id": principal.org_id, **body})
         kind = body.get("kind")
         if kind == "call" and body.get("call_id"):
-            runtime.calls.pop((principal.org_id, body["call_id"]), None)
-            runtime.active.pop((principal.org_id, body["call_id"]), None)
-            runtime.inbox.add_tombstone(org_id=principal.org_id, source_call_id=body.get("source_call_id"))
+            runtime.delete_call(
+                principal.org_id,
+                str(body["call_id"]),
+                source_call_id=body.get("source_call_id"),
+            )
         return {"status": "accepted", "undoable": False}
 
     @app.get("/v1/plugins")
@@ -371,13 +442,24 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
 
     @app.get("/v1/ui/calls", response_class=HTMLResponse)
     def ui_calls(
-        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+        request: Request,
+        agent_id: str = "",
+        outcome: str = "",
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     ) -> Response:
         org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
         calls = runtime.list_calls(org)
-        return TEMPLATES.TemplateResponse(request, "calls.html", {"calls": calls, "org_id": org})
+        if agent_id:
+            calls = [c for c in calls if c.identity.agent_id == agent_id]
+        if outcome:
+            calls = [c for c in calls if c.hangup and c.hangup.reason.value == outcome]
+        return TEMPLATES.TemplateResponse(
+            request,
+            "calls.html",
+            {"calls": calls, "org_id": org, "agent_id": agent_id, "outcome": outcome},
+        )
 
     @app.get("/v1/ui/calls/{call_id}", response_class=HTMLResponse)
     def ui_call(
@@ -487,9 +569,6 @@ def _ui_org(runtime: Runtime, request: Request, token: str | None) -> tuple[str 
                 )
     if principal:
         return principal.org_id, principal
-    if runtime.settings.demo:
-        orgs = {key[0] for key in runtime.calls} or {"demo"}
-        return next(iter(orgs)), None
     return None, None
 
 
@@ -509,6 +588,28 @@ def _call_or_404(runtime: Runtime, org_id: str, call_id: str) -> Any:
 def _require_range(from_ts: str | None, to_ts: str | None) -> None:
     if not from_ts or not to_ts:
         raise HTTPException(status_code=400, detail="from and to are required")
+
+
+def _call_started(revision: Any) -> Any:
+    if revision.lifecycle.started_at is not None:
+        return revision.lifecycle.started_at
+    for turn in revision.turns:
+        if turn.started_at is not None:
+            return turn.started_at
+    for measurement in revision.stage_measurements:
+        if measurement.started_at is not None:
+            return measurement.started_at
+    return None
+
+
+def _cursor_offset(cursor: str | None) -> int:
+    if not cursor:
+        return 0
+    head = cursor.split("|", 1)[0]
+    try:
+        return max(0, int(head))
+    except ValueError:
+        return 0
 
 
 def _call_list_item(revision: Any) -> dict[str, Any]:

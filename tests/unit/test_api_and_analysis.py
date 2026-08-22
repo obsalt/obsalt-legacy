@@ -15,7 +15,7 @@ from obsalt_example.plugin import ExamplePlugin
 from obsalt_example.stream import ExampleStreamSource
 
 
-def _runtime() -> tuple[Runtime, str]:
+def _runtime() -> tuple[Runtime, str, str]:
     runtime = Runtime.create(Settings(demo=True), extra_plugins=[ExamplePlugin()])
     creds = runtime.bootstrap_dev_org("acme")
     runtime.api_keys[hash_secret(creds["api_key"])] = ApiPrincipal(
@@ -71,9 +71,10 @@ def test_ingest_to_call_detail() -> None:
     assert body["coverage"]
     timeline = client.get(f"/v1/calls/{call_id}/timeline", headers={"X-API-Key": key})
     assert "reason" in timeline.json()
-    ui = client.get(f"/v1/ui/calls/{call_id}")
+    ui = client.get(f"/v1/ui/calls/{call_id}", headers={"X-API-Key": key})
     assert ui.status_code == 200
     assert "Provenance" in ui.text
+    assert client.get(f"/v1/ui/calls/{call_id}", follow_redirects=False).status_code == 303
 
 
 def test_span_names_are_low_cardinality() -> None:

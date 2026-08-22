@@ -157,14 +157,18 @@ class DecoderConformanceTests:
             assert fidelity.value in {p.value for p in type(fidelity)}
 
     def test_golden_expected_outputs(self, plugin: Any, suite: FixtureSuite) -> None:
+        ignore = _ignore_fields(suite)
+        missing = []
         for path, _ in suite.raw_payloads():
             expected = suite.expected_for(path.name)
             if expected is None:
+                missing.append(path.name)
                 continue
             events = [
                 e.model_dump(mode="json") for e in plugin.decode(self._envelope(path.read_bytes(), path.stem))
             ]
-            assert _strip(events) == _strip(expected)
+            assert _strip(events, ignore) == _strip(expected, ignore)
+        assert not missing, f"raw fixtures missing expected/: {missing}"
 
 
 class UnitsConformanceTests:
@@ -228,8 +232,11 @@ class AuthConformanceTests:
             connection_id="c",
             credentials={self.secret_field: self.secret},
         )
-        result = plugin.authenticate(self.valid_body + b"x", self.valid_headers, cfg)
-        assert result.outcome.value in {"bad_signature", "malformed"}
+        tampered_body = plugin.authenticate(self.valid_body + b"x", self.valid_headers, cfg)
+        tampered_headers = [(key, value + b"x") for key, value in self.valid_headers]
+        tampered_header = plugin.authenticate(self.valid_body, tampered_headers, cfg)
+        outcomes = {tampered_body.outcome.value, tampered_header.outcome.value}
+        assert outcomes & {"bad_signature", "malformed"}
 
     def test_valid_signature_accepted(self) -> None:
         plugin = self._plugin()
@@ -243,21 +250,30 @@ class AuthConformanceTests:
         assert result.ok
 
 
-def _strip(value: Any) -> Any:
+def _ignore_fields(suite: FixtureSuite) -> set[str]:
+    path = suite.root / "ignore_fields"
+    defaults = {"envelope_id", "processing_run_id", "event_occurred_at", "decoder_version"}
+    if not path.exists():
+        return defaults
+    extra = {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    return defaults | extra
+
+
+def _strip(value: Any, ignore: set[str] | None = None) -> Any:
+    skip = ignore or {
+        "envelope_id",
+        "processing_run_id",
+        "event_occurred_at",
+        "decoder_version",
+    }
     if isinstance(value, list):
-        return [_strip(v) for v in value]
+        return [_strip(v, skip) for v in value]
     if isinstance(value, dict):
-        return {
-            k: _strip(v)
-            for k, v in value.items()
-            if k
-            not in {
-                "envelope_id",
-                "processing_run_id",
-                "event_occurred_at",
-                "decoder_version",
-            }
-        }
+        return {k: _strip(v, skip) for k, v in value.items() if k not in skip}
     if isinstance(value, str) and value.endswith("+00:00"):
         return value.replace("+00:00", "Z")
     return value

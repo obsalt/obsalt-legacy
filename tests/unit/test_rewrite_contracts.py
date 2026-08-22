@@ -63,7 +63,7 @@ def test_stamp_applies_call_key_to_every_event() -> None:
 def test_replay_keeps_prior_revision() -> None:
     runtime, _key, ingest = _runtime()
     client = TestClient(create_app(runtime))
-    raw = b'{"event":"call.completed","call_id":"replay-1","turns":[{"index":0,"speaker":"user","text":"hi","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"}],"outcome":{"code":"completed"}}'
+    raw = b'{"event":"call.completed","call_id":"replay-1","started_at":"2026-08-22T12:00:00Z","turns":[{"index":0,"speaker":"user","text":"hi","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"}],"outcome":{"code":"completed"}}'
     client.post(f"/v1/ingest/example/{ingest}", content=raw, headers={"x-example-secret": "s"})
     first = next(iter(runtime.calls.values()))
     first_rev = first.revision
@@ -155,12 +155,78 @@ def test_otlp_json_assembles_and_rejects_mixed_org() -> None:
         "/v1/traces", json=mixed, headers={"X-API-Key": key, "content-type": "application/json"}
     )
     assert denied.status_code == 400
+    listed = client.get(
+        "/v1/calls",
+        headers={"X-API-Key": key},
+        params={"from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z"},
+    )
+    assert any(item["call_id"] for item in listed.json()["items"])
+
+
+def test_cross_tenant_call_is_404() -> None:
+    runtime, key, ingest = _runtime()
+    client = TestClient(create_app(runtime))
+    raw = b'{"event":"call.completed","call_id":"tenant-a","started_at":"2026-08-22T12:00:00Z","turns":[{"index":0,"speaker":"user","text":"hi","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"}],"outcome":{"code":"completed"}}'
+    client.post(f"/v1/ingest/example/{ingest}", content=raw, headers={"x-example-secret": "s"})
+    other = "obsalt_sk_otherorg_secret"
+    runtime.api_keys[hash_secret(other)] = ApiPrincipal(org_id="other", scope="admin", kind="service")
+    listed = client.get(
+        "/v1/calls",
+        headers={"X-API-Key": key},
+        params={"from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z"},
+    )
+    call_id = listed.json()["items"][0]["call_id"]
+    denied = client.get(f"/v1/calls/{call_id}", headers={"X-API-Key": other})
+    assert denied.status_code == 404
+
+
+def test_list_calls_applies_time_range() -> None:
+    runtime, key, ingest = _runtime()
+    client = TestClient(create_app(runtime))
+    raw = b'{"event":"call.completed","call_id":"ranged","started_at":"2026-08-22T12:00:00Z","turns":[{"index":0,"speaker":"user","text":"hi","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"}],"outcome":{"code":"completed"}}'
+    client.post(f"/v1/ingest/example/{ingest}", content=raw, headers={"x-example-secret": "s"})
+    headers = {"X-API-Key": key}
+    empty = client.get(
+        "/v1/calls",
+        headers=headers,
+        params={"from": "2020-01-01T00:00:00Z", "to": "2020-12-31T00:00:00Z"},
+    )
+    assert empty.json()["items"] == []
+    found = client.get(
+        "/v1/calls",
+        headers=headers,
+        params={"from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"},
+    )
+    assert found.json()["items"]
+    assert "|" not in (found.json()["next_cursor"] or "")
+
+
+def test_delete_by_call_cannot_be_replayed() -> None:
+    runtime, key, ingest = _runtime()
+    client = TestClient(create_app(runtime))
+    raw = b'{"event":"call.completed","call_id":"doomed","started_at":"2026-08-22T12:00:00Z","turns":[{"index":0,"speaker":"user","text":"hi","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"}],"outcome":{"code":"completed"}}'
+    client.post(f"/v1/ingest/example/{ingest}", content=raw, headers={"x-example-secret": "s"})
+    listed = client.get(
+        "/v1/calls",
+        headers={"X-API-Key": key},
+        params={"from": "2020-01-01T00:00:00Z", "to": "2030-01-01T00:00:00Z"},
+    )
+    call_id = listed.json()["items"][0]["call_id"]
+    deleted = client.post(
+        "/v1/privacy/deletion-requests",
+        headers={"X-API-Key": key},
+        json={"kind": "call", "call_id": call_id, "source_call_id": "doomed"},
+    )
+    assert deleted.json()["undoable"] is False
+    runtime.replay_org("acme", provider="example")
+    gone = client.get(f"/v1/calls/{call_id}", headers={"X-API-Key": key})
+    assert gone.status_code == 404
 
 
 def test_ui_surfaces_and_analyze() -> None:
     runtime, key, ingest = _runtime()
     client = TestClient(create_app(runtime))
-    raw = b'{"event":"call.completed","call_id":"ui-1","system_prompt":"be honest","turns":[{"index":0,"speaker":"user","text":"refund please","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"},{"index":1,"speaker":"agent","text":"I refunded ORD-99999","started_at":"2026-08-22T12:00:01Z","ended_at":"2026-08-22T12:00:02Z"}],"outcome":{"code":"user_hangup"}}'
+    raw = b'{"event":"call.completed","call_id":"ui-1","started_at":"2026-08-22T12:00:00Z","system_prompt":"be honest","turns":[{"index":0,"speaker":"user","text":"refund please","started_at":"2026-08-22T12:00:00Z","ended_at":"2026-08-22T12:00:01Z"},{"index":1,"speaker":"agent","text":"I refunded ORD-99999","started_at":"2026-08-22T12:00:01Z","ended_at":"2026-08-22T12:00:02Z"}],"outcome":{"code":"user_hangup"}}'
     client.post(f"/v1/ingest/example/{ingest}", content=raw, headers={"x-example-secret": "s"})
     headers = {"X-API-Key": key}
     assert client.get("/v1/ui/latency", headers=headers).status_code == 200
