@@ -1,0 +1,23 @@
+{
+  "call_id": "ex-1",
+  "delivery_id": "del-1",
+  "agent_id": "support",
+  "system_prompt": "You are a support agent. Look up orders with lookup_order.",
+  "final": true,
+  "ended_reason": "user_hangup",
+  "turns": [
+    {
+      "speaker": "user",
+      "text": "I want a refund.",
+      "started_at": "2026-08-22T12:00:01Z",
+      "ended_at": "2026-08-22T12:00:03Z",
+      "stt_ms": 180
+    },
+    {
+      "speaker": "agent",
+      "text": "I can help with that.",
+      "started_at": "2026-08-22T12:00:03.5Z",
+      "ended_at": "2026-08-22T12:00:05Z"
+    }
+  ]
+}

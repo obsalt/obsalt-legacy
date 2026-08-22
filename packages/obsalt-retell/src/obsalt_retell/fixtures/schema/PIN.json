@@ -1,0 +1,10 @@
+{
+  "schema_source": "https://docs.retellai.com/api-references/get-call",
+  "schema_revision": "2026-08-22",
+  "fetched_at": "2026-08-22",
+  "units": {
+    "Utterance.words.start": "seconds relative audio time",
+    "Utterance.words.end": "seconds relative audio time",
+    "CallLatency.p50/p90/p95/p99/values": "milliseconds"
+  }
+}

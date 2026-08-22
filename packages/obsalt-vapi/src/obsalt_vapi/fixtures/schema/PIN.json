@@ -1,0 +1,6 @@
+{
+  "schema_source": "https://docs.vapi.ai PerformanceMetrics / TurnLatency / ServerMessageEndOfCallReport",
+  "schema_revision": "2026-08-22",
+  "fetched_at": "2026-08-22",
+  "notes": "Units for TurnLatency fields are milliseconds (documented on related LatencyMetrics as ms). secondsFromStart and message.duration are seconds. message.time is epoch milliseconds."
+}

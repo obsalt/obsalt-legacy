@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-retell"
+version = "2.0.0"
+description = "Retell hosted source plugin for obsalt"
+requires-python = ">=3.11"
+dependencies = ["obsalt==2.0.0"]
+
+[project.entry-points."obsalt.plugins"]
+retell = "obsalt_retell.plugin:RetellPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_retell = ["fixtures/**/*", "data/**/*"]

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>obsalt — calls</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 2rem; color: #111; }
+    a { color: #0b57d0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .banner { background: #111; color: #fff; padding: 0.5rem 1rem; margin: -2rem -2rem 1.5rem; }
+  </style>
+</head>
+<body>
+  <div class="banner">obsalt — call analytics. Not a dashboard builder.</div>
+  <h1>Calls</h1>
+  <p><a href="/v1/plugins">Installed plugins</a></p>
+  <table>
+    <thead>
+      <tr><th>Call</th><th>Agent</th><th>Source</th><th>Fidelity</th><th>Hangup</th></tr>
+    </thead>
+    <tbody>
+      {% for call in calls %}
+      <tr>
+        <td><a href="/v1/ui/calls/{{ call.call_id }}">{{ call.call_id }}</a></td>
+        <td>{{ call.agent_id }}</td>
+        <td>{{ call.source }}</td>
+        <td>{{ call.timeline_fidelity.value }}</td>
+        <td>{{ call.hangup.reason.value if call.hangup else "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No calls yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

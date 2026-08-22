@@ -1,121 +1,83 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
-
-from obsalt.api import create_app
+from obsalt.api import AppState, create_app
+from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.config import Settings
-from obsalt.pipeline import IngestPipeline
-from obsalt.security import verify_retell, verify_vapi
-from obsalt.store import MemoryStore
-from tests.conftest import load_fixture
+from obsalt.crypto.primitives import hmac_hex
+from obsalt.domain.enums import KeyScope
+from obsalt.plugin.types import ConnectionConfig
+from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
+from obsalt.worker.process import MemoryRevisionSink
+from obsalt_example.plugin import ExamplePlugin
 
-
-def test_webhook_signatures() -> None:
-    assert verify_vapi({"x-vapi-secret": "s"}, "s")
-    assert not verify_vapi({"x-vapi-secret": "nope"}, "s")
-    body = b'{"event":"call_ended"}'
-    assert verify_retell({"x-retell-signature": "deadbeef"}, body, "secret") is False
-    import hashlib
-    import hmac
-
-    sig = hmac.new(b"secret", body, hashlib.sha256).hexdigest()
-    assert verify_retell({"x-retell-signature": sig}, body, "secret")
+FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-example" / "src" / "obsalt_example" / "fixtures"
 
 
 def _client() -> TestClient:
-    store = MemoryStore()
-    settings = Settings(api_keys="acme:test-key", require_auth=True)
-    app = create_app(store=store, pipeline=IngestPipeline(store=store), settings=settings)
-    return TestClient(app)
-
-
-def test_health() -> None:
-    response = TestClient(create_app()).get("/health")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    assert body["service"] == "obsalt"
-    assert "version" in body
-    assert body["store"] == "memory"
-
-
-def test_ingest_to_search_latency_hangup_tools() -> None:
-    client = _client()
-    headers = {"X-API-Key": "test-key"}
-    vapi = client.post("/v1/ingest/vapi", headers=headers, json=load_fixture("vapi_end_of_call.json"))
-    assert vapi.status_code == 200
-    assert vapi.json()["finalized"] is True
-    retell = client.post("/v1/ingest/retell", headers=headers, json=load_fixture("retell_call_ended.json"))
-    assert retell.status_code == 200
-
-    unauthorized = client.post("/v1/ingest/vapi", json=load_fixture("vapi_end_of_call.json"))
-    assert unauthorized.status_code == 401
-
-    calls = client.get("/v1/calls", headers=headers).json()
-    assert calls["count"] == 2
-
-    search = client.post("/v1/search", headers=headers, json={"query": "customers asking about refunds"})
-    assert search.status_code == 200
-    assert search.json()["hits"][0]["call_id"] == vapi.json()["call_id"]
-
-    latency = client.get("/v1/latency", headers=headers).json()["components"]
-    names = {c["component"] for c in latency}
-    assert {"stt", "llm", "tts"}.issubset(names)
-    stt = next(c for c in latency if c["component"] == "stt")
-    assert stt["p50_ms"] is not None
-    assert stt["p95_ms"] is not None
-
-    hangups = client.get("/v1/hangups", headers=headers).json()["clusters"]
-    assert hangups
-    user_cluster = next(c for c in hangups if c["reason"] == "user_hangup")
-    assert user_cluster["lost_customer_call_id"] == vapi.json()["call_id"]
-
-    tools = client.get("/v1/tools", headers=headers).json()["tools"]
-    lookup = next(t for t in tools if t["name"] == "lookup_order")
-    assert lookup["invocations"] >= 1
-    assert lookup["success_rate"] == 0
-
-    detail = client.get(f"/v1/calls/{vapi.json()['call_id']}", headers=headers).json()
-    assert detail["hallucinations"]
-    assert detail["evals"]
-
-    created = client.post(
-        "/v1/evals/rubrics",
-        headers=headers,
-        json={"name": "No invented IDs", "description": "The agent never invents order numbers.", "threshold": 0.9},
+    plugin = ExamplePlugin()
+    resolver = MemoryResolver()
+    cfg = ConnectionConfig(
+        org_id="acme",
+        provider="example",
+        connection_id="c1",
+        ingest_key_hash="",
+        secrets={"hmac_secret": "s"},
     )
-    assert created.status_code == 200
-    rerun = client.post(f"/v1/evals/run/{vapi.json()['call_id']}", headers=headers)
-    assert rerun.status_code == 200
-    assert any(e["rubric_name"] == "No invented IDs" for e in rerun.json()["evals"])
-
-
-def test_openai_realtime_ingest_endpoint() -> None:
-    client = _client()
-    response = client.post(
-        "/v1/ingest/openai-realtime",
-        headers={"X-API-Key": "test-key"},
-        json=load_fixture("openai_realtime_session.json"),
+    resolver.add(cfg, "ik")
+    state = AppState(
+        settings=Settings(),
+        plugins=__import__("obsalt.plugin.host", fromlist=["LoadedPlugin"]).LoadedPlugin(plugin),  # type: ignore[arg-type]
+        resolver=resolver,
+        objects=MemoryObjectStore(),
+        inbox=MemoryInbox(),
+        pointers=MemoryPointerStore(),
+        sink=MemoryRevisionSink(),
+        keys={"k": ("acme", frozenset(KeyScope))},
     )
-    assert response.status_code == 200
-    call = client.get(f"/v1/calls/{response.json()['call_id']}", headers={"X-API-Key": "test-key"}).json()
-    assert call["provider"] == "openai_realtime"
-    assert any(s["component"] == "stt" for s in call["latency_samples"])
+    # LoadedPlugin expects ObsaltPlugin; wrap properly
+    from obsalt.plugin.host import LoadedPlugin
+
+    state.plugins = [LoadedPlugin(plugin)]
+    return TestClient(create_app(Settings(), state))
 
 
-def test_lookup_by_provider_call_id() -> None:
+def test_health_and_plugins() -> None:
     client = _client()
-    headers = {"X-API-Key": "test-key"}
-    ingested = client.post(
-        "/v1/ingest/vapi", headers=headers, json=load_fixture("vapi_end_of_call.json")
+    assert client.get("/health").json()["status"] == "ok"
+    names = [p["name"] for p in client.get("/v1/plugins").json()["items"]]
+    assert "example" in names
+
+
+def test_list_calls_requires_time_range() -> None:
+    client = _client()
+    res = client.get("/v1/calls", headers={"X-API-Key": "k"})
+    assert res.status_code == 400
+
+
+def test_unknown_api_key_is_401_not_first_org() -> None:
+    client = _client()
+    res = client.get("/v1/calls?start=2026-01-01T00:00:00Z&end=2026-12-31T00:00:00Z", headers={"X-API-Key": "nope"})
+    assert res.status_code == 401
+
+
+def test_ingest_example_and_ui() -> None:
+    client = _client()
+    raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
+    sig = hmac_hex("s", raw)
+    res = client.post(
+        "/v1/ingest/example/ik",
+        content=raw,
+        headers={"x-obsalt-example-signature": sig, "content-type": "application/json"},
     )
-    assert ingested.status_code == 200
-    detail = client.get(f"/v1/calls/{ingested.json()['call_id']}", headers=headers).json()
+    assert res.status_code == 200
     listed = client.get(
-        "/v1/calls",
-        headers=headers,
-        params={"provider_call_id": detail["provider_call_id"], "provider": "vapi"},
+        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
     )
     assert listed.status_code == 200
-    assert listed.json()["count"] == 1
-    assert listed.json()["calls"][0]["id"] == ingested.json()["call_id"]
+    ui = client.get("/v1/ui")
+    assert ui.status_code == 200
+    assert b"obsalt" in ui.content

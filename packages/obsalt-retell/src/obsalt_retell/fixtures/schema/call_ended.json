@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendored/retell/call_ended.schema.json",
+  "title": "RetellCallEndedWebhook",
+  "description": "Vendored subset of Retell call_ended webhook. words[].start/end are seconds. CallLatency values are milliseconds. Pinned 2026-08-22 from docs.retellai.com get-call.",
+  "type": "object",
+  "required": ["event", "call"],
+  "properties": {
+    "event": { "type": "string" },
+    "call": {
+      "type": "object",
+      "required": ["call_id"],
+      "properties": {
+        "call_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "direction": { "type": "string" },
+        "from_number": { "type": "string" },
+        "to_number": { "type": "string" },
+        "start_timestamp": { "type": "number" },
+        "end_timestamp": { "type": "number" },
+        "duration_ms": { "type": "number" },
+        "disconnection_reason": { "type": "string" },
+        "transcript": { "type": "string" },
+        "recording_url": { "type": "string" },
+        "latency": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "p50": { "type": "number" },
+              "p90": { "type": "number" },
+              "p95": { "type": "number" },
+              "p99": { "type": "number" },
+              "min": { "type": "number" },
+              "max": { "type": "number" },
+              "num": { "type": "number" },
+              "values": { "type": "array", "items": { "type": "number" } }
+            }
+          }
+        },
+        "transcript_with_tool_calls": { "type": "array" },
+        "call_cost": { "type": "object" },
+        "call_analysis": { "type": "object" },
+        "retell_llm_dynamic_variables": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

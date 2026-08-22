@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Call {{ call.call_id }}</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; color: #111; }
+    header { background: #111; color: #fff; padding: 0.75rem 1.5rem; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem; }
+    .panel { border: 1px solid #ddd; padding: 1rem; }
+    .chip { display: inline-block; background: #eef; padding: 0.15rem 0.4rem; margin: 0.1rem; font-size: 0.85rem; }
+    .absent { color: #888; }
+    .unsupported { color: #a60; }
+    pre { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/v1/ui" style="color:#fff">← calls</a>
+    · {{ call.source }} / {{ call.agent_id }}
+    · fidelity {{ call.timeline_fidelity.value }}
+    · architecture {{ call.pipeline_architecture.value }}
+  </header>
+  <main>
+    <section class="panel">
+      <h2>Timeline</h2>
+      <p>{{ timeline.reason }}</p>
+      {% if timeline.draw_stage_waterfall %}
+        <p>Stage waterfall (INTERVAL measurements only).</p>
+        {% for item in timeline.stage_intervals %}
+          <div class="chip">{{ item.stage }} {{ item.value_ms }}ms</div>
+        {% endfor %}
+      {% else %}
+        <p>No invented stage intervals.</p>
+        <h3>Turns</h3>
+        {% for turn in timeline.turns %}
+          <div>{{ turn.index }} {{ turn.speaker }}</div>
+        {% endfor %}
+        <h3>Unplaced stage chips</h3>
+        {% for item in timeline.unplaced_stage_chips %}
+          <div class="chip">{{ item.stage }} {{ item.metric }} {{ item.value_ms }}ms ({{ item.placement }})</div>
+        {% endfor %}
+      {% endif %}
+      {% if timeline.aggregates %}
+        <h3>Provider aggregates (not mixed into sample percentiles)</h3>
+        {% for a in timeline.aggregates %}
+          <div class="chip">{{ a.stage }} {{ a.statistic }} {{ a.value_ms }}ms</div>
+        {% endfor %}
+      {% endif %}
+    </section>
+    <section class="panel">
+      <h2>Transcript</h2>
+      {% for turn in call.turns %}
+        <p><strong>{{ turn.speaker.value }}</strong> {{ turn.text }}</p>
+      {% endfor %}
+      <h2>Provenance / coverage</h2>
+      <p>Raw retention horizon: configured separately; replay is bounded by that horizon.</p>
+      <ul>
+        {% for row in coverage %}
+          <li class="{{ row.status.value }}">
+            <strong>{{ row.signal.value }}</strong> — {{ row.status.value }}
+            {% if row.reason %} · {{ row.reason }}{% endif %}
+            {% if row.source_path %} · {{ row.source_path }}{% endif %}
+            · decoder {{ row.decoder_version }}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
