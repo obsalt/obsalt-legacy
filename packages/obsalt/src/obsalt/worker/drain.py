@@ -407,7 +407,7 @@ def _refresh_hangup_clusters(state: Any, org_id: str) -> None:
 
 
 def _schedule_tier2(state: Any, revision: CallRevision) -> None:
-    from obsalt.analysis.tier2 import decide_tier2, run_tier2
+    from obsalt.analysis.tier2 import decide_tier2
     from obsalt.domain.enums import AnalysisState
 
     settings = getattr(state, "settings", None)
