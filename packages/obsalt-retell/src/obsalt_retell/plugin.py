@@ -193,7 +193,12 @@ class RetellPlugin:
                 "source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call.call_id"),
             },
         )
-        yield SnapshotBoundaryObserved(authoritative_domains=["turn_observed", "stage_observed", "aggregate_observed", "tool_observed"])
+        # §5.3: only ended/analyzed snapshots are authoritative. call_started
+        # and transcript_updated are deltas and must not retract by omission.
+        if event in {"call_ended", "call_analyzed"}:
+            yield SnapshotBoundaryObserved(
+                authoritative_domains=["turn_observed", "stage_observed", "aggregate_observed", "tool_observed"]
+            )
         recording = as_str(blob.get("recording_url")) or as_str(blob.get("recording_multi_channel_url"))
         if recording:
             yield EvidenceObserved(

@@ -119,6 +119,8 @@ class ToolInvocation(BaseModel):
     payload_shape: Any = None
     argument_hash: str | None = None
     result_ref: str | None = None
+    args: Any = None
+    result: Any = None
     error: str | None = None
     provenance_by_field: dict[str, ProvenanceStamp] = Field(default_factory=dict)
 

@@ -30,6 +30,7 @@ from obsalt.plugin.host import plugin_by_name
 from obsalt.query import (
     active_calls,
     analysis_for,
+    analysis_for_active,
     call_list_item,
     hangup_rollup,
     in_range,
@@ -374,7 +375,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return quality_rollup(
             calls,
-            analysis_for(state, org),
+            analysis_for_active(state, org, calls),
             as_of_generation=state.rollup_generation,
         )
 
@@ -653,11 +654,17 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "privacy.delete")
         body = await request.json()
         call_id = body.get("call_id")
-        source_call_id = body.get("source_call_id") or call_id
+        source_call_id = body.get("source_call_id")
         start = body.get("start")
         end = body.get("end")
-        if not source_call_id and not body.get("caller") and not body.get("caller_token") and not (start and end):
-            raise HTTPException(status_code=400, detail="call_id, caller, or start/end is required")
+        if (
+            not call_id
+            and not source_call_id
+            and not body.get("caller")
+            and not body.get("caller_token")
+            and not (start and end)
+        ):
+            raise HTTPException(status_code=400, detail="call_id, source_call_id, caller, or start/end is required")
         return apply_deletion(
             state,
             org_id=org,
@@ -924,9 +931,10 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui/quality", response_class=HTMLResponse)
     def ui_quality(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
+        calls = active_calls(state, org) if org else []
         data = quality_rollup(
-            active_calls(state, org) if org else [],
-            getattr(state.sink, "analysis", {}),
+            calls,
+            analysis_for_active(state, org, calls) if org else [],
             as_of_generation=state.rollup_generation,
         )
         return _render(

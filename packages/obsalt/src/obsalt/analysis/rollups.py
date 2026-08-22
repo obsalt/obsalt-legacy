@@ -131,11 +131,12 @@ def build_quality_rollup(
     review_queue: list[dict[str, Any]] = []
     by_rubric: dict[str, dict[str, Any]] = {}
 
-    call_ids = {call.call_id for call in calls}
+    active = {(call.call_id, call.revision) for call in calls}
     eligible = len(calls)
 
     for result in analysis_results:
-        if result.execution.call_id not in call_ids and call_ids:
+        key = (result.execution.call_id, result.execution.revision)
+        if active and key not in active:
             continue
         state_counts[result.execution.state.value] = state_counts.get(result.execution.state.value, 0) + 1
         payload = result.payload
@@ -168,7 +169,7 @@ def build_quality_rollup(
             elif result.execution.state is not AnalysisState.SAMPLED_OUT:
                 review_queue.append(_queue_item(result, "eval_incomplete"))
 
-        kinds = _hallucination_kinds(payload)
+        kinds = _hallucination_kinds(result)
         if kinds:
             hallucination_count += len(kinds)
             for kind in kinds:
@@ -306,18 +307,15 @@ def _is_eval(result: AnalysisResult) -> bool:
     return "passed" in result.payload
 
 
-def _hallucination_kinds(payload: dict[str, Any]) -> list[str]:
+def _hallucination_kinds(result: AnalysisResult) -> list[str]:
+    """Confirmed hallucination flags only. Pending Tier-1 candidates are not fleet failures."""
+    if result.execution.state is not AnalysisState.COMPLETED:
+        return []
+    payload = result.payload
     kinds: list[str] = []
-    if payload.get("kind") and payload.get("needs_llm"):
-        kinds.append(str(payload["kind"]))
-    for claim in payload.get("claims") or payload.get("candidates") or []:
-        if isinstance(claim, dict) and claim.get("kind"):
+    for claim in payload.get("claims") or []:
+        if isinstance(claim, dict) and claim.get("kind") and claim.get("verdict") in {"contradicted", "unsupported"}:
             kinds.append(str(claim["kind"]))
-    for flag in payload.get("flags") or []:
-        if isinstance(flag, dict) and (
-            flag.get("needs_llm") or str(flag.get("kind", "")).endswith("claim") or "hallucin" in str(flag.get("kind", ""))
-        ):
-            kinds.append(str(flag.get("kind")))
     return kinds
 
 

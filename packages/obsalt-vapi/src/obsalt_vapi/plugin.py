@@ -276,7 +276,18 @@ class VapiPlugin:
                 "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="message.startedAt"),
             },
         )
-        yield SnapshotBoundaryObserved(authoritative_domains=["turn_observed", "stage_observed", "tool_observed", "outcome_observed"])
+        # §5.3: snapshot decoders may retract omitted facts only on an
+        # authoritative snapshot. Delta transcript/status events must not.
+        if event_type == "end-of-call-report":
+            yield SnapshotBoundaryObserved(
+                authoritative_domains=[
+                    "turn_observed",
+                    "stage_observed",
+                    "tool_observed",
+                    "outcome_observed",
+                    "aggregate_observed",
+                ]
+            )
 
         prompt_messages = dig(assistant, "model", "messages") or []
         if isinstance(prompt_messages, list):
@@ -351,7 +362,13 @@ class VapiPlugin:
             params: dict[str, str] = {}
             if cursor.token:
                 params["cursor"] = cursor.token
-            response = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, params=params, timeout=20.0)
+            response = httpx.get(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                params=params,
+                timeout=20.0,
+                follow_redirects=False,
+            )
             response.raise_for_status()
             payload = response.json()
         except Exception:

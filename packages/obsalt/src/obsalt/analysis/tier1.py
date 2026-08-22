@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from obsalt.analysis.hangup import annotate_hangup, customer_loss_score
+from obsalt.analysis.hangup import customer_loss_score
 from obsalt.domain.enums import AnalysisState, HangupReason, ToolStatus
 from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
 from obsalt.util import sha256_text
@@ -12,12 +12,10 @@ DEAD_AIR_SECONDS = 8.0
 
 
 def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
+    """Cheap deterministic analysis. Never mutates the immutable call revision."""
     results: list[AnalysisResult] = []
     if call.hangup is not None:
         score, reasons = customer_loss_score(call)
-        call.hangup.loss_score = score
-        call.hangup.loss_reasons = reasons
-        annotate_hangup(call, call.hangup)
         results.append(_result(call, "hangup", {"loss_score": score, "loss_reasons": reasons}))
 
     flags: list[dict[str, object]] = []

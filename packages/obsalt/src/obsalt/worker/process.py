@@ -95,6 +95,11 @@ def process_envelope(
 ) -> CallRevision:
     if envelope.state is EnvelopeState.TOMBSTONED:
         raise RuntimeError("refusing to decode a tombstoned envelope")
+    from obsalt.ingest.receive import decoded_envelope_body
+
+    decoded = decoded_envelope_body(envelope)
+    if decoded is not envelope.body:
+        envelope = envelope.model_copy(update={"body": decoded})
     events = list(plugin.decode(envelope))
     return process_normalized_events(
         events,
@@ -204,26 +209,6 @@ def process_normalized_events(
     merged = [*prior, *redacted.events]
     candidate = assembler.assemble(org_id, call_id, source, merged, rooted=rooted)
     frontier = frozenset(fid for fid in candidate.accepted_fact_ids if fid)
-    analysis: list[AnalysisResult] = []
-    if not candidate.conflicts:
-        analysis = list(analyze_tier1(candidate))
-        claims = extract_candidate_claims(candidate)
-        if claims:
-            from obsalt.domain.enums import AnalysisState
-            from obsalt.domain.models import AnalysisExecution
-
-            analysis.append(
-                AnalysisResult(
-                    execution=AnalysisExecution(
-                        call_id=candidate.call_id,
-                        revision=candidate.revision,
-                        analyzer_id="hallucination",
-                        analyzer_version="1",
-                        state=AnalysisState.PENDING,
-                    ),
-                    payload={"candidates": claims, "selection": "pending"},
-                )
-            )
 
     def rebase(attempt: CallRevision, current_id: str) -> CallRevision:
         current = sink.get(org_id, call_id, current_id)
@@ -256,9 +241,33 @@ def process_normalized_events(
     if result.promoted and promoted is not None:
         writer = getattr(sink, "write_analysis", None)
         if writer is not None:
-            writer(org_id, call_id, promoted.revision, analysis)
+            writer(org_id, call_id, promoted.revision, _tier1_analysis(promoted))
         return promoted
     return candidate
+
+
+def _tier1_analysis(revision: CallRevision) -> list[AnalysisResult]:
+    if revision.conflicts:
+        return []
+    analysis = list(analyze_tier1(revision))
+    claims = extract_candidate_claims(revision)
+    if claims:
+        from obsalt.domain.enums import AnalysisState
+        from obsalt.domain.models import AnalysisExecution
+
+        analysis.append(
+            AnalysisResult(
+                execution=AnalysisExecution(
+                    call_id=revision.call_id,
+                    revision=revision.revision,
+                    analyzer_id="hallucination",
+                    analyzer_version="1",
+                    state=AnalysisState.PENDING,
+                ),
+                payload={"candidates": claims, "selection": "pending"},
+            )
+        )
+    return analysis
 
 
 def drain_inbox(state: object, *, limit: int = 32) -> int:

@@ -41,7 +41,8 @@
       "turn_observed",
       "stage_observed",
       "tool_observed",
-      "outcome_observed"
+      "outcome_observed",
+      "aggregate_observed"
     ]
   },
   {

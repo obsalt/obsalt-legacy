@@ -79,7 +79,7 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
     if existing is not None and existing.state is EnvelopeState.ASSEMBLED:
         return None
 
-    hints = TombstoneHints(source_call_id=envelope.source_call_id)
+    hints = TombstoneHints(source_call_id=envelope.source_call_id, event_time=envelope.received_at)
     if inbox.is_tombstoned(envelope.org_id, hints):
         inbox.tombstone(envelope.org_id, hints)
         return None
@@ -111,6 +111,8 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
     events = invoke_with_deadline(lambda: list(plugin.decode(envelope)), timeout_seconds=deadline)
     source_call_id = envelope.source_call_id or _source_call_id(events) or envelope.envelope_id
     extracted = _tombstone_from_events(events, source_call_id)
+    if extracted.event_time is None:
+        extracted = extracted.model_copy(update={"event_time": envelope.received_at})
     if inbox.is_tombstoned(envelope.org_id, extracted):
         inbox.tombstone(envelope.org_id, extracted)
         return None
