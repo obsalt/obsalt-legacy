@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from obsalt.runtime import AppState
+
 from tests.helpers import signed_example_headers
 
 

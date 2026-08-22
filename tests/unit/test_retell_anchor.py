@@ -9,6 +9,7 @@ from obsalt.domain.events import ToolObserved
 from obsalt.plugin.types import RawEnvelope
 from obsalt.util import new_id, utcnow
 from obsalt_retell.plugin import RetellPlugin
+
 from tests.helpers import RETELL_FIXTURES
 
 

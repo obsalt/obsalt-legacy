@@ -13,6 +13,7 @@ from obsalt.otel.receiver import serialized_partial_success
 from obsalt.plugin.host import LoadedPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
+
 from tests.helpers import example_state
 
 

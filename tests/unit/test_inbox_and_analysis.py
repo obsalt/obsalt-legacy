@@ -28,6 +28,7 @@ from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_testkit import decode_raw_fixture
 from obsalt_vapi.plugin import VapiPlugin
+
 from tests.helpers import CARTESIA_FIXTURES, ELEVEN_FIXTURES, example_state, fidelity_declaration
 
 

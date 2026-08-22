@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from obsalt.api import create_app, create_test_app
 from obsalt.config import Settings
 from obsalt.crypto.primitives import hmac_hex
+
 from tests.helpers import EXAMPLE_FIXTURES, signed_example_headers
 
 

@@ -9,7 +9,13 @@ from obsalt.config import Settings
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.runtime import AppState
 from obsalt_example.plugin import ExamplePlugin
-from tests.helpers import EXAMPLE_FIXTURES, example_state, fidelity_declaration, signed_example_headers
+
+from tests.helpers import (
+    EXAMPLE_FIXTURES,
+    example_state,
+    fidelity_declaration,
+    signed_example_headers,
+)
 from tests.helpers import example_raw as load_example_raw
 
 __all__ = ["EXAMPLE_FIXTURES", "signed_example_headers"]

@@ -20,6 +20,7 @@ from obsalt.runtime import in_memory_state
 from obsalt.util import utcnow
 from obsalt.worker.process import process_normalized_events
 from obsalt_testkit.schema import FixtureSuite, blocking_errors, validate_raw_fixtures
+
 from tests.helpers import EXAMPLE_FIXTURES, example_state, fidelity_declaration
 
 

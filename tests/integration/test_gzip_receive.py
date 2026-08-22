@@ -10,6 +10,7 @@ from obsalt.ingest.receive import receive_webhook
 from obsalt.plugin.types import ConnectionConfig
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt_example.plugin import ExamplePlugin
+
 from tests.helpers import example_raw
 
 
