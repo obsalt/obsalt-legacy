@@ -1417,6 +1417,36 @@ class PostgresReviewStore:
         return [dict(row) for row in rows]
 
 
+class PostgresOrgSpend:
+    """Durable per-org monthly LLM spend. The hard cap in §9.1 reads this, not process RAM."""
+
+    def __init__(self, conn: PgConn) -> None:
+        self._conn = conn
+
+    def get(self, org_id: str, period: str | None = None) -> float:
+        period = period or utcnow().strftime("%Y-%m")
+        row = self._conn.execute(
+            "SELECT spend_usd FROM org_spend WHERE org_id = %s AND period = %s",
+            (org_id, period),
+        ).fetchone()
+        return float(row["spend_usd"]) if row else 0.0
+
+    def add(self, org_id: str, amount: float, period: str | None = None) -> float:
+        period = period or utcnow().strftime("%Y-%m")
+        with self._conn.transaction():
+            self._conn.execute(
+                """
+                INSERT INTO org_spend (org_id, period, spend_usd)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (org_id, period) DO UPDATE SET
+                    spend_usd = org_spend.spend_usd + EXCLUDED.spend_usd,
+                    updated_at = now()
+                """,
+                (org_id, period, float(amount)),
+            )
+        return self.get(org_id, period)
+
+
 # Names used by runtime.production_state and the plugin contract.
 PostgresConnectionResolver = PostgresResolver
 KeyDirectory = PostgresKeyDirectory

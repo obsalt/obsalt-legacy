@@ -36,7 +36,7 @@ _VERB_TO_TOOLS = {
 
 def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
     """Cheap candidates that may later reach the LLM entailment judge."""
-    grounding = "\n".join(_grounding_corpus(call))
+    grounding = "\n".join(grounding_corpus(call))
     flags: list[dict[str, object]] = []
     successful = [t.name.lower() for t in call.tools if t.status == ToolStatus.SUCCESS]
     failed = [t.name.lower() for t in call.tools if t.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}]
@@ -59,14 +59,26 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
     return flags
 
 
-def _grounding_corpus(call: CallRevision) -> list[str]:
-    parts = [t.text for t in call.user_turns()]
-    parts.extend(g.content for g in call.grounding if g.content)
+def grounding_corpus(call: CallRevision) -> list[str]:
+    """Prompt, knowledge, tool results/errors, and caller statements (§9.4)."""
+    parts = [turn.text for turn in call.user_turns() if turn.text]
+    parts.extend(item.content for item in call.grounding if item.content)
     for tool in call.tools:
-        parts.append(tool.error or tool.name)
-        if tool.result is not None:
-            parts.append(tool.result if isinstance(tool.result, str) else str(tool.result))
+        status = tool.status.value
+        result = getattr(tool, "result", None)
+        if tool.error:
+            parts.append(f"{tool.name} {status}: {tool.error}")
+        elif result not in (None, ""):
+            parts.append(f"{tool.name} {status}: {result if isinstance(result, str) else str(result)}")
+        elif tool.result_ref:
+            parts.append(f"{tool.name} {status}: {tool.result_ref}")
+        else:
+            parts.append(f"{tool.name} {status}")
     return parts
+
+
+def _grounding_corpus(call: CallRevision) -> list[str]:
+    return grounding_corpus(call)
 
 
 def _flag(kind: HallucinationKind, span: str, turn_index: int, evidence: str) -> dict[str, object]:

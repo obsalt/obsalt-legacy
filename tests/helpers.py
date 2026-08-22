@@ -1,4 +1,4 @@
-"""Shared builders for the layered v2 suite."""
+"""Shared test helpers. Not a product storage backend."""
 
 from __future__ import annotations
 
@@ -8,14 +8,15 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from obsalt.api import create_app
+from obsalt.assemble.facts import stamp_event
 from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.config import Settings
 from obsalt.crypto.primitives import hmac_hex
-from obsalt.domain.enums import KeyScope, MeasurementPlacement, PipelineArchitecture, Signal
+from obsalt.domain.enums import KeyScope, MeasurementPlacement, PipelineArchitecture, Role, Signal
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.plugin.host import LoadedPlugin
 from obsalt.plugin.types import ConnectionConfig
-from obsalt.runtime import AppState
+from obsalt.runtime import AppState, MemoryOrgSpend
 from obsalt.search.index import MemorySearchIndex
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
@@ -24,10 +25,24 @@ from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_FIXTURES = ROOT / "packages/obsalt-example/src/obsalt_example/fixtures"
-VAPI_FIXTURES = ROOT / "packages/obsalt-vapi/src/obsalt_vapi/fixtures"
-RETELL_FIXTURES = ROOT / "packages/obsalt-retell/src/obsalt_retell/fixtures"
-ELEVEN_FIXTURES = ROOT / "packages/obsalt-elevenlabs/src/obsalt_elevenlabs/fixtures"
+EXAMPLE_FIXTURES = ROOT / "packages" / "obsalt-example" / "src" / "obsalt_example" / "fixtures"
+VAPI_FIXTURES = ROOT / "packages" / "obsalt-vapi" / "src" / "obsalt_vapi" / "fixtures"
+RETELL_FIXTURES = ROOT / "packages" / "obsalt-retell" / "src" / "obsalt_retell" / "fixtures"
+ELEVEN_FIXTURES = ROOT / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elevenlabs" / "fixtures"
+CARTESIA_FIXTURES = ROOT / "packages" / "obsalt-cartesia" / "src" / "obsalt_cartesia" / "fixtures"
+PIPECAT_OTLP = ROOT / "packages" / "obsalt-pipecat" / "src" / "obsalt_pipecat" / "fixtures" / "otlp"
+LIVEKIT_OTLP = ROOT / "packages" / "obsalt-livekit" / "src" / "obsalt_livekit" / "fixtures" / "otlp"
+ELEVEN_OTLP = ROOT / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elevenlabs" / "fixtures" / "otlp"
+OPENAI_OTLP = ROOT / "packages" / "obsalt-openai-realtime" / "src" / "obsalt_openai_realtime" / "fixtures" / "otlp"
+GEMINI_OTLP = ROOT / "packages" / "obsalt-gemini-live" / "src" / "obsalt_gemini_live" / "fixtures" / "otlp"
+
+
+def signed_example_headers(raw: bytes, secret: str = "s") -> dict[str, str]:
+    return {"x-obsalt-example-signature": hmac_hex(secret, raw), "content-type": "application/json"}
+
+
+def example_raw() -> bytes:
+    return (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
 
 
 def fidelity_declaration() -> FidelityDeclaration:
@@ -43,6 +58,18 @@ def fidelity_declaration() -> FidelityDeclaration:
     )
 
 
+def stamp(event, seq: int, *, call_key: str = "k"):
+    return stamp_event(
+        event,
+        org_id="acme",
+        call_key=call_key,
+        envelope_id="e",
+        decoder_version="t/1",
+        processing_run_id="r",
+        envelope_sequence=seq,
+    )
+
+
 def provider_state(
     plugin: Any,
     *,
@@ -52,9 +79,11 @@ def provider_state(
     ingest_key: str = "ik",
     extra_keys: dict[str, tuple[str, frozenset[KeyScope]]] | None = None,
     extra_plugins: list[Any] | None = None,
+    settings: Settings | None = None,
+    **kwargs: Any,
 ) -> AppState:
-    resolver = MemoryResolver()
-    settings = {"auth_mode": "legacy_secret"} if getattr(plugin, "name", "") == "vapi" else {}
+    resolver = kwargs.pop("resolver", None) or MemoryResolver()
+    plugin_settings = {"auth_mode": "legacy_secret"} if getattr(plugin, "name", "") == "vapi" else {}
     resolver.add(
         ConnectionConfig(
             org_id=org_id,
@@ -62,32 +91,45 @@ def provider_state(
             connection_id="c1",
             ingest_key_hash="",
             secrets=secrets,
-            settings=settings,
+            settings=plugin_settings,
         ),
         ingest_key,
     )
     plugins = [LoadedPlugin(plugin)]
     for extra in extra_plugins or []:
-        plugins.append(LoadedPlugin(extra))
+        plugins.append(LoadedPlugin(extra) if not isinstance(extra, LoadedPlugin) else extra)
     keys = {api_key: (org_id, frozenset(KeyScope))}
     if extra_keys:
         keys.update(extra_keys)
+    key_roles = {name: Role.OWNER for name in keys}
     return AppState(
-        settings=Settings(),
+        settings=settings or Settings(environment="test", trace_grace_seconds=0),
         plugins=plugins,
         resolver=resolver,
-        objects=MemoryObjectStore(),
-        inbox=MemoryInbox(),
-        pointers=MemoryPointerStore(),
-        sink=MemoryRevisionSink(),
+        objects=kwargs.pop("objects", MemoryObjectStore()),
+        inbox=kwargs.pop("inbox", MemoryInbox()),
+        pointers=kwargs.pop("pointers", MemoryPointerStore()),
+        sink=kwargs.pop("sink", MemoryRevisionSink()),
         keys=keys,
-        rollup_generation="g1",
-        search=MemorySearchIndex(),
+        key_roles=key_roles,
+        rollup_generation=kwargs.pop("rollup_generation", "g1"),
+        search=kwargs.pop("search", MemorySearchIndex()),
+        spend_store=kwargs.pop("spend_store", MemoryOrgSpend()),
+        org_spend=kwargs.pop("org_spend", {org_id: 0.0}),
+        **kwargs,
     )
 
 
 def example_state(**kwargs: Any) -> AppState:
-    return provider_state(ExamplePlugin(), secrets={"hmac_secret": "s"}, **kwargs)
+    extras = kwargs.pop("extra_plugins", [])
+    extra_keys = kwargs.pop("extra_keys", None) or {"other": ("other", frozenset(KeyScope))}
+    return provider_state(
+        ExamplePlugin(),
+        secrets={"hmac_secret": "s"},
+        extra_plugins=extras,
+        extra_keys=extra_keys,
+        **kwargs,
+    )
 
 
 def vapi_state(**kwargs: Any) -> AppState:
@@ -99,7 +141,10 @@ def retell_state(**kwargs: Any) -> AppState:
 
 
 def api_client(state: AppState) -> TestClient:
-    return TestClient(create_app(Settings(), state))
+    settings = getattr(state, "settings", None) or Settings(environment="test")
+    if (settings.environment or "").lower() not in {"test", "testing"}:
+        settings = Settings(environment="test")
+    return TestClient(create_app(settings, state))
 
 
 def vapi_headers(secret: str = "vapi-secret") -> dict[str, str]:
@@ -115,4 +160,4 @@ def retell_headers(raw: bytes, api_key: str = "retell-key") -> dict[str, str]:
 
 
 def example_headers(raw: bytes, secret: str = "s") -> dict[str, str]:
-    return {"x-obsalt-example-signature": hmac_hex(secret, raw), "content-type": "application/json"}
+    return signed_example_headers(raw, secret)

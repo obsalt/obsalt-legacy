@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from obsalt.analysis.hallucination import extract_candidate_claims
+from obsalt.analysis.hallucination import extract_candidate_claims, grounding_corpus
 from obsalt.analysis.judge import HeuristicJudge
 from obsalt.domain.models import CallRevision
 from obsalt.plugin.types import JudgeRequest, JudgeResult
@@ -21,8 +21,7 @@ async def entail_claims(
 
     claims = list(candidates) if candidates is not None else extract_candidate_claims(call)
     judge_impl = judge or HeuristicJudge()
-    grounding = [item.content or item.content_ref for item in call.grounding if item.content or item.content_ref]
-    grounding.extend(turn.text for turn in call.user_turns() if turn.text)
+    grounding = grounding_corpus(call)
     out: list[dict[str, Any]] = []
     for claim in claims:
         request = JudgeRequest(

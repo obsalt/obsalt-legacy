@@ -24,7 +24,12 @@ from obsalt.ops.backfill import run_backfill
 from obsalt.ops.health import collect_health
 from obsalt.ops.privacy import apply_deletion
 from obsalt.ops.retention import replay_horizon
-from obsalt.otel.receiver import parse_otlp_request, request_to_spans, serialized_success
+from obsalt.otel.receiver import (
+    parse_otlp_request,
+    request_to_spans,
+    serialized_partial_success,
+    serialized_success,
+)
 from obsalt.otel.span_identity import SpanIdentityIndex
 from obsalt.plugin.host import plugin_by_name
 from obsalt.query import (
@@ -43,11 +48,11 @@ from obsalt.query import (
 )
 from obsalt.runtime import (
     AppState,
-    add_spend,
+    add_org_spend,
     bump_generation,
     create_connection,
     in_memory_state,
-    spend_for,
+    org_spend_usd,
 )
 from obsalt.security.authz import allowed
 from obsalt.security.sessions import check_csrf, read_session, sign_session
@@ -60,10 +65,23 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 log = logging.getLogger("obsalt.api")
 
 
+def create_test_app(settings: Settings | None = None, state: AppState | None = None) -> FastAPI:
+    """Test helper. Memory stores are doubles, not a production backend."""
+    settings = settings or Settings(environment="test")
+    return create_app(settings, state or in_memory_state(settings))
+
+
 def create_app(settings: Settings | None = None, state: AppState | None = None) -> FastAPI:
     settings = settings or Settings()
     if state is None:
-        state = in_memory_state(settings)
+        env = (settings.environment or "").lower()
+        if env in {"test", "testing"}:
+            state = in_memory_state(settings)
+        else:
+            raise RuntimeError(
+                "create_app requires an AppState. obsalt serve uses production_state(); "
+                "tests should call create_test_app(). Memory stores are not a production backend."
+            )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -194,7 +212,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if result.status_code == 413:
             raise HTTPException(status_code=413, detail=result.rejected)
         if result.status_code == 409:
-            raise HTTPException(status_code=409, detail=result.rejected)
+            # Permanent identity conflict: OTLP partial success, clients must not retry.
+            return Response(
+                content=serialized_partial_success(
+                    rejected=1, error_message=result.rejected or "span identity conflict"
+                ),
+                media_type="application/x-protobuf",
+            )
         if result.envelope is not None and result.rejected is None:
             background.add_task(drain_inbox, state)
         return Response(content=serialized_success(), media_type="application/x-protobuf")
@@ -383,7 +407,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     async def analyze(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rev = _active(state, org, call_id)
-        if spend_for(state, org) >= state.settings.llm_monthly_budget_usd > 0:
+        spend = org_spend_usd(state, org)
+        if spend >= state.settings.llm_monthly_budget_usd > 0:
             execution = AnalysisExecution(
                 call_id=call_id,
                 revision=rev.revision,
@@ -401,15 +426,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             manual=True,
             baseline_sample_rate=state.settings.baseline_sample_rate,
             budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend_for(state, org),
+            spend_usd=spend,
             judge=state.judge,
         )
         cost = float((result.payload or {}).get("cost_usd") or 0.0)
         if cost:
-            total = add_spend(state, org, cost)
-            from obsalt.metrics import tier2_spend_usd
-
-            tier2_spend_usd.labels(org_id=org).set(total)
+            add_org_spend(state, org, cost)
         writer = getattr(state.sink, "write_analysis", None)
         existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
         if writer is not None:
@@ -943,7 +965,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             {
                 "quality": data,
                 "org": org,
-                "spend_usd": spend_for(state, org) if org else 0.0,
+                "spend_usd": org_spend_usd(state, org) if org else 0.0,
                 "budget_usd": state.settings.llm_monthly_budget_usd,
             },
         )
@@ -1011,7 +1033,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         form = await request.form()
         _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
         rev = _active(state, org, call_id)
-        if spend_for(state, org) >= state.settings.llm_monthly_budget_usd > 0:
+        spend = org_spend_usd(state, org)
+        if spend >= state.settings.llm_monthly_budget_usd > 0:
             return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
         from obsalt.analysis.tier2 import run_tier2
 
@@ -1022,8 +1045,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             manual=True,
             baseline_sample_rate=state.settings.baseline_sample_rate,
             budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend_for(state, org),
+            spend_usd=spend,
+            judge=state.judge,
         )
+        cost = float((result.payload or {}).get("cost_usd") or 0.0)
+        if cost:
+            add_org_spend(state, org, cost)
         writer = getattr(state.sink, "write_analysis", None)
         existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
         if writer is not None:

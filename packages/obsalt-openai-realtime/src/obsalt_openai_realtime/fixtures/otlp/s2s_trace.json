@@ -1,0 +1,33 @@
+[
+  {
+    "name": "user_input",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "bbbbbbbbbbbbbbbb",
+    "start_unix_nano": 1755777600000000000,
+    "end_unix_nano": 1755777600800000000,
+    "attributes": {
+      "gen_ai.conversation.id": "oai-stock-1",
+      "gen_ai.provider.name": "openai"
+    }
+  },
+  {
+    "name": "generation",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "cccccccccccccccc",
+    "start_unix_nano": 1755777600800000000,
+    "end_unix_nano": 1755777601600000000,
+    "attributes": {
+      "gen_ai.conversation.id": "oai-stock-1"
+    }
+  },
+  {
+    "name": "audio.playout",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "dddddddddddddddd",
+    "start_unix_nano": 1755777601600000000,
+    "end_unix_nano": 1755777602200000000,
+    "attributes": {
+      "gen_ai.conversation.id": "oai-stock-1"
+    }
+  }
+]

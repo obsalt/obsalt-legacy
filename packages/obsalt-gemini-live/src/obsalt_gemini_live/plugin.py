@@ -33,7 +33,7 @@ class GeminiLivePlugin:
         source_format="obsalt.sdk.gemini_live",
         possible_architectures=frozenset({PipelineArchitecture.SPEECH_TO_SPEECH}),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
-        provides=frozenset({Signal.STAGE_INTERVAL, Signal.BARGE_IN}),
+        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.BARGE_IN}),
         structurally_absent={
             Signal.STT_DURATION: "speech-to-speech has no STT stage",
             Signal.LLM_TTFT: "speech-to-speech has no LLM stage",

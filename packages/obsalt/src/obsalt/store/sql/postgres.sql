@@ -256,3 +256,11 @@ ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_start TIMESTAMPTZ;
 ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_end TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS active_calls_org_started ON active_calls (org_id, started_at DESC, call_id DESC);
 
+CREATE TABLE IF NOT EXISTS org_spend (
+    org_id TEXT NOT NULL REFERENCES orgs(id),
+    period TEXT NOT NULL,
+    spend_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, period)
+);
+

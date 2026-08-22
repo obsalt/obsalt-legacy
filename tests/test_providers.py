@@ -35,6 +35,7 @@ from obsalt_testkit import (
     DecoderConformanceTests,
     SchemaFixtureTests,
     SecondsVsMillisecondsTests,
+    WebhookConformanceTests,
 )
 from obsalt_vapi.plugin import VapiPlugin
 
@@ -64,6 +65,26 @@ class TestRetellDecoder(DecoderConformanceTests):
 class TestRetellSchema(SchemaFixtureTests):
     plugin = RetellPlugin()
     fixtures_dir = RETELL_FIXTURES
+
+
+class TestVapiWebhook(WebhookConformanceTests):
+    plugin = VapiPlugin()
+    valid_raw = (VAPI_FIXTURES / "raw" / "end_of_call.json").read_bytes()
+
+
+class TestRetellWebhook(WebhookConformanceTests):
+    plugin = RetellPlugin()
+    valid_raw = (RETELL_FIXTURES / "raw" / "call_ended.json").read_bytes()
+
+
+class TestElevenLabsWebhook(WebhookConformanceTests):
+    plugin = ElevenLabsPlugin()
+    valid_raw = (ELEVEN_FIXTURES / "raw" / "post_call_transcription.json").read_bytes()
+
+
+class TestCartesiaWebhook(WebhookConformanceTests):
+    plugin = CartesiaPlugin()
+    valid_raw = (CARTESIA_FIXTURES / "raw" / "call_ended.json").read_bytes()
 
 
 class TestVapiAuth(AuthenticationConformanceTests):
@@ -210,7 +231,7 @@ def test_vapi_enum_coverage_above_95() -> None:
     codes = json.loads(VAPI_ENUM.read_text())["values"]
     mapped, total = mapped_count(codes, "vapi")
     assert total == len(codes)
-    assert mapped / total > 0.95, f"coverage {mapped}/{total} = {mapped/total:.3f}"
+    assert mapped == total, f"unmapped Vapi reason codes: {mapped}/{total}"
 
 
 def test_retell_enum_coverage_complete() -> None:

@@ -7,24 +7,72 @@ from collections.abc import Sequence
 from obsalt.plugin.types import RedactedDocument, Vector
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "at",
+        "be",
+        "can",
+        "do",
+        "for",
+        "how",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "please",
+        "that",
+        "the",
+        "this",
+        "to",
+        "we",
+        "will",
+        "with",
+        "you",
+        "your",
+    }
+)
+
+
+def content_tokens(text: str) -> set[str]:
+    return {token for token in TOKEN_RE.findall(text.lower()) if token not in STOP_WORDS and len(token) > 2}
 
 
 class LocalEmbedder:
-    """Deterministic bag-of-tokens embedding used as the ONNX input and test double.
+    """Deterministic lexical embedding used as the ONNX input and offline default.
 
-    This is not the v0.1 MD5 trick: documents that share tokens land nearby.
-    Production wraps the same bag in ``OnnxEmbedder``.
+    Token hashes plus character trigrams put documents that share words *or*
+    nearby phrasing close together. Stop words are down-weighted so content
+    tokens (refund, weather) dominate. This is not MiniLM and not the v0.1 MD5
+    trick. Production upgrades by pointing ``OBSALT_EMBEDDER_ONNX_PATH`` at a
+    local ONNX model (no torch, works air-gapped).
     """
+
+    version = "local/256"
 
     def __init__(self, dim: int = 256) -> None:
         self.dim = dim
 
     def bag(self, text: str) -> list[float]:
         values = [0.0] * self.dim
-        tokens = TOKEN_RE.findall(text.lower())
-        for token in tokens:
+        lowered = text.lower()
+        for token in TOKEN_RE.findall(lowered):
             idx = int(hashlib.sha256(token.encode()).hexdigest(), 16) % self.dim
-            values[idx] += 1.0
+            values[idx] += 0.15 if token in STOP_WORDS else 1.0
+        for index in range(max(0, len(lowered) - 2)):
+            gram = lowered[index : index + 3]
+            if not gram.strip():
+                continue
+            idx = int(hashlib.sha256(b"g:" + gram.encode()).hexdigest(), 16) % self.dim
+            values[idx] += 0.35
         norm = sum(v * v for v in values) ** 0.5 or 1.0
         return [v / norm for v in values]
 

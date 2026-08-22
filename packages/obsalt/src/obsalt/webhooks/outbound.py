@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 
-from obsalt.egress import EgressDenied, validate_destination
+from obsalt.egress import EgressDenied, validate_destination, validate_redirect
 from obsalt.util import canonical_json, utcnow
 
 log = logging.getLogger("obsalt.webhooks")
@@ -90,6 +90,22 @@ def deliver(
             http.close()
     if 200 <= response.status_code < 300:
         return True, "ok"
+    if 300 <= response.status_code < 400:
+        location = response.headers.get("location") or ""
+        try:
+            nxt = validate_redirect(url, location, allow_http_localhost=allow_http_localhost)
+        except EgressDenied as exc:
+            return False, f"permanent: {exc}"
+        try:
+            bounced = http.post(nxt, content=body, headers=headers, timeout=timeout)
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            return False, f"retryable: {exc}"
+        if 200 <= bounced.status_code < 300:
+            return True, "ok"
+        if 300 <= bounced.status_code < 400:
+            return False, "permanent: nested redirect refused"
+        kind = "retryable" if bounced.status_code in RETRYABLE_STATUS else "permanent"
+        return False, f"{kind}: HTTP {bounced.status_code}"
     kind = "retryable" if response.status_code in RETRYABLE_STATUS else "permanent"
     return False, f"{kind}: HTTP {response.status_code}"
 

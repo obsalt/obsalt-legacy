@@ -8,6 +8,7 @@ into semantic subclusters. Deterministic: sorted call ids, first-member centroid
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
@@ -15,7 +16,9 @@ from typing import Any
 from obsalt.domain.enums import HangupParty, HangupReason, Speaker
 from obsalt.domain.models import CallRevision
 from obsalt.plugin.types import RedactedDocument
-from obsalt.search.hybrid import LocalEmbedder
+from obsalt.search.hybrid import LocalEmbedder, content_tokens
+
+log = logging.getLogger("obsalt.analysis.cluster")
 
 
 class MemoryHangupClusterStore:
@@ -24,8 +27,21 @@ class MemoryHangupClusterStore:
     def __init__(self) -> None:
         self.by_org: dict[str, dict[str, Any]] = {}
 
-    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
-        payload = cluster_hangups(calls, generation)
+    def refresh(
+        self,
+        org_id: str,
+        calls: Sequence[CallRevision],
+        generation: str,
+        *,
+        embedder: LocalEmbedder | None = None,
+        similarity_threshold: float = 0.3,
+    ) -> dict[str, Any]:
+        payload = cluster_hangups(
+            calls,
+            generation,
+            embedder=embedder or LocalEmbedder(),
+            similarity_threshold=similarity_threshold,
+        )
         self.by_org[org_id] = payload
         return payload
 
@@ -45,8 +61,18 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
         super().__init__()
         self._client = client
 
-    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
-        payload = super().refresh(org_id, calls, generation)
+    def refresh(
+        self,
+        org_id: str,
+        calls: Sequence[CallRevision],
+        generation: str,
+        *,
+        embedder: LocalEmbedder | None = None,
+        similarity_threshold: float = 0.3,
+    ) -> dict[str, Any]:
+        payload = super().refresh(
+            org_id, calls, generation, embedder=embedder, similarity_threshold=similarity_threshold
+        )
         try:
             import json
 
@@ -84,7 +110,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
                     ],
                 )
         except Exception:
-            pass
+            log.warning("hangup_clusters insert failed for org %s generation %s", org_id, generation)
         return payload
 
     def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:
@@ -160,14 +186,11 @@ def cluster_hangups(
 
     clusters: list[dict[str, Any]] = []
     for (reason, party), members in sorted(grouped.items()):
-        subclusters = (
-            _embed_subclusters(members, embedder, similarity_threshold)
-            if embedder is not None
-            else [members]
-        )
+        used = embedder or LocalEmbedder()
+        subclusters = _embed_subclusters(members, used, similarity_threshold)
         for index, subset in enumerate(subclusters):
             ranked = sorted(subset, key=lambda call: (-_loss(call), call.call_id))
-            cluster_id = f"{reason}:{party}" if embedder is None else f"{reason}:{party}:{index:02d}"
+            cluster_id = f"{reason}:{party}:{index:02d}"
             top = ranked[0]
             clusters.append(
                 {
@@ -226,12 +249,16 @@ def _embed_subclusters(
             continue
         placed = False
         for centroid, bucket in buckets:
-            if _dot(centroid, vector) >= similarity_threshold:
+            representative = _last_user_text(bucket[0])
+            if _similar(centroid, vector, representative, text, similarity_threshold):
                 bucket.append(call)
+                members_n = len(bucket)
+                for index, (old, new) in enumerate(zip(centroid, vector, strict=True)):
+                    centroid[index] = (old * (members_n - 1) + new) / members_n
                 placed = True
                 break
         if not placed:
-            buckets.append((vector, [call]))
+            buckets.append((list(vector), [call]))
     result = [bucket for _centroid, bucket in buckets]
     if empty:
         result.append(empty)
@@ -239,10 +266,42 @@ def _embed_subclusters(
 
 
 def _embed_texts(embedder: LocalEmbedder, texts: Sequence[str]) -> list[list[float]]:
+    if hasattr(embedder, "bag"):
+        return [list(embedder.bag(text)) for text in texts]
+    projector = getattr(embedder, "_project", None)
+    bag = getattr(embedder, "_bag", None)
+    if callable(projector) and bag is not None:
+        return [list(projector(bag.bag(text))) for text in texts]
     docs = [RedactedDocument(id=str(index), text=text) for index, text in enumerate(texts)]
-    vectors = asyncio.run(embedder.embed(docs))
-    return [list(item.values) for item in vectors]
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        vectors = asyncio.run(embedder.embed(docs))
+        return [list(item.values) for item in vectors]
+    if bag is not None:
+        return [list(bag.bag(text)) for text in texts]
+    raise RuntimeError("cannot embed while an event loop is running")
 
 
 def _dot(left: Sequence[float], right: Sequence[float]) -> float:
     return float(sum(a * b for a, b in zip(left, right, strict=True)))
+
+
+def _similar(
+    centroid: Sequence[float],
+    vector: Sequence[float],
+    text_a: str,
+    text_b: str,
+    threshold: float,
+) -> bool:
+    if _dot(centroid, vector) >= threshold:
+        return True
+    return _lexical_overlap(text_a, text_b) >= 0.25
+
+
+def _lexical_overlap(text_a: str, text_b: str) -> float:
+    left = content_tokens(text_a)
+    right = content_tokens(text_b)
+    if not left or not right or not (left & right):
+        return 0.0
+    return len(left & right) / len(left | right)

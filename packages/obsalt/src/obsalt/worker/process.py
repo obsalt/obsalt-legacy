@@ -38,6 +38,13 @@ class RevisionSink:
     def delete_call(self, org_id: str, call_id: str) -> None:
         raise NotImplementedError
 
+    def verify_visible(self, revision: CallRevision) -> CallRevision:
+        """§4.2: a candidate is not eligible for CAS until it is query-visible."""
+        loaded = self.get(revision.org_id, revision.call_id, revision.revision)
+        if loaded is None:
+            raise RuntimeError("revision write is not query-visible")
+        return loaded
+
 
 class MemoryRevisionSink(RevisionSink):
     def __init__(self) -> None:
@@ -224,12 +231,13 @@ def process_normalized_events(
         if unmapped_attributes:
             rebuilt.unmapped_attributes = dict(unmapped_attributes)
         sink.write(rebuilt)
-        return rebuilt
+        return sink.verify_visible(rebuilt)
 
     _stamp_caller_token(candidate, caller)
     if unmapped_attributes:
         candidate.unmapped_attributes = dict(unmapped_attributes)
     sink.write(candidate)
+    sink.verify_visible(candidate)
     result = promote(
         pointers,
         candidate,

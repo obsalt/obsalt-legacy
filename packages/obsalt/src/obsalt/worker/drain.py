@@ -32,6 +32,7 @@ def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
         log.exception("envelope %s failed", envelope.envelope_id)
         state.inbox.mark_failed(envelope.envelope_id, str(exc))
     finalize_due_traces(state)
+    drain_tier2(state)
     from obsalt.otel.forward_queue import drain_forward_queue
     from obsalt.webhooks.outbound import drain_outbound
 
@@ -42,6 +43,7 @@ def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
 def drain_once(state: Any, *, limit: int = 32) -> int:
     processed = process_outbox(state, limit=limit)
     processed += finalize_due_traces(state)
+    drain_tier2(state)
     from obsalt.otel.forward_queue import drain_forward_queue
     from obsalt.webhooks.outbound import drain_outbound
 
@@ -417,7 +419,7 @@ def _index_and_rollup(state: Any, revision: CallRevision) -> None:
     except Exception:
         log.warning("hangup cluster refresh failed for %s", revision.org_id)
     try:
-        _schedule_tier2(state, revision)
+        _enqueue_tier2(state, revision)
     except Exception:
         log.warning("tier-2 scheduling failed for %s", revision.call_id)
 
@@ -437,30 +439,66 @@ def _refresh_hangup_clusters(state: Any, org_id: str) -> None:
     if store is None or not hasattr(store, "refresh"):
         return
     from obsalt.query import active_calls
+    from obsalt.search.hybrid import LocalEmbedder
 
-    store.refresh(org_id, active_calls(state, org_id), getattr(state, "rollup_generation", ""))
+    embedder = getattr(state, "embedder", None) or LocalEmbedder()
+    store.refresh(
+        org_id,
+        active_calls(state, org_id),
+        getattr(state, "rollup_generation", ""),
+        embedder=embedder,
+    )
 
 
-def _schedule_tier2(state: Any, revision: CallRevision) -> None:
+def _enqueue_tier2(state: Any, revision: CallRevision) -> None:
+    """Queue expensive analysis after promotion. Never run it on the webhook path."""
+    queue = getattr(state, "tier2_queue", None)
+    if queue is None:
+        state.tier2_queue = []
+        queue = state.tier2_queue
+    queue.append((revision.org_id, revision.call_id, revision.revision))
+
+
+def drain_tier2(state: Any) -> int:
+    queue = list(getattr(state, "tier2_queue", None) or [])
+    if not queue:
+        return 0
+    state.tier2_queue.clear()
+    processed = 0
+    for org_id, call_id, revision_id in queue:
+        revision = state.sink.get(org_id, call_id, revision_id)
+        if revision is None:
+            continue
+        try:
+            _run_queued_tier2(state, revision)
+            processed += 1
+        except Exception:
+            log.warning("tier-2 execution failed for %s", call_id)
+    return processed
+
+
+def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
+    from obsalt.analysis.hallucination import extract_candidate_claims
     from obsalt.analysis.tier2 import decide_tier2
     from obsalt.domain.enums import AnalysisState
+    from obsalt.runtime import add_org_spend, org_spend_usd
 
     settings = getattr(state, "settings", None)
     rate = float(getattr(settings, "baseline_sample_rate", 0.0) or 0.0)
     budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
-    from obsalt.runtime import add_spend, spend_for
-
-    spend = spend_for(state, revision.org_id)
+    spend = org_spend_usd(state, revision.org_id)
     budget_usd = budget if budget > 0 else float("inf")
     rubrics = [r for r in getattr(state, "rubrics", {}).values() if getattr(r, "org_id", None) == revision.org_id]
     existing = list(getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), []))
+
     claims = []
     for row in existing:
         payload = getattr(row, "payload", {}) or {}
         if payload.get("candidates"):
             claims = payload["candidates"]
             break
-    results = list(existing)
+    if not claims:
+        claims = extract_candidate_claims(revision)
     decisions = []
     if claims:
         decisions.append(
@@ -483,6 +521,12 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
                 spend_usd=spend,
             )
         )
+    replacing = {item.analyzer_id for item in decisions}
+    results = [
+        row
+        for row in existing
+        if getattr(getattr(row, "execution", None), "analyzer_id", None) not in replacing
+    ]
     writer = getattr(state.sink, "write_analysis", None)
     for execution in decisions:
         if execution.state is AnalysisState.PENDING:
@@ -494,13 +538,11 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
                 spend_usd=spend,
                 analyzer_id=execution.analyzer_id,
                 hallucination_candidates=claims or None,
+                judge=getattr(state, "judge", None),
             )
             cost = float((result.payload or {}).get("cost_usd") or 0.0)
             if cost:
-                total = add_spend(state, revision.org_id, cost)
-                from obsalt.metrics import tier2_spend_usd
-
-                tier2_spend_usd.labels(org_id=revision.org_id).set(total)
+                spend = add_org_spend(state, revision.org_id, cost)
             results.append(result)
             if not result.payload.get("passed", True):
                 from obsalt.webhooks.outbound import emit_standard_event

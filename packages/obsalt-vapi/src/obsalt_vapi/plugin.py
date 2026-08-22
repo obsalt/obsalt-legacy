@@ -405,7 +405,26 @@ class VapiPlugin:
     def hydrate(self, cfg: ConnectionConfig, item: BackfillItem) -> RawEnvelope:
         from obsalt.util import utcnow
 
-        body = json.dumps({"message": {"type": "end-of-call-report", **item.payload}}).encode()
+        payload = item.payload if isinstance(item.payload, dict) else {}
+        # List/get Call objects are not end-of-call-report envelopes. Wrap them.
+        if "message" in payload:
+            body_obj = payload
+        else:
+            message = {
+                "type": "end-of-call-report",
+                "call": payload,
+                "artifact": payload.get("artifact") or {},
+            }
+            if payload.get("endedReason"):
+                message["endedReason"] = payload["endedReason"]
+            if payload.get("startedAt"):
+                message["startedAt"] = payload["startedAt"]
+            if payload.get("endedAt"):
+                message["endedAt"] = payload["endedAt"]
+            if payload.get("cost") is not None:
+                message["cost"] = payload["cost"]
+            body_obj = {"message": message}
+        body = json.dumps(body_obj).encode()
         digest = sha256_bytes(body)
         return RawEnvelope(
             envelope_id=item.upstream_entity_id,

@@ -20,10 +20,11 @@ from obsalt.otel.span_identity import SpanIdentityIndex
 from obsalt.otel.trace_assembly import MemoryTraceAssembler
 from obsalt.plugin.host import LoadedPlugin, discover_plugins
 from obsalt.plugin.types import ConnectionConfig
+from obsalt.search.hybrid import LocalEmbedder
 from obsalt.search.index import MemorySearchIndex
 from obsalt.security.secrets import hash_key
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
-from obsalt.util import new_id
+from obsalt.util import new_id, utcnow
 from obsalt.worker.process import MemoryRevisionSink, RevisionSink
 
 log = logging.getLogger("obsalt.runtime")
@@ -42,7 +43,7 @@ class AppState:
     rubrics: dict[str, Rubric] = field(default_factory=dict)
     destinations: list[dict[str, str]] = field(default_factory=list)
     webhook_destinations: list[dict[str, Any]] = field(default_factory=list)
-    spend_usd: float = 0.0
+    org_spend: dict[str, float] = field(default_factory=dict)
     spend_by_org: dict[str, float] = field(default_factory=dict)
     rollup_generation: str = "gen-0"
     connections_plaintext: dict[str, str] = field(default_factory=dict)
@@ -63,11 +64,28 @@ class AppState:
     webhook_store: Any = None
     review_store: Any = None
     deletion_store: Any = None
+    spend_store: Any = None
+    embedder: Any = None
+    tier2_queue: list[tuple[str, str, str]] = field(default_factory=list)
     user_store: Any = None
     backups: list[dict[str, Any]] = field(default_factory=list)
     key_roles: dict[str, Role] = field(default_factory=dict)
     key_expiry: dict[str, Any] = field(default_factory=dict)
     deletion_completions: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def spend_usd(self) -> float:
+        """Sum of in-process org spend. Prefer org_spend_usd(state, org_id)."""
+        return float(sum(self.org_spend.values()))
+
+    @spend_usd.setter
+    def spend_usd(self, value: float) -> None:
+        # Legacy single-tenant tests assigned a global. Map onto the first org.
+        if not self.org_spend:
+            self.org_spend["local"] = float(value)
+            return
+        first = next(iter(self.org_spend))
+        self.org_spend[first] = float(value)
 
 
 def in_memory_state(
@@ -80,6 +98,7 @@ def in_memory_state(
 ) -> AppState:
     settings = settings or Settings(trace_grace_seconds=0)
     plugins = plugins if plugins is not None else discover_plugins()
+    generation_store = MemoryGenerationStore()
     resolver = MemoryResolver()
     for plugin in plugins:
         caps = {c.value for c in plugin.capabilities}
@@ -111,7 +130,7 @@ def in_memory_state(
         sink=MemoryRevisionSink(),
         keys={api_key: (org_id, frozenset(KeyScope))},
         key_roles={api_key: Role.OWNER},
-        rollup_generation=new_id(),
+        org_spend={org_id: 0.0},
         search=MemorySearchIndex(),
         traces=MemoryTraceAssembler(),
         forward_queue=MemoryForwardQueue(),
@@ -119,15 +138,19 @@ def in_memory_state(
         span_identities=SpanIdentityIndex(),
         judge=judge_from_settings(settings),
         hangup_clusters=MemoryHangupClusterStore(),
-        generation_store=MemoryGenerationStore(),
+        generation_store=generation_store,
         deletion_store=MemoryDeletionStore(),
+        spend_store=MemoryOrgSpend(),
+        embedder=LocalEmbedder(),
         user_store=_memory_users(org_id),
+        rollup_generation=generation_store.get("fleet") or "gen-0",
     )
 
 
 def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = None) -> AppState:
     """Connect to Postgres, ClickHouse, object storage, and Redis. No memory fallback."""
     plugins = plugins if plugins is not None else discover_plugins()
+    from obsalt.search.hybrid import OnnxEmbedder
     from obsalt.store.clickhouse import ClickHouseSink
     from obsalt.store.clickhouse import apply_schema as apply_clickhouse
     from obsalt.store.forward_pg import PostgresForwardQueue
@@ -138,6 +161,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         PostgresGenerationStore,
         PostgresInbox,
         PostgresKeyDirectory,
+        PostgresOrgSpend,
         PostgresPointerStore,
         PostgresResolver,
         PostgresReviewStore,
@@ -214,6 +238,8 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         webhook_store=PostgresWebhookStore(conn, master_key=settings.master_key.encode()),
         review_store=PostgresReviewStore(conn),
         deletion_store=PostgresDeletionStore(conn, inbox),
+        spend_store=PostgresOrgSpend(conn),
+        embedder=OnnxEmbedder(model_path=settings.embedder_onnx_path),
         user_store=_production_users(PostgresUserStore(conn), org_id),
         key_roles={settings.bootstrap_api_key: Role.OWNER} if settings.bootstrap_api_key else {},
     )
@@ -276,12 +302,51 @@ class MemoryGenerationStore:
 
     def publish(self, name: str, generation: str, expected: str | None = None) -> bool:
         current = self._values.get(name)
-        if expected is not None and current != expected and current is not None:
-            # First publish after boot may not match the in-process token.
-            if current != "gen-0" and current != "boot":
-                return False
+        if expected is not None and current != expected:
+            return False
         self._values[name] = generation
         return True
+
+
+class MemoryOrgSpend:
+    """Per-org in-process spend ledger. Production uses PostgresOrgSpend."""
+
+    def __init__(self) -> None:
+        self._values: dict[tuple[str, str], float] = {}
+
+    def get(self, org_id: str, period: str | None = None) -> float:
+        return float(self._values.get((org_id, period or _spend_period()), 0.0))
+
+    def add(self, org_id: str, amount: float, period: str | None = None) -> float:
+        key = (org_id, period or _spend_period())
+        self._values[key] = self.get(org_id, key[1]) + float(amount)
+        return self._values[key]
+
+
+def _spend_period() -> str:
+    return utcnow().strftime("%Y-%m")
+
+
+def org_spend_usd(state: AppState, org_id: str) -> float:
+    store = getattr(state, "spend_store", None)
+    if store is not None and hasattr(store, "get"):
+        return float(store.get(org_id))
+    return float(state.org_spend.get(org_id, 0.0))
+
+
+def add_org_spend(state: AppState, org_id: str, amount: float) -> float:
+    if amount <= 0:
+        return org_spend_usd(state, org_id)
+    store = getattr(state, "spend_store", None)
+    if store is not None and hasattr(store, "add"):
+        total = float(store.add(org_id, amount))
+    else:
+        total = float(state.org_spend.get(org_id, 0.0)) + float(amount)
+    state.org_spend[org_id] = total
+    from obsalt.metrics import tier2_spend_usd
+
+    tier2_spend_usd.labels(org_id=org_id).set(total)
+    return total
 
 
 class MemoryDeletionStore:
@@ -334,16 +399,10 @@ def _load_rubrics(store: Any, org_id: str) -> dict[str, Any]:
 
 
 def spend_for(state: AppState, org_id: str) -> float:
-    by_org = getattr(state, "spend_by_org", None)
-    if isinstance(by_org, dict) and by_org:
-        return float(by_org.get(org_id, 0.0))
-    return float(getattr(state, "spend_usd", 0.0) or 0.0)
+    """Alias for org_spend_usd. Prefer org_spend_usd in new code."""
+    return org_spend_usd(state, org_id)
 
 
 def add_spend(state: AppState, org_id: str, cost: float) -> float:
-    total = spend_for(state, org_id) + float(cost)
-    if getattr(state, "spend_by_org", None) is None:
-        state.spend_by_org = {}
-    state.spend_by_org[org_id] = total
-    state.spend_usd = total
-    return total
+    """Alias for add_org_spend. Prefer add_org_spend in new code."""
+    return add_org_spend(state, org_id, cost)
