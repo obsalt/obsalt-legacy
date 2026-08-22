@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-example"
+version = "0.2.0"
+description = "Trivial example obsalt plugin for conformance"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = ["obsalt==0.2.0"]
+
+[project.entry-points."obsalt.plugins"]
+example = "obsalt_example.plugin:ExamplePlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_example = ["fixtures/**/*"]

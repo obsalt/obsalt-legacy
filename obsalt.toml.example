@@ -1,25 +1,19 @@
-# obsalt.toml — copy to obsalt.toml (gitignored) or pass --config.
-# Environment variables (OBSALT_*) always override these values.
-# Secrets can live here, but .env is the better place for them.
+# obsalt.toml — operator config. Secrets belong in the environment.
 
 [server]
 host = "0.0.0.0"
 port = 8080
 
-[auth]
-# org:secret pairs. Send the secret as X-API-Key or Authorization: Bearer.
-api_keys = "acme:change-me"
-require_auth = false
+[storage]
+postgres_dsn = "postgresql://obsalt:obsalt@127.0.0.1:5432/obsalt"
+clickhouse_url = "http://127.0.0.1:8123"
+redis_url = "redis://127.0.0.1:6379/0"
+s3_endpoint = "http://127.0.0.1:9000"
 
-[export]
-# OTLP HTTP base. obsalt appends /v1/traces and /v1/metrics.
-# Grafana LGTM: docker run --rm -p 3000:3000 -p 4318:4318 grafana/otel-lgtm
-otlp_endpoint = "http://localhost:4318"
-environment = "dev"
-service_name = "obsalt"
+[retention]
+raw_days = 30
+evidence_days = 90
+aggregate_days = 400
 
-[webhooks]
-# Empty = skip provider signature checks (local only).
-vapi_secret = ""
-retell_secret = ""
-bland_secret = ""
+# There is no require_auth=false. Every key is org-bound.
+# There is no Postgres-only production mode.

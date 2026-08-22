@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendor/retell/call_ended/2026-08-22",
+  "title": "Retell call_ended webhook (vendored 2026-08-22)",
+  "type": "object",
+  "required": ["event", "call"],
+  "properties": {
+    "event": { "type": "string", "enum": ["call_started", "call_ended", "call_analyzed", "transcript_updated"] },
+    "call": {
+      "type": "object",
+      "required": ["call_id"],
+      "properties": {
+        "call_id": { "type": "string" },
+        "agent_id": { "type": "string" },
+        "agent_name": { "type": "string" },
+        "call_type": { "type": "string" },
+        "from_number": { "type": "string" },
+        "to_number": { "type": "string" },
+        "direction": { "type": "string" },
+        "call_status": { "type": "string" },
+        "start_timestamp": { "type": "number" },
+        "end_timestamp": { "type": "number" },
+        "duration_ms": { "type": "number" },
+        "disconnection_reason": { "type": "string" },
+        "transcript": { "type": "string" },
+        "recording_url": { "type": "string" },
+        "retell_llm_dynamic_variables": { "type": "object" },
+        "call_cost": { "type": "object", "additionalProperties": true },
+        "latency": {
+          "type": "object",
+          "properties": {
+            "e2e": { "$ref": "#/$defs/block" },
+            "asr": { "$ref": "#/$defs/block" },
+            "llm": { "$ref": "#/$defs/block" },
+            "tts": { "$ref": "#/$defs/block" },
+            "s2s": { "$ref": "#/$defs/block" },
+            "knowledge_base": { "$ref": "#/$defs/block" },
+            "llm_websocket_network_rtt": { "type": "number" }
+          },
+          "additionalProperties": true
+        },
+        "transcript_with_tool_calls": {
+          "type": "array",
+          "items": { "type": "object", "additionalProperties": true }
+        },
+        "call_analysis": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "block": {
+      "type": "object",
+      "properties": {
+        "p50": { "type": "number" },
+        "p90": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "num": { "type": "integer" },
+        "values": { "type": "array", "items": { "type": "number" } }
+      }
+    }
+  }
+}

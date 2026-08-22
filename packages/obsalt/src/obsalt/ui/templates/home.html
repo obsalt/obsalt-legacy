@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}obsalt{% endblock %}
+{% block body %}
+<h1>obsalt</h1>
+{% if demo %}
+<div class="banner">NOT FOR PRODUCTION — data is not durable.</div>
+{% endif %}
+<p>Self-hosted call analytics and quality for AI voice agents. v{{ version }}.</p>
+<ul>
+  <li><a href="/v1/ui/calls">Call list</a></li>
+  <li>Latency, hangups, quality, and search are API-backed views over assembled revisions.</li>
+  <li>The provenance panel on call detail is the trust surface.</li>
+</ul>
+<p>Core ships no providers. Installed plugins are trusted, operator-installed code.</p>
+{% endblock %}

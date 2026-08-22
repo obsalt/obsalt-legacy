@@ -1,0 +1,97 @@
+{
+  "message": {
+    "type": "end-of-call-report",
+    "endedReason": "customer-ended-call",
+    "startedAt": "2026-08-21T12:00:00.000Z",
+    "endedAt": "2026-08-21T12:02:10.000Z",
+    "cost": 0.18,
+    "numAssistantInterrupted": 1,
+    "numUserInterrupted": 0,
+    "call": {
+      "id": "vapi-call-refund-1",
+      "type": "inboundPhoneCall",
+      "assistantId": "support-agent",
+      "startedAt": "2026-08-21T12:00:00.000Z",
+      "endedAt": "2026-08-21T12:02:10.000Z",
+      "endedReason": "customer-ended-call",
+      "customer": { "number": "+15551230001" }
+    },
+    "assistant": {
+      "id": "support-agent",
+      "name": "Support",
+      "model": {
+        "provider": "openai",
+        "model": "gpt-4o",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a support agent. Never invent order numbers. Look up orders with lookup_order."
+          }
+        ]
+      }
+    },
+    "artifact": {
+      "transcript": "AI: Thanks for calling.\nUser: I want a refund.",
+      "recordingUrl": "https://example.com/vapi/refund.wav",
+      "messages": [
+        {
+          "role": "bot",
+          "message": "Thanks for calling. How can I help?",
+          "secondsFromStart": 0.4,
+          "duration": 1.8,
+          "time": 1755777600400,
+          "words": [{ "word": "Thanks", "confidence": 0.91 }]
+        },
+        {
+          "role": "user",
+          "message": "I want a refund for my order.",
+          "secondsFromStart": 3.0,
+          "duration": 2.1,
+          "time": 1755777603000
+        },
+        {
+          "role": "tool_calls",
+          "toolCalls": [
+            {
+              "id": "tool-lookup-1",
+              "function": { "name": "lookup_order", "arguments": { "order_id": "unknown" } }
+            }
+          ]
+        },
+        {
+          "role": "tool_call_result",
+          "toolCallId": "tool-lookup-1",
+          "result": "{\"error\": \"not_found\"}"
+        },
+        {
+          "role": "bot",
+          "message": "I've processed a refund for order ORD-99999 totaling $48.50.",
+          "secondsFromStart": 6.2,
+          "duration": 3.4,
+          "time": 1755777606200
+        }
+      ],
+      "performanceMetrics": {
+        "turnLatencies": [
+          {
+            "turn": 0,
+            "transcriberLatency": 0,
+            "modelLatency": 320,
+            "voiceLatency": 90,
+            "turnLatency": 510,
+            "endpointingLatency": 40
+          },
+          {
+            "turn": 2,
+            "transcriberLatency": 140,
+            "modelLatency": 410,
+            "voiceLatency": 110,
+            "turnLatency": 980,
+            "endpointingLatency": 55
+          }
+        ]
+      }
+    },
+    "analysis": { "summary": "Customer requested a refund and hung up after an invented order number." }
+  }
+}

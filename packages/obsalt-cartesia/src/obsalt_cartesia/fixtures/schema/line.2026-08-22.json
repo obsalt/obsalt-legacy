@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["call_id"],
+  "properties": {
+    "call_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "turns": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+  },
+  "additionalProperties": true
+}

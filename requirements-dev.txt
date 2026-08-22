@@ -1,0 +1,12 @@
+-e packages/obsalt[dev]
+-e packages/obsalt-testkit
+-e packages/obsalt-example
+-e packages/obsalt-vapi
+-e packages/obsalt-retell
+-e packages/obsalt-elevenlabs
+-e packages/obsalt-cartesia
+-e packages/obsalt-openai-realtime
+-e packages/obsalt-gemini-live
+-e packages/obsalt-pipecat
+-e packages/obsalt-livekit
+-e packages/obsalt-providers-all

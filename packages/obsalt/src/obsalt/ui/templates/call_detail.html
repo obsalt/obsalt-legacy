@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Call {{ call.call_id }} — obsalt{% endblock %}
+{% block body %}
+<h1>Call {{ call.call_id }}</h1>
+<p>
+  source <code>{{ call.identity.source }}</code>
+  · agent <code>{{ call.identity.agent_id }}</code>
+  · revision {{ call.revision }}
+  · fidelity <code>{{ call.lifecycle.timeline_fidelity }}</code>
+  · architecture <code>{{ call.lifecycle.pipeline_architecture }}</code>
+</p>
+<p>Decoders: {{ call.decoder_versions | join(", ") }} · assembler {{ call.assembler_version }}</p>
+
+<div class="panel">
+  <h2>Timeline</h2>
+  <p>{{ timeline.reason }}</p>
+  {% if not timeline.waterfall %}
+  <p><strong>No stage waterfall.</strong> Durations without timestamps are measurements, not span positions.</p>
+  {% endif %}
+  {% for turn in timeline.turns %}
+    <div>
+      <strong>{{ turn.speaker }} #{{ turn.index }}</strong>
+      {% if turn.started_at %} {{ turn.started_at }}–{{ turn.ended_at }}{% endif %}
+      <div>{{ turn.text }}</div>
+      {% for chip in turn.chips %}
+        <span class="chip">{{ chip.stage }} {{ chip.metric }} {{ chip.value_ms }}ms ({{ chip.placement }})</span>
+      {% endfor %}
+    </div>
+  {% endfor %}
+  {% if timeline.aggregates %}
+    <h3>Provider aggregates (not mixed into sample percentiles)</h3>
+    <ul>
+      {% for a in timeline.aggregates %}
+        <li>{{ a.stage }} {{ a.statistic }} = {{ a.value_ms }}ms <code>{{ a.source_path }}</code></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <h2>Provenance and coverage</h2>
+  <p>Every signal is provider-reported, derived, unsupported, redacted, absent, or failed to decode.</p>
+  <table>
+    <thead><tr><th>Signal</th><th>Status</th><th>Reason</th><th>Path</th></tr></thead>
+    <tbody>
+    {% for row in call.coverage %}
+      <tr>
+        <td>{{ row.signal }}</td>
+        <td>{{ row.status }}</td>
+        <td>{{ row.reason or "" }}</td>
+        <td><code>{{ row.source_path or "" }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Tools</h2>
+  <ul>
+    {% for tool in call.tools %}
+      <li>{{ tool.name }} · {{ tool.status }}
+        {% if tool.duration_ms is none %} · duration: not reported{% else %} · {{ tool.duration_ms }}ms{% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="panel">
+  <h2>Analysis</h2>
+  <ul>
+    {% for item in analysis %}
+      <li>{{ item.kind }} · {{ item.label or item.passed }} · {{ item.rationale or "" }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

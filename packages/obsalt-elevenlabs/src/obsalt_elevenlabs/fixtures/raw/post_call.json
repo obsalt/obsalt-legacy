@@ -1,0 +1,11 @@
+{
+  "type": "post_call_transcription",
+  "data": {
+    "conversation_id": "el-1",
+    "agent_id": "agent-1",
+    "transcript": [
+      { "role": "agent", "message": "Hello", "time_in_call_secs": 1 },
+      { "role": "user", "message": "Hi", "time_in_call_secs": 2 }
+    ]
+  }
+}

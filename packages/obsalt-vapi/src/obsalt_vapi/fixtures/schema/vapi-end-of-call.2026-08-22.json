@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendor/vapi/end-of-call-report/2026-08-22",
+  "title": "Vapi Server URL end-of-call-report (vendored 2026-08-22)",
+  "type": "object",
+  "required": ["message"],
+  "properties": {
+    "message": {
+      "type": "object",
+      "required": ["type", "call"],
+      "properties": {
+        "type": { "type": "string", "enum": ["end-of-call-report", "status-update", "transcript", "assistant-request"] },
+        "endedReason": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "endedAt": { "type": "string" },
+        "cost": { "type": "number" },
+        "numAssistantInterrupted": { "type": "integer" },
+        "numUserInterrupted": { "type": "integer" },
+        "call": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "type": { "type": "string" },
+            "assistantId": { "type": "string" },
+            "startedAt": { "type": "string" },
+            "endedAt": { "type": "string" },
+            "endedReason": { "type": "string" },
+            "customer": { "type": "object", "additionalProperties": true }
+          },
+          "additionalProperties": true
+        },
+        "assistant": { "type": "object", "additionalProperties": true },
+        "artifact": {
+          "type": "object",
+          "properties": {
+            "transcript": { "type": "string" },
+            "recordingUrl": { "type": "string" },
+            "messages": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+            "performanceMetrics": {
+              "type": "object",
+              "properties": {
+                "turnLatencies": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "turn": { "type": "integer" },
+                      "transcriberLatency": { "type": "number" },
+                      "modelLatency": { "type": "number" },
+                      "voiceLatency": { "type": "number" },
+                      "turnLatency": { "type": "number" },
+                      "endpointingLatency": { "type": "number" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "analysis": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

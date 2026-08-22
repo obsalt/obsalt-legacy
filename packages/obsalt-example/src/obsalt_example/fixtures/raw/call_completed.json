@@ -1,0 +1,25 @@
+{
+  "event": "call.completed",
+  "call_id": "ex-call-1",
+  "agent_id": "demo-agent",
+  "started_at": "2026-08-22T12:00:00+00:00",
+  "ended_at": "2026-08-22T12:01:00+00:00",
+  "system_prompt": "You are a helpful agent. Never invent order numbers.",
+  "turns": [
+    {
+      "index": 0,
+      "speaker": "user",
+      "text": "I need a refund for order ORD-1001.",
+      "started_at": "2026-08-22T12:00:05+00:00",
+      "ended_at": "2026-08-22T12:00:08+00:00"
+    },
+    {
+      "index": 1,
+      "speaker": "agent",
+      "text": "I can look that up.",
+      "started_at": "2026-08-22T12:00:09+00:00",
+      "ended_at": "2026-08-22T12:00:12+00:00"
+    }
+  ],
+  "outcome": { "code": "user_hangup" }
+}

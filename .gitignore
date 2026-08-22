@@ -18,3 +18,4 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+packages/**/src/*.egg-info/

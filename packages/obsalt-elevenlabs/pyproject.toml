@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-elevenlabs"
+version = "0.2.0"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = ["obsalt==0.2.0"]
+
+[project.entry-points."obsalt.plugins"]
+elevenlabs = "obsalt_elevenlabs.plugin:ElevenLabsPlugin"
+elevenlabs_otel = "obsalt_elevenlabs.plugin:ElevenLabsOtelMapper"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_elevenlabs = ["fixtures/**/*"]

@@ -3,53 +3,49 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "obsalt"
-version = "0.1.0"
-description = "Observability for voice AI agents: hosted-provider ingest (Vapi, Retell, Bland) and a Pipecat/custom-agent SDK"
-readme = "README.md"
+name = "obsalt-workspace"
+version = "0.2.0"
+description = "obsalt monorepo workspace (install packages/*)"
 requires-python = ">=3.11"
+readme = "README.md"
 license = { text = "Apache-2.0" }
-authors = [{ name = "obsalt" }]
-keywords = ["voice", "observability", "opentelemetry", "pipecat", "vapi", "retell", "bland", "openai-realtime"]
-dependencies = [
-  "fastapi>=0.115.0",
-  "uvicorn[standard]>=0.32.0",
-  "pydantic>=2.9.0",
-  "pydantic-settings>=2.6.0",
-  "httpx>=0.27.0",
-  "opentelemetry-api>=1.28.0",
-  "opentelemetry-sdk>=1.28.0",
-  "opentelemetry-exporter-otlp-proto-http>=1.28.0",
-  "opentelemetry-semantic-conventions>=0.49b0",
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.3.0",
-  "httpx>=0.27.0",
-]
-
-[project.scripts]
-obsalt = "obsalt.cli:main"
-
-[project.urls]
-Homepage = "https://github.com/coder-with-a-bushido/obsalt"
-Documentation = "https://github.com/coder-with-a-bushido/obsalt/blob/main/docs/README.md"
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [
+  "packages/obsalt/src",
+  "packages/obsalt-testkit/src",
+  "packages/obsalt-example/src",
+  "packages/obsalt-vapi/src",
+  "packages/obsalt-retell/src",
+  "packages/obsalt-elevenlabs/src",
+  "packages/obsalt-cartesia/src",
+  "packages/obsalt-openai-realtime/src",
+  "packages/obsalt-gemini-live/src",
+  "packages/obsalt-pipecat/src",
+  "packages/obsalt-livekit/src",
+]
 addopts = "-q --strict-markers"
-filterwarnings = [
-  "ignore::DeprecationWarning",
+asyncio_mode = "auto"
+markers = [
+  "integration: needs docker compose services",
 ]
 
 [tool.ruff]
-line-length = 100
+line-length = 110
 target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["obsalt", "obsalt_testkit", "obsalt_example", "obsalt_vapi", "obsalt_retell"]
+mypy_path = "packages/obsalt/src:packages/obsalt-testkit/src:packages/obsalt-example/src:packages/obsalt-vapi/src:packages/obsalt-retell/src"
+ignore_missing_imports = true
+warn_unused_ignores = false
+
+[tool.setuptools]
+packages = []

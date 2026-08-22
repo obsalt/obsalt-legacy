@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/example/schema/v1",
+  "title": "Example post-call webhook",
+  "type": "object",
+  "required": ["event", "call_id"],
+  "additionalProperties": false,
+  "properties": {
+    "event": { "type": "string", "enum": ["call.completed", "call_ended", "assistant-request"] },
+    "call_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": "string", "format": "date-time" },
+    "system_prompt": { "type": "string" },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "speaker", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "index": { "type": "integer" },
+          "speaker": { "type": "string", "enum": ["user", "agent"] },
+          "text": { "type": "string" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "ended_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" }
+      }
+    }
+  }
+}

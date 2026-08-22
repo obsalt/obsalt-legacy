@@ -1,10 +1,32 @@
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
 
-FIXTURES = Path(__file__).parent / "fixtures"
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGES = ROOT / "packages"
+for name in (
+    "obsalt",
+    "obsalt-testkit",
+    "obsalt-example",
+    "obsalt-vapi",
+    "obsalt-retell",
+    "obsalt-elevenlabs",
+    "obsalt-cartesia",
+    "obsalt-openai-realtime",
+    "obsalt-gemini-live",
+    "obsalt-pipecat",
+    "obsalt-livekit",
+):
+    src = PACKAGES / name / "src"
+    if src.is_dir() and str(src) not in sys.path:
+        sys.path.insert(0, str(src))
 
 
-def load_fixture(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_text())
+@pytest.fixture
+def example_plugin():
+    from obsalt_example.plugin import ExamplePlugin
+
+    return ExamplePlugin()

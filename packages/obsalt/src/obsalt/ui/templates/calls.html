@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Calls — obsalt{% endblock %}
+{% block body %}
+<h1>Calls</h1>
+<p>org <code>{{ org_id }}</code></p>
+<table>
+  <thead>
+    <tr><th>Call</th><th>Agent</th><th>Source</th><th>Fidelity</th><th>Hangup</th></tr>
+  </thead>
+  <tbody>
+  {% for call in calls %}
+    <tr>
+      <td><a href="/v1/ui/calls/{{ call.call_id }}">{{ call.call_id }}</a></td>
+      <td>{{ call.identity.agent_id }}</td>
+      <td>{{ call.identity.source }}</td>
+      <td>{{ call.lifecycle.timeline_fidelity }}</td>
+      <td>{% if call.hangup %}{{ call.hangup.reason }}{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

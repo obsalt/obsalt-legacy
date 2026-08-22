@@ -1,0 +1,3 @@
+__version__ = "0.2.0"
+PLUGIN_API_VERSION = 1
+SUPPORTED_PLUGIN_API = (1, 1)

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-vapi"
+version = "0.2.0"
+description = "obsalt Vapi source plugin"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = ["obsalt==0.2.0"]
+
+[project.optional-dependencies]
+dev = ["obsalt-testkit==0.2.0", "pytest>=8.3.0"]
+
+[project.entry-points."obsalt.plugins"]
+vapi = "obsalt_vapi.plugin:VapiPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_vapi = ["fixtures/**/*"]
