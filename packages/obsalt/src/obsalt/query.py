@@ -254,6 +254,8 @@ def search_calls(
     if index is not None and hasattr(index, "query") and not isinstance(index, MemorySearchIndex):
         result = index.query(org_id or "", query, filters=filters)
         return list(result.get("items") or [])
+    if not query.strip() or not calls:
+        return []
     search_index = MemorySearchIndex()
     for call in calls:
         search_index.index(call)

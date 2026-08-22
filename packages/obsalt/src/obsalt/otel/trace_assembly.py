@@ -151,7 +151,8 @@ def unrooted_events(events: list[NormalizedEvent]) -> list[NormalizedEvent]:
                     update={
                         "ended_at": None,
                         "status": None,
-                        "agent_id": event.agent_id if event.agent_id and event.agent_id != "unknown" else None,
+                        "agent_id": None,
+                        "cost": None,
                     }
                 )
             )

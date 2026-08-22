@@ -104,7 +104,12 @@ class ExamplePlugin:
 
     def tombstone_hints(self, raw: bytes) -> TombstoneHints:
         payload = _json(raw)
-        return TombstoneHints(source_call_id=payload.get("call_id"))
+        event_time = _ts(payload.get("timestamp") or payload.get("started_at"))
+        if event_time is None:
+            turns = payload.get("turns") or []
+            if turns:
+                event_time = _ts(turns[0].get("started_at"))
+        return TombstoneHints(source_call_id=payload.get("call_id"), event_time=event_time)
 
     def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse:
         return WebhookResponse(status_code=200, body=b'{"ok":true}')

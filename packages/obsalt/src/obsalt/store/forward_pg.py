@@ -92,6 +92,19 @@ class PostgresForwardQueue:
         )
         self.delivered.append(job)
 
+    def purge_org(self, org_id: str, *, call_id: str | None = None) -> int:
+        if call_id:
+            row = self._conn.execute(
+                "DELETE FROM otlp_forward_outbox WHERE org_id = %s AND object_key LIKE %s",
+                (org_id, f"%{call_id}%"),
+            )
+        else:
+            row = self._conn.execute(
+                "DELETE FROM otlp_forward_outbox WHERE org_id = %s",
+                (org_id,),
+            )
+        return int(getattr(row, "rowcount", 0) or 0)
+
     def mark_failed_job(self, job: ForwardJob, detail: str) -> None:
         self._conn.execute(
             "UPDATE otlp_forward_outbox SET last_error = %s WHERE id = %s",

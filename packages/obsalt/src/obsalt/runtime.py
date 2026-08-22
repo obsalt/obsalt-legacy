@@ -12,7 +12,7 @@ from obsalt.analysis.contributions import ClickHouseRollupStore, MemoryRollupSto
 from obsalt.analysis.judge import judge_from_settings
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
 from obsalt.config import Settings
-from obsalt.domain.enums import KeyScope
+from obsalt.domain.enums import KeyScope, Role
 from obsalt.domain.models import Rubric
 from obsalt.ingest.receive import ConnectionResolver, Inbox, ObjectStore
 from obsalt.otel.forward_queue import MemoryForwardQueue
@@ -43,6 +43,7 @@ class AppState:
     destinations: list[dict[str, str]] = field(default_factory=list)
     webhook_destinations: list[dict[str, Any]] = field(default_factory=list)
     spend_usd: float = 0.0
+    spend_by_org: dict[str, float] = field(default_factory=dict)
     rollup_generation: str = "gen-0"
     connections_plaintext: dict[str, str] = field(default_factory=dict)
     leases: Any = None
@@ -62,6 +63,9 @@ class AppState:
     webhook_store: Any = None
     review_store: Any = None
     deletion_store: Any = None
+    user_store: Any = None
+    backups: list[dict[str, Any]] = field(default_factory=list)
+    key_roles: dict[str, Role] = field(default_factory=dict)
     key_expiry: dict[str, Any] = field(default_factory=dict)
     deletion_completions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -106,6 +110,7 @@ def in_memory_state(
         pointers=MemoryPointerStore(),
         sink=MemoryRevisionSink(),
         keys={api_key: (org_id, frozenset(KeyScope))},
+        key_roles={api_key: Role.OWNER},
         rollup_generation=new_id(),
         search=MemorySearchIndex(),
         traces=MemoryTraceAssembler(),
@@ -116,6 +121,7 @@ def in_memory_state(
         hangup_clusters=MemoryHangupClusterStore(),
         generation_store=MemoryGenerationStore(),
         deletion_store=MemoryDeletionStore(),
+        user_store=_memory_users(org_id),
     )
 
 
@@ -137,6 +143,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         PostgresReviewStore,
         PostgresRubricStore,
         PostgresSearchDocuments,
+        PostgresUserStore,
         PostgresWebhookStore,
         apply_schema,
         connect,
@@ -181,6 +188,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         keys[settings.bootstrap_api_key] = (org_id, frozenset(KeyScope))
 
     generation_store = PostgresGenerationStore(conn)
+    rubric_store = PostgresRubricStore(conn)
     return AppState(
         settings=settings,
         plugins=plugins,
@@ -199,12 +207,15 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         rollups=_production_rollups(sink),
         span_identities=_production_span_index(conn),
         judge=judge_from_settings(settings),
-        rubric_store=PostgresRubricStore(conn),
+        rubric_store=rubric_store,
+        rubrics=_load_rubrics(rubric_store, org_id),
         hangup_clusters=ClickHouseHangupClusterStore(sink._client),
         generation_store=generation_store,
         webhook_store=PostgresWebhookStore(conn, master_key=settings.master_key.encode()),
         review_store=PostgresReviewStore(conn),
         deletion_store=PostgresDeletionStore(conn, inbox),
+        user_store=_production_users(PostgresUserStore(conn), org_id),
+        key_roles={settings.bootstrap_api_key: Role.OWNER} if settings.bootstrap_api_key else {},
     )
 
 
@@ -297,3 +308,42 @@ class MemoryDeletionStore:
         }
         self.completed.append(item)
         return 1
+
+    def backlog(self) -> int:
+        return sum(1 for item in self.completed if item.get("status") != "completed")
+
+
+def _memory_users(org_id: str) -> Any:
+    from obsalt.security.users import MemoryUserStore
+
+    store = MemoryUserStore()
+    store.upsert(org_id, "owner@local", Role.OWNER)
+    return store
+
+
+def _production_users(store: Any, org_id: str) -> Any:
+    store.upsert(org_id, "owner@local", Role.OWNER)
+    return store
+
+
+def _load_rubrics(store: Any, org_id: str) -> dict[str, Any]:
+    lister = getattr(store, "list", None)
+    if not callable(lister):
+        return {}
+    return {item.id: item for item in lister(org_id)}
+
+
+def spend_for(state: AppState, org_id: str) -> float:
+    by_org = getattr(state, "spend_by_org", None)
+    if isinstance(by_org, dict) and by_org:
+        return float(by_org.get(org_id, 0.0))
+    return float(getattr(state, "spend_usd", 0.0) or 0.0)
+
+
+def add_spend(state: AppState, org_id: str, cost: float) -> float:
+    total = spend_for(state, org_id) + float(cost)
+    if getattr(state, "spend_by_org", None) is None:
+        state.spend_by_org = {}
+    state.spend_by_org[org_id] = total
+    state.spend_usd = total
+    return total

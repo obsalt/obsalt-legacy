@@ -193,6 +193,7 @@ class CallRevision(BaseModel):
     rooted: bool = True
     caller_token: str | None = None
     accepted_fact_ids: list[str] = Field(default_factory=list)
+    unmapped_attributes: dict[str, str] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
 
     def user_turns(self) -> list[Turn]:

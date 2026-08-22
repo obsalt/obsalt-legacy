@@ -70,6 +70,23 @@
     <p><a href="/v1/plugins">Installed plugins (API)</a></p>
   </section>
   <section class="panel">
+    <h2>Users</h2>
+    <p class="muted">Browser roles come from org users. Owner rotates keys; admin replays; analyst evaluates; reviewer is read-only.</p>
+    <table>
+      <thead><tr><th>Email</th><th>Role</th></tr></thead>
+      <tbody>
+        {% for item in users|default([]) %}
+        <tr>
+          <td>{{ item.email }}</td>
+          <td>{{ item.role }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="2">No users.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="panel">
     <h2>Keys</h2>
     <p class="muted">Service keys are hashed at rest, org-bound, and scoped. Secrets are never returned after creation.</p>
     <ul>

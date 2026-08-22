@@ -27,8 +27,13 @@ def apply_deletion(
     if caller and not token:
         token = caller_token(org_id, caller, DEFAULT_PEPPER)
 
-    hints = TombstoneHints(source_call_id=source_call_id or call_id, caller_token=token)
-    if hints.source_call_id or hints.caller_token:
+    hints = TombstoneHints(
+        source_call_id=source_call_id or call_id,
+        caller_token=token,
+        range_start=start,
+        range_end=end,
+    )
+    if hints.source_call_id or hints.caller_token or (hints.range_start and hints.range_end):
         state.inbox.tombstone(org_id, hints)
 
     to_delete: set[str] = set()
@@ -66,8 +71,12 @@ def apply_deletion(
             rollups.delete_call(org_id, cid)
         if objects is not None:
             _purge_evidence(objects, org_id, cid)
+        _purge_queues(state, org_id, cid, source_ids)
 
     bump_generation(state)
+    from obsalt.ops.backup import expire_backups
+
+    expire_backups(state)
     completed = _complete_deletion(
         state,
         org_id,
@@ -126,6 +135,60 @@ def _all_revisions(state: Any, org_id: str) -> list[CallRevision]:
         if rev.org_id == org_id and rev not in items:
             items.append(rev)
     return items
+
+
+def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -> None:
+    inbox = getattr(state, "inbox", None)
+    if inbox is not None:
+        for envelope in list(getattr(inbox, "by_id", {}).values()):
+            if getattr(envelope, "org_id", None) != org_id:
+                continue
+            source = getattr(envelope, "source_call_id", None)
+            if source in source_ids or source == call_id or call_id in (getattr(envelope, "object_key", "") or ""):
+                drop = getattr(inbox, "drop_outbox", None)
+                if callable(drop):
+                    drop(envelope.envelope_id)
+                if hasattr(envelope, "state"):
+                    from obsalt.domain.enums import EnvelopeState
+
+                    envelope.state = EnvelopeState.TOMBSTONED
+        dlq = getattr(inbox, "dlq", None)
+        if isinstance(dlq, list):
+            keep = []
+            for row in dlq:
+                eid = row.get("envelope_id")
+                env = getattr(inbox, "by_id", {}).get(eid)
+                if env is not None and (env.source_call_id in source_ids or env.source_call_id == call_id):
+                    continue
+                keep.append(row)
+            inbox.dlq = keep
+        purge_dlq = getattr(inbox, "purge_dlq", None)
+        if callable(purge_dlq):
+            purge_dlq(org_id, source_call_ids=source_ids | {call_id})
+
+    outbox = getattr(state, "webhook_outbox", None)
+    if isinstance(outbox, list):
+        state.webhook_outbox = [
+            item
+            for item in outbox
+            if item.get("org_id") != org_id or item.get("call_id") not in {call_id, *source_ids}
+        ]
+    store = getattr(state, "webhook_store", None)
+    purge_webhooks = getattr(store, "purge_for_call", None) if store is not None else None
+    if callable(purge_webhooks):
+        purge_webhooks(org_id, call_id)
+
+    queue = getattr(state, "forward_queue", None)
+    pending = getattr(queue, "pending", None) if queue is not None else None
+    if isinstance(pending, list):
+        queue.pending = [
+            job
+            for job in pending
+            if getattr(job, "org_id", None) != org_id or call_id not in (getattr(job, "object_key", "") or "")
+        ]
+    purge_fwd = getattr(queue, "purge_org", None) if queue is not None else None
+    if callable(purge_fwd):
+        purge_fwd(org_id, call_id=call_id)
 
 
 def _purge_evidence(objects: Any, org_id: str, call_id: str) -> None:

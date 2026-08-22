@@ -32,7 +32,10 @@ def sweep(
     raw = sweep_raw(state, now=now)
     transcripts = sweep_transcripts(state, now=now)
     aggregates = sweep_aggregates(state, now=now)
-    return {**raw, "transcripts": transcripts, "aggregates": aggregates}
+    from obsalt.ops.backup import expire_backups
+
+    backups = expire_backups(state, now=now)
+    return {**raw, "transcripts": transcripts, "aggregates": aggregates, "backups": backups}
 
 
 def sweep_transcripts(

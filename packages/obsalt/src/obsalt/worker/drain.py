@@ -105,9 +105,12 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
     decoded = decoded_envelope_body(envelope)
     if decoded is not envelope.body:
         envelope = envelope.model_copy(update={"body": decoded})
-    events = list(plugin.decode(envelope))
+    from obsalt.plugin.host import invoke_with_deadline
+
+    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    events = invoke_with_deadline(lambda: list(plugin.decode(envelope)), timeout_seconds=deadline)
     source_call_id = envelope.source_call_id or _source_call_id(events) or envelope.envelope_id
-    extracted = TombstoneHints(source_call_id=source_call_id)
+    extracted = _tombstone_from_events(events, source_call_id)
     if inbox.is_tombstoned(envelope.org_id, extracted):
         inbox.tombstone(envelope.org_id, extracted)
         return None
@@ -135,10 +138,18 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     content_type = (envelope.headers or {}).get("content-type", "application/json")
     ct = content_type.split(";")[0].strip()
     encoding = (envelope.headers or {}).get("content-encoding")
-    req = parse_otlp_request(ct, raw, encoding)
+    req = parse_otlp_request(
+        ct,
+        raw,
+        encoding,
+        expanded_bytes=getattr(getattr(state, "settings", None), "expanded_body_limit", None),
+    )
     spans = request_to_spans(req)
     registry = MapperRegistry(state.plugins)
-    events = registry.decode(spans)
+    from obsalt.plugin.host import invoke_with_deadline
+
+    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    events = invoke_with_deadline(lambda: list(registry.decode(spans)), timeout_seconds=deadline)
     mapper = registry.pick(spans[0]) if spans else None
     if mapper is None:
         state.inbox.mark_failed(envelope.envelope_id, "no otlp mapper claimed this batch")
@@ -176,6 +187,9 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     rooted = record.rooted
     if not rooted:
         use_events = unrooted_events(use_events)
+    from obsalt.otel.attributes import leftover_attributes
+
+    leftover = leftover_attributes(spans)
     revision = _assemble_and_promote(
         state,
         envelope,
@@ -186,10 +200,11 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
         decoder_version=decoder_version,
         rooted=rooted,
         caller_token=getattr(record, "caller_token", None),
+        unmapped_attributes=leftover,
     )
     assembler.mark_finalized(record, unrooted=not rooted)
     record.call_id = revision.call_id if revision is not None else None
-    extracted = TombstoneHints(source_call_id=source_call_id)
+    extracted = _tombstone_from_events(use_events, source_call_id)
     return _after_promote(state, envelope, revision, extracted)
 
 
@@ -266,6 +281,7 @@ def _assemble_and_promote(
     decoder_version: str,
     rooted: bool = True,
     caller_token: str | None = None,
+    unmapped_attributes: dict[str, str] | None = None,
 ) -> CallRevision:
     inbox = state.inbox
     record_run = getattr(inbox, "record_run", None)
@@ -291,6 +307,7 @@ def _assemble_and_promote(
             objects=state.objects,
             rooted=rooted,
             caller_token=caller_token,
+            unmapped_attributes=unmapped_attributes,
         )
     except Exception:
         if callable(record_run) and run_id:
@@ -429,7 +446,9 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
     settings = getattr(state, "settings", None)
     rate = float(getattr(settings, "baseline_sample_rate", 0.0) or 0.0)
     budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
-    spend = float(getattr(state, "spend_usd", 0.0) or 0.0)
+    from obsalt.runtime import add_spend, spend_for
+
+    spend = spend_for(state, revision.org_id)
     budget_usd = budget if budget > 0 else float("inf")
     rubrics = [r for r in getattr(state, "rubrics", {}).values() if getattr(r, "org_id", None) == revision.org_id]
     existing = list(getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), []))
@@ -476,10 +495,10 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
             )
             cost = float((result.payload or {}).get("cost_usd") or 0.0)
             if cost:
-                state.spend_usd = spend + cost
+                total = add_spend(state, revision.org_id, cost)
                 from obsalt.metrics import tier2_spend_usd
 
-                tier2_spend_usd.labels(org_id=revision.org_id).set(state.spend_usd)
+                tier2_spend_usd.labels(org_id=revision.org_id).set(total)
             results.append(result)
             if not result.payload.get("passed", True):
                 from obsalt.webhooks.outbound import emit_standard_event
@@ -541,6 +560,19 @@ def _source_call_id(events: Iterable[NormalizedEvent]) -> str | None:
         if isinstance(event, CallObserved):
             return event.source_call_id
     return None
+
+
+def _tombstone_from_events(events: Iterable[NormalizedEvent], source_call_id: str | None) -> TombstoneHints:
+    event_time = None
+    for event in events:
+        if isinstance(event, CallObserved):
+            event_time = event.started_at or event.ended_at or event.event_occurred_at
+            break
+        occurred = getattr(event, "event_occurred_at", None)
+        if occurred is not None:
+            event_time = occurred
+            break
+    return TombstoneHints(source_call_id=source_call_id, event_time=event_time)
 
 
 # Drop-in name for the webhook BackgroundTask once api.py imports this module.

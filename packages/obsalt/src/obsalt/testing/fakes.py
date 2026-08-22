@@ -56,7 +56,25 @@ class MemoryInbox:
                 return True
             if hints.caller_token and stored.caller_token == hints.caller_token:
                 return True
+            if stored.covers_event(hints.event_time):
+                return True
         return False
+
+    def list_dlq(self) -> list[dict[str, str]]:
+        return list(self.dlq)
+
+    def purge_dlq(self, org_id: str, *, source_call_ids: set[str] | None = None) -> int:
+        keep: list[dict[str, str]] = []
+        removed = 0
+        wanted = source_call_ids or set()
+        for row in self.dlq:
+            env = self.by_id.get(row.get("envelope_id", ""))
+            if env is not None and env.org_id == org_id and (not wanted or env.source_call_id in wanted):
+                removed += 1
+                continue
+            keep.append(row)
+        self.dlq = keep
+        return removed
 
     def accept(self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints) -> tuple[RawEnvelope, bool]:
         if self.is_tombstoned(envelope.org_id, tombstone_hints):

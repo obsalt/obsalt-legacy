@@ -165,6 +165,7 @@ def process_normalized_events(
     objects: Any | None = None,
     rooted: bool = True,
     caller_token: str | None = None,
+    unmapped_attributes: dict[str, str] | None = None,
 ) -> CallRevision:
     run_id = new_id()
     resolved_source = source_call_id or _source_call_id(events) or envelope_id
@@ -235,10 +236,14 @@ def process_normalized_events(
             rooted=rooted,
         )
         _stamp_caller_token(rebuilt, caller or (current.caller_token if current else None))
+        if unmapped_attributes:
+            rebuilt.unmapped_attributes = dict(unmapped_attributes)
         sink.write(rebuilt)
         return rebuilt
 
     _stamp_caller_token(candidate, caller)
+    if unmapped_attributes:
+        candidate.unmapped_attributes = dict(unmapped_attributes)
     sink.write(candidate)
     result = promote(
         pointers,

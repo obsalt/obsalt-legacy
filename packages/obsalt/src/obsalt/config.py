@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     outbox_backpressure_limit: int = 10_000
     slo_e2e_ms: float = 2000.0
     key_rotation_overlap_seconds: int = 86_400
+    plugin_deadline_seconds: float = 10.0
+    backup_retention_days: int = 30
 
     llm_monthly_budget_usd: float = 0.0
     baseline_sample_rate: float = 0.0
