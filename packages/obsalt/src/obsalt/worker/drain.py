@@ -105,9 +105,12 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
     decoded = decoded_envelope_body(envelope)
     if decoded is not envelope.body:
         envelope = envelope.model_copy(update={"body": decoded})
-    events = list(plugin.decode(envelope))
+    from obsalt.plugin.host import invoke_with_deadline
+
+    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    events = invoke_with_deadline(lambda: list(plugin.decode(envelope)), timeout_seconds=deadline)
     source_call_id = envelope.source_call_id or _source_call_id(events) or envelope.envelope_id
-    extracted = TombstoneHints(source_call_id=source_call_id)
+    extracted = _tombstone_from_events(events, source_call_id)
     if inbox.is_tombstoned(envelope.org_id, extracted):
         inbox.tombstone(envelope.org_id, extracted)
         return None
@@ -138,7 +141,10 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     req = parse_otlp_request(ct, raw, encoding)
     spans = request_to_spans(req)
     registry = MapperRegistry(state.plugins)
-    events = registry.decode(spans)
+    from obsalt.plugin.host import invoke_with_deadline
+
+    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    events = invoke_with_deadline(lambda: list(registry.decode(spans)), timeout_seconds=deadline)
     mapper = registry.pick(spans[0]) if spans else None
     if mapper is None:
         state.inbox.mark_failed(envelope.envelope_id, "no otlp mapper claimed this batch")
@@ -176,6 +182,9 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     rooted = record.rooted
     if not rooted:
         use_events = unrooted_events(use_events)
+    from obsalt.otel.attributes import leftover_attributes
+
+    leftover = leftover_attributes(spans)
     revision = _assemble_and_promote(
         state,
         envelope,
@@ -186,10 +195,11 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
         decoder_version=decoder_version,
         rooted=rooted,
         caller_token=getattr(record, "caller_token", None),
+        unmapped_attributes=leftover,
     )
     assembler.mark_finalized(record, unrooted=not rooted)
     record.call_id = revision.call_id if revision is not None else None
-    extracted = TombstoneHints(source_call_id=source_call_id)
+    extracted = _tombstone_from_events(use_events, source_call_id)
     return _after_promote(state, envelope, revision, extracted)
 
 
@@ -266,6 +276,7 @@ def _assemble_and_promote(
     decoder_version: str,
     rooted: bool = True,
     caller_token: str | None = None,
+    unmapped_attributes: dict[str, str] | None = None,
 ) -> CallRevision:
     inbox = state.inbox
     record_run = getattr(inbox, "record_run", None)
@@ -291,6 +302,7 @@ def _assemble_and_promote(
             objects=state.objects,
             rooted=rooted,
             caller_token=caller_token,
+            unmapped_attributes=unmapped_attributes,
         )
     except Exception:
         if callable(record_run) and run_id:
@@ -541,6 +553,19 @@ def _source_call_id(events: Iterable[NormalizedEvent]) -> str | None:
         if isinstance(event, CallObserved):
             return event.source_call_id
     return None
+
+
+def _tombstone_from_events(events: Iterable[NormalizedEvent], source_call_id: str | None) -> TombstoneHints:
+    event_time = None
+    for event in events:
+        if isinstance(event, CallObserved):
+            event_time = event.started_at or event.ended_at or event.event_occurred_at
+            break
+        occurred = getattr(event, "event_occurred_at", None)
+        if occurred is not None:
+            event_time = occurred
+            break
+    return TombstoneHints(source_call_id=source_call_id, event_time=event_time)
 
 
 # Drop-in name for the webhook BackgroundTask once api.py imports this module.

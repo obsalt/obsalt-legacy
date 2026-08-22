@@ -68,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     drift.set_defaults(func=cmd_schema_drift)
     retain = sub.add_parser("retain", help="Sweep expired raw, transcript, and aggregate retention")
     retain.set_defaults(func=cmd_retain)
+    worker = sub.add_parser("worker", help="Drain the outbox. Decode never runs on the webhook path.")
+    worker.add_argument("--poll", type=float, default=1.0, help="Idle sleep seconds")
+    worker.add_argument("--once", action="store_true", help="Process one batch and exit")
+    worker.set_defaults(func=cmd_worker)
     export = sub.add_parser("export", help="Export active-call revisions to a Parquet/JSONL manifest")
     export.add_argument("--org", required=True)
     export.add_argument("--dest", required=True)
@@ -185,6 +189,26 @@ def cmd_schema_drift(args: argparse.Namespace) -> int:
     report = compare_vendored(Path(args.fixtures), remote)
     print(json.dumps(report, indent=2))
     return 1 if report.get("diverged") else 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    from obsalt.worker.drain import drain_once
+
+    settings = Settings()
+    try:
+        state = production_state(settings)
+    except Exception as exc:
+        print("Could not connect to Postgres / ClickHouse / object storage.", file=sys.stderr)
+        print("Supported path: docker compose up -d && obsalt worker", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
+    if args.once:
+        print(drain_once(state))
+        return 0
+    while True:
+        processed = drain_once(state)
+        if processed == 0:
+            time.sleep(max(0.05, float(args.poll)))
 
 
 def cmd_retain(_args: argparse.Namespace) -> int:

@@ -56,7 +56,12 @@ class MemoryInbox:
                 return True
             if hints.caller_token and stored.caller_token == hints.caller_token:
                 return True
+            if stored.covers_event(hints.event_time):
+                return True
         return False
+
+    def list_dlq(self) -> list[dict[str, str]]:
+        return list(self.dlq)
 
     def accept(self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints) -> tuple[RawEnvelope, bool]:
         if self.is_tombstoned(envelope.org_id, tombstone_hints):

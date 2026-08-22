@@ -22,6 +22,13 @@ class TombstoneHints(BaseModel):
     source_call_id: str | None = None
     caller_token: str | None = None
     event_time: datetime | None = None
+    range_start: datetime | None = None
+    range_end: datetime | None = None
+
+    def covers_event(self, event_time: datetime | None) -> bool:
+        if event_time is None or self.range_start is None or self.range_end is None:
+            return False
+        return self.range_start <= event_time <= self.range_end
 
 
 class WebhookResponse(BaseModel):

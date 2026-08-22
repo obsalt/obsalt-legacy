@@ -8,6 +8,7 @@ from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
 from obsalt.util import sha256_text
 
 ANALYZER_VERSION = "1"
+DEAD_AIR_SECONDS = 8.0
 
 
 def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
@@ -28,6 +29,11 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
     low_conf = [t for t in call.turns if t.confidence is not None and t.confidence < 0.6]
     if low_conf:
         flags.append({"kind": "low_stt_confidence", "turns": [t.index for t in low_conf]})
+    dead = _dead_air(call)
+    if dead:
+        flags.append({"kind": "dead_air", "gap_seconds": dead})
+    if _truncated_llm(call):
+        flags.append({"kind": "truncated_llm", "reason": "empty_or_length"})
     results.append(_result(call, "flags", {"flags": flags}))
 
     tool_roll = {
@@ -50,6 +56,35 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
         )
     )
     return results
+
+
+def _dead_air(call: CallRevision) -> float | None:
+    timed = [turn for turn in call.turns if turn.started_at or turn.ended_at]
+    timed.sort(key=lambda turn: turn.started_at or turn.ended_at or turn.started_at)
+    widest = 0.0
+    for prev, nxt in zip(timed, timed[1:]):
+        prev_end = prev.ended_at or prev.started_at
+        nxt_start = nxt.started_at or nxt.ended_at
+        if prev_end is None or nxt_start is None:
+            continue
+        gap = (nxt_start - prev_end).total_seconds()
+        if gap > widest:
+            widest = gap
+    if widest > DEAD_AIR_SECONDS:
+        return widest
+    return None
+
+
+def _truncated_llm(call: CallRevision) -> bool:
+    attrs = getattr(call, "unmapped_attributes", None) or {}
+    finish = str(attrs.get("finish_reason") or attrs.get("gen_ai.response.finish_reason") or "").lower()
+    if finish == "length":
+        return True
+    agents = call.agent_turns()
+    if not agents:
+        return False
+    text = (agents[-1].text or "").rstrip()
+    return (not text) or text.endswith("...") or text.endswith("…")
 
 
 def _result(call: CallRevision, analyzer_id: str, payload: dict) -> AnalysisResult:

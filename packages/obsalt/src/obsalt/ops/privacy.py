@@ -27,8 +27,13 @@ def apply_deletion(
     if caller and not token:
         token = caller_token(org_id, caller, DEFAULT_PEPPER)
 
-    hints = TombstoneHints(source_call_id=source_call_id or call_id, caller_token=token)
-    if hints.source_call_id or hints.caller_token:
+    hints = TombstoneHints(
+        source_call_id=source_call_id or call_id,
+        caller_token=token,
+        range_start=start,
+        range_end=end,
+    )
+    if hints.source_call_id or hints.caller_token or (hints.range_start and hints.range_end):
         state.inbox.tombstone(org_id, hints)
 
     to_delete: set[str] = set()
@@ -68,6 +73,9 @@ def apply_deletion(
             _purge_evidence(objects, org_id, cid)
 
     bump_generation(state)
+    from obsalt.ops.backup import expire_backups
+
+    expire_backups(state)
     completed = _complete_deletion(
         state,
         org_id,

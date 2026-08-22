@@ -21,6 +21,7 @@ from obsalt.ingest.headers import RawHeaders
 from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.ingest.receive import ReceiveLimits, receive_webhook
 from obsalt.ops.backfill import run_backfill
+from obsalt.ops.health import collect_health
 from obsalt.ops.privacy import apply_deletion
 from obsalt.ops.retention import replay_horizon
 from obsalt.otel.receiver import parse_otlp_request, request_to_spans, serialized_success
@@ -40,7 +41,8 @@ from obsalt.query import (
     tools_rollup,
 )
 from obsalt.runtime import AppState, bump_generation, create_connection, in_memory_state
-from obsalt.security.sessions import check_csrf, read_session, sign_session, verify_session
+from obsalt.security.authz import allowed
+from obsalt.security.sessions import check_csrf, read_session, sign_session
 from obsalt.util import new_id
 from obsalt.worker.process import drain_inbox
 from obsalt.worker.replay import replay_envelopes
@@ -82,6 +84,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             "status": "ready",
             "plugins": [p.name for p in state.plugins],
             "insecure_defaults": settings.insecure_defaults(),
+            **collect_health(state),
         }
 
     @app.get("/metrics")
@@ -196,7 +199,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         limit: int = 50,
         cursor: str | None = None,
     ) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "calls.read")
         if start is None or end is None:
             raise HTTPException(status_code=400, detail="start and end are required")
         limit = min(max(limit, 1), 100)
@@ -259,7 +262,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/calls/{call_id}")
     def get_call(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "calls.read")
         rev = _active(state, org, call_id)
         payload = rev.model_dump(mode="json")
         payload["analysis"] = [
@@ -270,12 +273,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/calls/{call_id}/timeline")
     def get_timeline(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "calls.read")
         return timeline_view(_active(state, org, call_id))
 
     @app.get("/v1/calls/{call_id}/evidence/{ref}")
     def get_evidence(call_id: str, ref: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> Response:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "calls.read")
         rev = _active(state, org, call_id)
         body, content_type = _load_evidence(state, org, rev, ref)
         if body is None:
@@ -284,7 +287,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/search")
     async def search(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "search.read")
         body = await request.json()
         query = str(body.get("q") or "")
         filters = {k: body.get(k) for k in ("agent_id", "source", "hangup_reason") if body.get(k)}
@@ -303,7 +306,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "fleet.read")
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return latency_rollup(
@@ -319,7 +322,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "fleet.read")
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return hangup_rollup(
@@ -335,7 +338,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "fleet.read")
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return tools_rollup(calls, as_of_generation=state.rollup_generation)
@@ -346,7 +349,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "fleet.read")
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return quality_rollup(
@@ -357,7 +360,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/calls/{call_id}/analyze")
     async def analyze(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ANALYZE)
+        org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rev = _active(state, org, call_id)
         if state.spend_usd >= state.settings.llm_monthly_budget_usd > 0:
             execution = AnalysisExecution(
@@ -394,14 +397,14 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/rubrics")
     def list_rubrics(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.READ)
+        org = _authorize(state, x_api_key, KeyScope.READ, "settings.read")
         return {
             "items": [r.model_dump(mode="json") for r in state.rubrics.values() if r.org_id == org]
         }
 
     @app.post("/v1/rubrics")
     async def create_rubric(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         body = await request.json()
         rubric = Rubric(
             id=new_id(),
@@ -418,7 +421,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.put("/v1/rubrics/{rubric_id}")
     async def update_rubric(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         existing = state.rubrics.get(rubric_id)
         if existing is None or existing.org_id != org:
             raise HTTPException(status_code=404, detail="not found")
@@ -446,7 +449,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.delete("/v1/rubrics/{rubric_id}")
     def delete_rubric(rubric_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         existing = state.rubrics.get(rubric_id)
         if existing is None or existing.org_id != org:
             raise HTTPException(status_code=404, detail="not found")
@@ -458,7 +461,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/connections")
     def list_connections(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "connections.write")
         items = []
         connections = getattr(state.resolver, "connections", {})
         for cfg in connections.values():
@@ -476,7 +479,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/connections")
     async def post_connection(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "connections.write")
         body = await request.json()
         provider = str(body.get("provider") or "")
         try:
@@ -494,7 +497,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.delete("/v1/connections/{connection_id}")
     def delete_connection(connection_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "connections.write")
         deleter = getattr(state.resolver, "delete", None)
         if not callable(deleter) or not deleter(org, connection_id):
             raise HTTPException(status_code=404, detail="not found")
@@ -503,7 +506,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/outbound-webhooks")
     def list_outbound(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         items = []
         store = getattr(state, "webhook_store", None)
         dests = store.list_destinations(org) if getattr(store, "durable", False) else state.webhook_destinations
@@ -515,7 +518,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/outbound-webhooks")
     async def create_outbound(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         body = await request.json()
         from obsalt.egress import EgressDenied, validate_destination
         from obsalt.webhooks.outbound import mint_whsec
@@ -543,7 +546,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/outbound-webhooks/{dest_id}/rotate")
     async def rotate_outbound(dest_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         from obsalt.webhooks.outbound import mint_whsec
 
         body = {}
@@ -571,7 +574,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/keys/rotate")
     async def rotate_key(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "keys.rotate")
         import secrets as secretsmod
         from datetime import timedelta
 
@@ -594,7 +597,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/replay")
     async def replay(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "replay")
         body = {}
         try:
             body = await request.json()
@@ -611,7 +614,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/backfill")
     async def backfill(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "backfill")
         body: dict = {}
         try:
             body = await request.json()
@@ -626,7 +629,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/privacy/deletion-requests")
     async def deletion(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "privacy.delete")
         body = await request.json()
         call_id = body.get("call_id")
         source_call_id = body.get("source_call_id") or call_id
@@ -647,12 +650,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/retention")
     def retention(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        _require_key(state, x_api_key, KeyScope.READ)
+        _authorize(state, x_api_key, KeyScope.READ, "settings.read")
         return replay_horizon(raw_retention_days=state.settings.raw_retention_days)
 
     @app.post("/v1/export")
     async def export_calls(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "export")
         body: dict = {}
         try:
             body = await request.json()
@@ -671,7 +674,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/rubrics/{rubric_id}/calibrate")
     async def calibrate(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ANALYZE)
+        org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rubric = state.rubrics.get(rubric_id)
         if rubric is None or rubric.org_id != org:
             raise HTTPException(status_code=404, detail="not found")
@@ -686,7 +689,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/quality/review")
     async def review(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        org = _require_key(state, x_api_key, KeyScope.ANALYZE)
+        org = _authorize(state, x_api_key, KeyScope.READ, "quality.review")
         body = await request.json()
         item = {
             "org_id": org,
@@ -703,7 +706,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/plugins")
     def plugins(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        _require_key(state, x_api_key, KeyScope.READ)
+        _authorize(state, x_api_key, KeyScope.READ, "plugins.read")
         return {
             "items": [
                 {
@@ -716,6 +719,37 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 for p in state.plugins
             ]
         }
+
+    @app.get("/v1/users")
+    def list_users(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "users.read")
+        store = getattr(state, "user_store", None)
+        items = store.list(org) if store is not None else []
+        return {"items": items}
+
+    @app.post("/v1/users")
+    async def create_user(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "users.write")
+        store = getattr(state, "user_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="user store unavailable")
+        body = await request.json()
+        email = str(body.get("email") or "").strip()
+        if not email:
+            raise HTTPException(status_code=400, detail="email is required")
+        try:
+            role = Role(str(body.get("role") or Role.REVIEWER.value))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid role") from exc
+        return store.upsert(org, email, role)
+
+    @app.delete("/v1/users/{user_id}")
+    def delete_user(user_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _authorize(state, x_api_key, KeyScope.ADMIN, "users.write")
+        store = getattr(state, "user_store", None)
+        if store is None or not store.delete(org, user_id):
+            raise HTTPException(status_code=404, detail="not found")
+        return {"status": "deleted"}
 
     @app.get("/v1/ui", response_class=HTMLResponse)
     def ui_home(request: Request) -> HTMLResponse:
@@ -905,12 +939,14 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.get("/v1/ui/settings", response_class=HTMLResponse)
     def ui_settings(request: Request) -> HTMLResponse:
-        org = _ui_org(request, state)
+        org = _ui_require(request, state, "settings.read")
         connections = []
         for cfg in getattr(state.resolver, "connections", {}).values():
             if org and cfg.org_id != org:
                 continue
             connections.append({"provider": cfg.provider, "connection_id": cfg.connection_id, "org_id": cfg.org_id})
+        store = getattr(state, "user_store", None)
+        users = store.list(org) if store is not None else []
         return _render(
             request,
             "settings.html",
@@ -927,14 +963,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 "csrf": _ui_csrf(request, state),
                 "baseline_sample_rate": state.settings.baseline_sample_rate,
                 "budget_usd": state.settings.llm_monthly_budget_usd,
+                "users": users,
             },
         )
 
     @app.post("/v1/ui/replay")
     async def ui_replay(request: Request) -> Response:
-        org = _ui_org(request, state)
-        if not org:
-            raise HTTPException(status_code=401, detail="session required")
+        org = _ui_require(request, state, "replay")
         form = await request.form()
         _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
         replay_envelopes(state, org_id=org)
@@ -943,9 +978,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/ui/calls/{call_id}/analyze")
     async def ui_analyze(request: Request, call_id: str) -> Response:
-        org = _ui_org(request, state)
-        if not org:
-            raise HTTPException(status_code=401, detail="session required")
+        org = _ui_require(request, state, "calls.analyze")
         form = await request.form()
         _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
         rev = _active(state, org, call_id)
@@ -1010,6 +1043,15 @@ def _require_key(state: AppState, key: str | None, scope: KeyScope) -> str:
     return org
 
 
+def _authorize(state: AppState, key: str | None, scope: KeyScope, action: str) -> str:
+    org, scopes = _lookup_key(state, key)
+    if scope not in scopes and KeyScope.ADMIN not in scopes:
+        raise HTTPException(status_code=403, detail="insufficient scope")
+    if not allowed(_role_for_scopes(scopes), action):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    return org
+
+
 def _role_for_scopes(scopes: frozenset[KeyScope]) -> Role:
     if scopes >= frozenset(KeyScope):
         return Role.OWNER
@@ -1048,17 +1090,35 @@ def _load_evidence(state: AppState, org: str, rev: object, ref: str) -> tuple[by
 
 
 def _ui_org(request: Request, state: AppState) -> str | None:
+    principal = _ui_principal(request, state)
+    return principal[0] if principal else None
+
+
+def _ui_principal(request: Request, state: AppState) -> tuple[str, Role] | None:
     cookie = request.cookies.get("obsalt_session")
-    org = verify_session(cookie, state.settings.session_secret)
-    if org:
-        return org
+    info = read_session(cookie, state.settings.session_secret)
+    if info:
+        return info.org_id, info.role
     api_key = request.headers.get("x-api-key")
     if api_key:
         try:
-            return _require_key(state, api_key, KeyScope.READ)
+            org, scopes = _lookup_key(state, api_key)
+            if KeyScope.READ not in scopes and KeyScope.ADMIN not in scopes:
+                return None
+            return org, _role_for_scopes(scopes)
         except HTTPException:
             return None
     return None
+
+
+def _ui_require(request: Request, state: AppState, action: str) -> str:
+    principal = _ui_principal(request, state)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="session required")
+    org, role = principal
+    if not allowed(role, action):
+        raise HTTPException(status_code=403, detail="insufficient role")
+    return org
 
 
 def _ui_csrf(request: Request, state: AppState) -> str | None:

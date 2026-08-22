@@ -12,7 +12,7 @@ from obsalt.analysis.contributions import ClickHouseRollupStore, MemoryRollupSto
 from obsalt.analysis.judge import judge_from_settings
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
 from obsalt.config import Settings
-from obsalt.domain.enums import KeyScope
+from obsalt.domain.enums import KeyScope, Role
 from obsalt.domain.models import Rubric
 from obsalt.ingest.receive import ConnectionResolver, Inbox, ObjectStore
 from obsalt.otel.forward_queue import MemoryForwardQueue
@@ -62,6 +62,8 @@ class AppState:
     webhook_store: Any = None
     review_store: Any = None
     deletion_store: Any = None
+    user_store: Any = None
+    backups: list[dict[str, Any]] = field(default_factory=list)
     key_expiry: dict[str, Any] = field(default_factory=dict)
     deletion_completions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -116,6 +118,7 @@ def in_memory_state(
         hangup_clusters=MemoryHangupClusterStore(),
         generation_store=MemoryGenerationStore(),
         deletion_store=MemoryDeletionStore(),
+        user_store=_memory_users(org_id),
     )
 
 
@@ -137,6 +140,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         PostgresReviewStore,
         PostgresRubricStore,
         PostgresSearchDocuments,
+        PostgresUserStore,
         PostgresWebhookStore,
         apply_schema,
         connect,
@@ -205,6 +209,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         webhook_store=PostgresWebhookStore(conn, master_key=settings.master_key.encode()),
         review_store=PostgresReviewStore(conn),
         deletion_store=PostgresDeletionStore(conn, inbox),
+        user_store=_production_users(PostgresUserStore(conn), org_id),
     )
 
 
@@ -297,3 +302,19 @@ class MemoryDeletionStore:
         }
         self.completed.append(item)
         return 1
+
+    def backlog(self) -> int:
+        return sum(1 for item in self.completed if item.get("status") != "completed")
+
+
+def _memory_users(org_id: str) -> Any:
+    from obsalt.security.users import MemoryUserStore
+
+    store = MemoryUserStore()
+    store.upsert(org_id, "owner@local", Role.OWNER)
+    return store
+
+
+def _production_users(store: Any, org_id: str) -> Any:
+    store.upsert(org_id, "owner@local", Role.OWNER)
+    return store

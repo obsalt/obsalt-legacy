@@ -14,7 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from obsalt.assemble.promote import RevisionPointerStore
-from obsalt.domain.enums import EnvelopeState, KeyScope, ObservationalEventKind
+from obsalt.domain.enums import EnvelopeState, KeyScope, ObservationalEventKind, Role
 from obsalt.domain.models import CallRevision, Rubric
 from obsalt.plugin.types import ConnectionConfig, RawEnvelope, TombstoneHints
 from obsalt.security.secrets import decrypt_secret, encrypt_secret, hash_key
@@ -23,6 +23,31 @@ from obsalt.util import new_id, utcnow
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "postgres.sql"
 
 PgConn: TypeAlias = Connection[Any]
+
+_TOMBSTONE_MATCH = """
+org_id = %s
+AND (
+      (%s IS NOT NULL AND source_call_id = %s)
+   OR (%s IS NOT NULL AND caller_token = %s)
+   OR (
+        range_start IS NOT NULL AND range_end IS NOT NULL
+        AND %s IS NOT NULL
+        AND %s BETWEEN range_start AND range_end
+      )
+)
+"""
+
+
+def _tombstone_params(org_id: str, hints: TombstoneHints) -> tuple[Any, ...]:
+    return (
+        org_id,
+        hints.source_call_id,
+        hints.source_call_id,
+        hints.caller_token,
+        hints.caller_token,
+        hints.event_time,
+        hints.event_time,
+    )
 
 
 def connect(dsn: str) -> PgConn:
@@ -110,22 +135,8 @@ class PostgresInbox:
 
     def is_tombstoned(self, org_id: str, hints: TombstoneHints) -> bool:
         row = self._conn.execute(
-            """
-            SELECT 1 FROM tombstones
-            WHERE org_id = %s
-              AND (
-                    (%s IS NOT NULL AND source_call_id = %s)
-                 OR (%s IS NOT NULL AND caller_token = %s)
-              )
-            LIMIT 1
-            """,
-            (
-                org_id,
-                hints.source_call_id,
-                hints.source_call_id,
-                hints.caller_token,
-                hints.caller_token,
-            ),
+            f"SELECT 1 FROM tombstones WHERE {_TOMBSTONE_MATCH} LIMIT 1",
+            _tombstone_params(org_id, hints),
         ).fetchone()
         return row is not None
 
@@ -133,10 +144,17 @@ class PostgresInbox:
         with self._conn.transaction():
             self._conn.execute(
                 """
-                INSERT INTO tombstones (id, org_id, source_call_id, caller_token)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO tombstones (id, org_id, source_call_id, caller_token, range_start, range_end)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                (new_id(), org_id, hints.source_call_id, hints.caller_token),
+                (
+                    new_id(),
+                    org_id,
+                    hints.source_call_id,
+                    hints.caller_token,
+                    hints.range_start,
+                    hints.range_end,
+                ),
             )
             self._conn.execute(
                 """
@@ -174,22 +192,8 @@ class PostgresInbox:
     def accept(self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints) -> tuple[RawEnvelope, bool]:
         with self._conn.transaction():
             locked = self._conn.execute(
-                """
-                SELECT 1 FROM tombstones
-                WHERE org_id = %s
-                  AND (
-                        (%s IS NOT NULL AND source_call_id = %s)
-                     OR (%s IS NOT NULL AND caller_token = %s)
-                  )
-                FOR SHARE
-                """,
-                (
-                    envelope.org_id,
-                    tombstone_hints.source_call_id,
-                    tombstone_hints.source_call_id,
-                    tombstone_hints.caller_token,
-                    tombstone_hints.caller_token,
-                ),
+                f"SELECT 1 FROM tombstones WHERE {_TOMBSTONE_MATCH} FOR SHARE",
+                _tombstone_params(envelope.org_id, tombstone_hints),
             ).fetchone()
             if locked is not None:
                 envelope.state = EnvelopeState.TOMBSTONED
@@ -386,6 +390,18 @@ class PostgresInbox:
             (envelope_id,),
         ).fetchone()
         return _envelope_from_row(row) if row else None
+
+    def list_dlq(self, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT envelope_id, org_id, error, created_at
+            FROM decode_dlq
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
         rows = self._conn.execute(
@@ -1043,6 +1059,66 @@ class PostgresDeletionStore:
                 ),
             )
         return int(getattr(row, "rowcount", 0) or 0)
+
+    def backlog(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM deletion_requests WHERE completed_at IS NULL"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+
+class PostgresUserStore:
+    def __init__(self, conn: PgConn) -> None:
+        self._conn = conn
+
+    def upsert(self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None) -> dict[str, Any]:
+        role_value = role.value if isinstance(role, Role) else str(role)
+        existing = self.get_by_email(org_id, email)
+        rid = user_id or (existing["id"] if existing else new_id())
+        with self._conn.transaction():
+            self._conn.execute(
+                "INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (org_id, org_id),
+            )
+            row = self._conn.execute(
+                """
+                INSERT INTO users (id, org_id, email, role)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (org_id, email) DO UPDATE SET role = EXCLUDED.role
+                RETURNING *
+                """,
+                (rid, org_id, email.lower(), role_value),
+            ).fetchone()
+        return dict(row) if row else {"id": rid, "org_id": org_id, "email": email.lower(), "role": role_value}
+
+    def get(self, org_id: str, user_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM users WHERE org_id = %s AND id = %s",
+            (org_id, user_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_by_email(self, org_id: str, email: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT * FROM users WHERE org_id = %s AND email = %s",
+            (org_id, email.lower()),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list(self, org_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM users WHERE org_id = %s ORDER BY created_at",
+            (org_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete(self, org_id: str, user_id: str) -> bool:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                "DELETE FROM users WHERE org_id = %s AND id = %s RETURNING id",
+                (org_id, user_id),
+            ).fetchone()
+        return row is not None
 
 
 class PostgresGenerationStore:

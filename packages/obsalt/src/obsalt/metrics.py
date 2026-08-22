@@ -30,6 +30,27 @@ inbox_age_seconds = Gauge(
     "obsalt_inbox_age_seconds",
     "Age of the oldest unassembled envelope.",
 )
+deletion_backlog = Gauge(
+    "obsalt_deletion_backlog",
+    "Deletion requests that have not set completed_at.",
+)
+dlq_depth = Gauge(
+    "obsalt_dlq_depth",
+    "Dead-letter queue depth. Alert on this, not just a log line.",
+)
+org_queue_pressure = Gauge(
+    "obsalt_org_queue_pressure",
+    "Unassembled envelopes per organization.",
+    ["org_id"],
+)
+orphan_blob_count = Gauge(
+    "obsalt_orphan_blob_count",
+    "Raw object keys with no matching inbox row.",
+)
+unmapped_attributes_total = Counter(
+    "obsalt_unmapped_attributes_total",
+    "OTLP attributes that landed in the catch-all map (§10.4).",
+)
 tier2_spend_usd = Gauge(
     "obsalt_tier2_spend_usd",
     "Per-org LLM spend burn-down.",

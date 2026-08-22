@@ -41,6 +41,18 @@ Finite defaults: 30 days raw, 90 days transcripts, 400 days aggregates.
 
 ## Alerting signals worth paging
 
-Inbox/outbox age, orphan-blob count, decode failure rate by plugin, DLQ inserts, promotion failures, unmapped provider codes, deletion backlog (`completed_at IS NULL`), and tier-2 spend burn-down.
+Inbox/outbox age, orphan-blob count, decode failure rate by plugin, DLQ depth, late-root frequency, promotion failures, unmapped provider codes, unmapped-attribute rate, per-org queue pressure, deletion backlog (`completed_at IS NULL`), and tier-2 spend burn-down.
+
+`GET /ready` reports the current inbox age, outbox depth, DLQ depth, orphan-blob count, and deletion backlog. `obsalt worker` is the process that drains the outbox; webhook acknowledgement never waits on decode.
+
+## Backup expiry
+
+Managed backups expire. Tombstones survive restore.
+
+1. `record_backup` stamps `taken_at` and `expires_at` (`OBSALT_BACKUP_RETENTION_DAYS`, default 30).
+2. `obsalt retain` and every deletion job call `expire_backups`. Expired backups cannot restore a call.
+3. `restore_allowed` refuses a tombstoned `source_call_id` or `caller_token` even when a retained backup still exists. Deletion cannot be undone by restoring from a managed backup, expired or not.
+
+External warehouse copies cannot be revoked; the API says so. This drill is the Phase 7 production-readiness check for delete-by-caller through the backup lifecycle. The §10.3 1M-call load target remains a separate cluster exercise.
 
 OTLP capacity pressure is a retryable HTTP 503 / gRPC `UNAVAILABLE` when outbox depth exceeds `OBSALT_OUTBOX_BACKPRESSURE_LIMIT`.

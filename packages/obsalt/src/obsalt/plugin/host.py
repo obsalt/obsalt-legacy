@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+import threading
+from collections.abc import Callable, Iterable
 from importlib.metadata import entry_points
-from typing import Any
+from typing import Any, TypeVar
 
 from obsalt._version import SUPPORTED_PLUGIN_API
 from obsalt.domain.enums import Capability
@@ -14,6 +15,35 @@ from obsalt.plugin.types import PluginManifest
 log = logging.getLogger("obsalt.plugin")
 
 ENTRY_POINT_GROUP = "obsalt.plugins"
+
+_T = TypeVar("_T")
+
+
+def invoke_with_deadline(
+    fn: Callable[..., _T],
+    *args: Any,
+    timeout_seconds: float = 10.0,
+    **kwargs: Any,
+) -> _T:
+    """Isolate a plugin call with a join deadline. Not a security sandbox (§7.2)."""
+
+    box: dict[str, Any] = {}
+
+    def run() -> None:
+        try:
+            box["result"] = fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 — surface the plugin error after join
+            box["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True, name="obsalt-plugin")
+    worker.start()
+    worker.join(timeout_seconds)
+    if worker.is_alive():
+        raise TimeoutError(f"plugin invocation exceeded {timeout_seconds}s")
+    error = box.get("error")
+    if error is not None:
+        raise error
+    return box["result"]
 
 
 class LoadedPlugin:

@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS tombstones (
     org_id TEXT NOT NULL,
     source_call_id TEXT,
     caller_token TEXT,
+    range_start TIMESTAMPTZ,
+    range_end TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -248,5 +250,7 @@ ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS status TEXT;
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'call.finalized';
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_ciphertext BYTEA;
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_expires_at TIMESTAMPTZ;
+ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_start TIMESTAMPTZ;
+ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_end TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS active_calls_org_started ON active_calls (org_id, started_at DESC, call_id DESC);
 
