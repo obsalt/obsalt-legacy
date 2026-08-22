@@ -1,7 +1,13 @@
 # Troubleshooting
 
-Symptoms first. If you are still installing, start at
-[Getting started](getting-started.md).
+**Who this is for:** the console is empty, the webhook bounced, or
+someone filed “waterfall missing.”
+
+**Question this page answers:** what is actually broken?
+
+If you are still installing, start at
+[Getting started](getting-started.md). Symptoms first. Run these three
+before you read further:
 
 ```bash
 obsalt doctor
@@ -10,8 +16,8 @@ obsalt plugins
 ```
 
 `doctor` probes Postgres, ClickHouse, object storage, and Redis.
-`--skip-network` prints plugins and config warnings only. `--json` is for
-scripts. Exit `2` means a required store is down. Exit `1` means no
+`--skip-network` prints plugins and config warnings only. `--json` is
+for scripts. Exit `2` means a required store is down. Exit `1` means no
 plugins are loaded.
 
 ---
@@ -24,7 +30,7 @@ plugins are loaded.
 | `GET /ready` | `outbox_depth` draining toward 0. `dlq_depth` 0. `insecure_defaults` true only on localhost. |
 | Plugin installed | `obsalt plugins` lists `vapi` / `retell` / … Settings → Plugins in the UI. |
 | A **live** call was placed | Fixtures in this repo are for tests. The console fills from production traffic. |
-| Time filters | Call list and fleet endpoints require `start` and `end`. The UI list without a range still shows recent active revisions. |
+| Time filters | Collection pages (calls, latency, hangups, quality, search) and the matching `/v1` lists require `start` and `end`. |
 
 Replay a retained envelope after a decoder fix:
 

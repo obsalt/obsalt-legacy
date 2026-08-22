@@ -1,14 +1,21 @@
 # Write a plugin
 
+**Who this is for:** you are adding a source obsalt does not ship — or
+you are changing a first-party decoder and need the contract in one
+place.
+
+**Question this page answers:** what does a plugin have to implement,
+and how do we know it is not lying?
+
 Core ships no providers. A plugin is a separately installable package on
 the `obsalt.plugins` entry-point group. First-party providers use that
 **same** group. If you need a privileged path, the public API is already
 rotting.
 
 Plugins are **trusted, operator-installed code**. They are pinned and
-inventoried. Loading isolates version mismatches and ordinary exceptions.
-That is not a security sandbox. An arbitrary wheel can still read process
-memory.
+inventoried. Loading isolates version mismatches and ordinary
+exceptions. That is not a security sandbox. An arbitrary wheel can still
+read process memory.
 
 Copy `packages/obsalt-example` and rename things. It is a webhook source
 that is discovered, loaded, and expected to pass the conformance kit.
@@ -105,8 +112,8 @@ Emit small facts, not a whole-call blob. Core stamps org, call key,
 - A content hash identifies content. It does not say which content is
   newer.
 - Same `fact_id`: identical content dedupes; a greater ordered
-  `source_revision` wins; a disagreement without a comparable revision is
-  a visible conflict.
+  `source_revision` wins; a disagreement without a comparable revision
+  is a visible conflict.
 - Snapshot decoders emit `SnapshotBoundaryObserved` and may retract
   omitted facts only for domains the provider documents as
   authoritative. Delta events never retract by omission.
@@ -159,5 +166,10 @@ Units that have already hurt people, so test them:
 | `obsalt-openai-realtime` | `openai_realtime` | SDK + S2S mapper |
 | `obsalt-gemini-live` | `gemini_live` | SDK + S2S mapper |
 
-Auth schemes and the console-side fidelity table live in
-[connect-hosted](connect-hosted.md) and [the console](console.md).
+## What's next
+
+How a user connects the thing you just wrote:
+[connect-hosted](connect-hosted.md) or
+[connect-custom](connect-custom.md). What they will see:
+[the console](console.md) fidelity table. Repo layout and PR bar:
+[Developing](developing.md).

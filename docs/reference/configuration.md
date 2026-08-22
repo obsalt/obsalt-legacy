@@ -1,7 +1,13 @@
 # Configuration
 
-Every setting is an `OBSALT_*` environment variable. A `.env` file in the
-working directory is loaded. Extra keys are ignored.
+**Who this is for:** you are writing a `.env` or wondering which
+`OBSALT_*` knob does what.
+
+**Question this page answers:** what is the default, and what happens
+if I leave the shipped secrets in place?
+
+Every setting is an `OBSALT_*` environment variable. A `.env` file in
+the working directory is loaded. Extra keys are ignored.
 
 Copy `.env.example` via `obsalt init`. `obsalt init --write-env` also
 writes `.env` when it is missing and will not overwrite an existing
@@ -85,6 +91,12 @@ intentional.
 | `OBSALT_EMBEDDER_ONNX_PATH` | unset | Override local ONNX weights |
 | `OBSALT_SLO_E2E_MS` | `2000` | SLO threshold for outbound `slo.breached` |
 
-`OBSALT_LLM_*` is spend. `OBSALT_JUDGE_*` is the judge endpoint. They are
-related and intentionally different prefixes: budget is a product control,
-judge is a plugin capability.
+`OBSALT_LLM_*` is spend. `OBSALT_JUDGE_*` is the judge endpoint. They
+are related and intentionally different prefixes: budget is a product
+control, judge is a plugin capability.
+
+## What's next
+
+Flags on the command: [CLI](cli.md). Running this for real:
+[Operate](../ops.md). Tenancy implications:
+[Security](security.md).

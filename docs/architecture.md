@@ -1,13 +1,17 @@
 # Architecture
 
-A call enters as raw bytes. It becomes something you can trust only after
-it is authenticated, persisted, decoded, redacted, assembled, and
-promoted. Nothing the provider is waiting on does the expensive work.
+**Who this is for:** people who will change obsalt — or who need to know
+why the console refuses to draw a pretty lie.
+
+**Question this page answers:** what happens to a call between raw bytes
+and a join view, and which rules are load-bearing?
 
 If you are connecting an agent, you do not need this page.
 [Getting started](getting-started.md) and the connect guides are enough.
-This page is for people who will change obsalt — or who need to know why
-the console refuses to draw a pretty lie.
+
+A call enters as raw bytes. It becomes something you can trust only
+after it is authenticated, persisted, decoded, redacted, assembled, and
+promoted. Nothing the provider is waiting on does the expensive work.
 
 ```mermaid
 flowchart TB
@@ -52,22 +56,45 @@ flowchart TB
   INBOX --> FWD
 ```
 
+```mermaid
+sequenceDiagram
+  participant P as Provider / exporter
+  participant I as Ingest
+  participant O as Object store
+  participant PG as Postgres
+  participant W as Worker
+  participant CH as ClickHouse
+  participant UI as Console
+
+  P->>I: signed webhook or OTLP batch
+  I->>O: raw bytes
+  I->>PG: inbox + dedupe + outbox
+  I-->>P: ack
+  W->>PG: claim outbox
+  W->>W: decode → redact → assemble
+  W->>CH: complete candidate revision
+  W->>PG: CAS active-revision pointer
+  UI->>PG: read pointer
+  UI->>CH: read that exact revision
+```
+
 ## The rules we will not break
 
 These are load-bearing. If one of them is wrong, the shape of the system
 changes. Attack them in review before anything else.
 
-1. **Never draw what you did not measure.** A waterfall bar requires real
-   start and end. Durations without clocks are chips or distributions.
-   Provider p50/p95 never enter sample percentiles.
+1. **Never draw what you did not measure.** A waterfall bar requires
+   real start and end. Durations without clocks are chips or
+   distributions. Provider p50/p95 never enter sample percentiles.
 2. **Provenance is a field, not a footnote.** Every value is
    `provider_reported` (with a source path) or `obsalt_derived` (with a
    derivation). Absence is its own fact, with a reason. That is how we
-   tell "they did not send it" from "we dropped it."
+   tell “they did not send it” from “we dropped it.”
 3. **Raw first, then ack.** The wire bytes hit object storage and a
-   Postgres inbox/outbox **before** the provider-facing success response.
-   Decode is a pure function. Adapter bugs become replays, not silent
-   holes. Replay dies when raw retention dies; the console says so.
+   Postgres inbox/outbox **before** the provider-facing success
+   response. Decode is a pure function. Adapter bugs become replays, not
+   silent holes. Replay dies when raw retention dies; the console says
+   so.
 4. **Decoders are validated against the vendor, not against themselves.**
    Fixtures must match a vendored schema. Golden `NormalizedEvent[]`
    plus unit assertions cover units, placement, and pairing — things a
@@ -79,11 +106,11 @@ changes. Attack them in review before anything else.
 6. **Decode, assemble, and analyze are separate, versioned stages.**
    Reprocessing builds a complete new revision and promotes it. We do
    not mutate a stored call in place.
-7. **Pick the storage engine once.** Production is Postgres + ClickHouse
-   + object storage. Memory types are test doubles. There is no
-   pluggable-backend layer and no SQLite mode.
+7. **Pick the storage engine once.** Production is Postgres +
+   ClickHouse + object storage. Memory types are test doubles. There is
+   no pluggable-backend layer and no SQLite mode.
 8. **Providers are separately installable packages.** Core ships none.
-   First-party plugins use the same public contract as anyone else's.
+   First-party plugins use the same public contract as anyone else’s.
 9. **Expensive analysis is sampled and budget-capped.** Cheap
    deterministic work runs on every call. LLM judges run on a trigger or
    a sample, behind a hard per-org monthly cap. Missing judge output is
@@ -122,7 +149,8 @@ the archive for replay and forwarding. The queryable model is the call.
 
 Voice calls have a natural upper bound generic tracing lacks. A trace
 finalizes at `min(root_ended_at + grace, first_seen_at + max_call_duration)`.
-A still-rootless trace becomes `unrooted` and does not invent an outcome.
+A still-rootless trace becomes `unrooted` and does not invent an
+outcome.
 
 ## Promotion
 
@@ -131,7 +159,7 @@ There is no cross-database transaction. We do not pretend there is:
 1. Write a complete candidate revision to ClickHouse. Wait until it is
    query-visible.
 2. CAS the Postgres active-revision pointer. Failed CAS rebases and
-   retries. An envelope is not "assembled" until some active revision
+   retries. An envelope is not “assembled” until some active revision
    covers its facts.
 3. Call detail reads the pointer first, then that exact ClickHouse
    revision. Never `SELECT latest`.
@@ -187,7 +215,7 @@ Cascade STT/LLM/TTS rows must not appear as empty placeholders.
 
 ## What we are not building next to this
 
-- A second storage backend, or SQLite "for demo."
+- A second storage backend, or SQLite “for demo.”
 - Waterfalls reconstructed from summary statistics.
 - Decode on the webhook request path.
 - A Langfuse-shaped ingest shim (tempting for Vapi; a moving proprietary
@@ -199,6 +227,9 @@ Cascade STT/LLM/TTS rows must not appear as empty placeholders.
 - Bland as a first-party plugin. The contract would accept it; it is
   not in the committed set.
 
+## What's next
+
 Domain types and hangup reasons: [domain](reference/domain.md).
 Span conventions: [OTLP](reference/otlp.md).
 Tenancy and redaction: [security](reference/security.md).
+Changing the code: [Developing](developing.md).

@@ -1,9 +1,15 @@
 # Domain model
 
-The core insight: **separate measurement from timeline**. That resolves the
-tension between "latency breakdown per call" (a required product capability)
-and "hosted providers ship durations without timestamps" (an unfixable data
-limitation).
+**Who this is for:** you are changing events, revisions, or
+measurements.
+
+**Question this page answers:** how do we separate a duration from a
+timeline, and what is a `CallRevision` made of?
+
+The core insight: **separate measurement from timeline.** That resolves
+the tension between “latency breakdown per call” (a required product
+capability) and “hosted providers ship durations without timestamps”
+(an unfixable data limitation).
 
 ## Placement and fidelity
 
@@ -63,13 +69,14 @@ Call
 Notes:
 
 - **`*_ref` not inline text.** Transcripts, prompts, tool payloads, and
-  recordings are content-addressed references into the evidence store. Keeps
-  the hot tables narrow and gives redaction and retention a single object
-  to act on.
+  recordings are content-addressed references into the evidence store.
+  Keeps the hot tables narrow and gives redaction and retention a
+  single object to act on.
 - **Analysis is associated, not embedded.** `AnalysisExecution` and
   `AnalysisResult` rows are keyed by call revision, analyzer/rubric
-  version, and prompt/model version. The call revision remains immutable
-  while users can see that it failed one rubric version and passed a later one.
+  version, and prompt/model version. The call revision remains
+  immutable while users can see that it failed one rubric version and
+  passed a later one.
 
 `call_id` is `uuid5(OBSALT_NAMESPACE, f"{org_id}:{source}:{source_call_id}")`.
 
@@ -95,13 +102,14 @@ CallFinalized
 Core stamps every event with `(org_id, call_key, fact_id, envelope_id,
 decoder_version, processing_run_id, event_occurred_at, envelope_sequence)`.
 
-Merging independent facts is associative, commutative, and idempotent; any
-delivery order produces the same candidate revision. Conflicts block
-automatic promotion until the plugin's documented resolution policy or an
-operator resolves them.
+Merging independent facts is associative, commutative, and idempotent;
+any delivery order produces the same candidate revision. Conflicts
+block automatic promotion until the plugin's documented resolution
+policy or an operator resolves them.
 
-Property tests on the assembler assert that any permutation and duplicate
-delivery of an event stream folds to the same candidate revision.
+Property tests on the assembler assert that any permutation and
+duplicate delivery of an event stream folds to the same candidate
+revision.
 
 ## Hangup taxonomy
 
@@ -111,3 +119,8 @@ Provider-agnostic hangup reasons. Keep this list stable:
 `error_stt`, `error_llm`, `error_tts`, `error_tool`, `error_telephony`,
 `error_unknown`, `spam`, `concurrency`, `cancelled`, `completed`,
 `unknown`.
+
+## What's next
+
+Why these types exist: [Architecture](../architecture.md). Words for
+non-engineers: [Glossary](glossary.md).
