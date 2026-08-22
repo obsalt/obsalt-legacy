@@ -145,6 +145,7 @@ def process_normalized_events(
     decoder_version: str,
     objects: Any | None = None,
     rooted: bool = True,
+    caller_token: str | None = None,
 ) -> CallRevision:
     run_id = new_id()
     resolved_source = source_call_id or _source_call_id(events) or envelope_id
@@ -153,6 +154,10 @@ def process_normalized_events(
     for index, event in enumerate(events):
         if isinstance(event, OutcomeObserved) and event.reason is None:
             reason, party = classify_provider_reason(source, event.provider_code)
+            if reason.value == "unknown":
+                from obsalt.metrics import unmapped_provider_codes_total
+
+                unmapped_provider_codes_total.labels(provider=source).inc()
             event = event.model_copy(update={"reason": reason, "party": party})
         stamped.append(
             stamp_event(
@@ -167,7 +172,7 @@ def process_normalized_events(
         )
     # Stamp the privacy token from the unredacted number. Redaction replaces
     # from_number with "<phone>" before the revision is persisted (T5 / §12.3).
-    caller = _caller_token_from_events(org_id, stamped)
+    caller = caller_token or _caller_token_from_events(org_id, stamped)
     redacted = redact_events(stamped)
     persist_evidence_blobs(redacted.events, objects, org_id)
     assembler = Assembler(declaration, decoder_version=decoder_version, processing_run_id=run_id)
@@ -194,9 +199,9 @@ def process_normalized_events(
                         revision=candidate.revision,
                         analyzer_id="hallucination",
                         analyzer_version="1",
-                        state=AnalysisState.COMPLETED,
+                        state=AnalysisState.PENDING,
                     ),
-                    payload={"candidates": claims},
+                    payload={"candidates": claims, "selection": "pending"},
                 )
             )
 

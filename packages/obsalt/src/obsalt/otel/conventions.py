@@ -148,6 +148,9 @@ def setup_tracing(*, otlp_endpoint: str | None = None, emit_pii: bool = False) -
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint.rstrip("/") + "/v1/traces")
     else:
         exporter = ConsoleSpanExporter()
+    from obsalt.otel.export_policy import StripPiiSpanProcessor
+
+    provider.add_span_processor(StripPiiSpanProcessor(emit_pii=emit_pii))
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
 

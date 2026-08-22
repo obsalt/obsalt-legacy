@@ -259,6 +259,17 @@ class TestElevenLabsAuth(AuthenticationConformanceTests):
         sig = hmac_hex("eleven-secret", f"{ts}.".encode() + self.valid_raw)
         return {"elevenlabs-signature": f"t={ts},v0={sig}"}
 
+    def test_stale_timestamp_rejected(self) -> None:
+        ts = str(int(time.time()) - 40 * 60)
+        sig = hmac_hex("eleven-secret", f"{ts}.".encode() + self.valid_raw)
+        result = self.plugin.authenticate(
+            self.valid_raw,
+            RawHeaders.from_mapping({"elevenlabs-signature": f"t={ts},v0={sig}"}).as_list(),
+            self.connection,
+        )
+        assert result.outcome is VerifyOutcome.STALE
+        assert not result.ok
+
 
 class TestCartesiaDecoder(DecoderConformanceTests):
     plugin = CartesiaPlugin()

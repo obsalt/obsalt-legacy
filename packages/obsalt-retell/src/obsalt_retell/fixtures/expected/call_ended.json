@@ -133,7 +133,7 @@
     "tool_id": "tc-1",
     "name": "lookup_invoice",
     "turn_index": 2,
-    "started_at": null,
+    "started_at": "2025-08-21T12:00:02.300000Z",
     "ended_at": null,
     "status": "pending",
     "args": {
@@ -141,7 +141,18 @@
     },
     "result": null,
     "error": null,
-    "provenance_by_field": {}
+    "provenance_by_field": {
+      "name": {
+        "provenance": "provider_reported",
+        "source_path": "call.transcript_with_tool_calls[role=tool_call_invocation].name",
+        "derivation": null
+      },
+      "started_at": {
+        "provenance": "obsalt_derived",
+        "source_path": "call.transcript_with_tool_calls[].words[].end (seconds)",
+        "derivation": "coarse_anchor from preceding utterance words; duration not reported by Retell"
+      }
+    }
   },
   {
     "org_id": null,
@@ -153,13 +164,19 @@
     "tool_id": "tc-1",
     "name": "lookup_invoice",
     "turn_index": null,
-    "started_at": null,
+    "started_at": "2025-08-21T12:00:02.300000Z",
     "ended_at": null,
     "status": "success",
     "args": null,
     "result": "{\"invoice_id\":\"INV-1001\",\"amount\":\"$20.00\",\"status\":\"paid\"}",
     "error": null,
-    "provenance_by_field": {}
+    "provenance_by_field": {
+      "name": {
+        "provenance": "provider_reported",
+        "source_path": "call.transcript_with_tool_calls[role=tool_call_result].name",
+        "derivation": null
+      }
+    }
   },
   {
     "org_id": null,

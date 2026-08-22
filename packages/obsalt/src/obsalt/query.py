@@ -174,8 +174,28 @@ def tools_rollup(calls: list[CallRevision], *, as_of_generation: str) -> dict[st
     return data
 
 
-def hangup_rollup(calls: list[CallRevision], *, as_of_generation: str) -> dict[str, Any]:
-    data = cluster_hangups(calls, as_of_generation)
+def hangup_rollup(
+    calls: list[CallRevision],
+    *,
+    as_of_generation: str,
+    store: Any | None = None,
+    org_id: str | None = None,
+) -> dict[str, Any]:
+    if store is not None and org_id:
+        cached = store.get(org_id, as_of_generation)
+        if cached is not None:
+            data = dict(cached)
+            data.setdefault(
+                "items",
+                [
+                    {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
+                    for row in data.get("clusters") or []
+                ],
+            )
+            return data
+        data = store.refresh(org_id, calls, as_of_generation)
+    else:
+        data = cluster_hangups(calls, as_of_generation)
     data["items"] = [
         {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
         for row in data.get("clusters") or []

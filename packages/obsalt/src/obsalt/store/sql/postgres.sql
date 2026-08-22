@@ -197,6 +197,13 @@ CREATE TABLE IF NOT EXISTS quality_reviews (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS decode_dlq (
+    envelope_id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS webhook_outbox (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
@@ -218,6 +225,8 @@ CREATE INDEX IF NOT EXISTS search_documents_hnsw ON search_documents USING hnsw 
 
 ALTER TABLE search_documents ADD COLUMN IF NOT EXISTS agent_id TEXT;
 ALTER TABLE search_documents ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE search_documents ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE search_documents ADD COLUMN IF NOT EXISTS hangup_reason TEXT;
 ALTER TABLE outbox ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE deletion_requests ADD COLUMN IF NOT EXISTS call_id TEXT;

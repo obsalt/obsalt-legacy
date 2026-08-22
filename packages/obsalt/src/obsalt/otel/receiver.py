@@ -69,6 +69,10 @@ def serialized_success() -> bytes:
     return ExportTraceServiceResponse().SerializeToString()
 
 
+def decompress_body(raw: bytes, encoding: str | None) -> bytes:
+    return _decompress(raw, encoding)
+
+
 def _decompress(raw: bytes, encoding: str | None) -> bytes:
     if not encoding or encoding == "identity":
         return raw

@@ -7,6 +7,7 @@ import secrets as secretsmod
 from dataclasses import dataclass, field
 from typing import Any
 
+from obsalt.analysis.cluster import MemoryHangupClusterStore
 from obsalt.analysis.contributions import ClickHouseRollupStore, MemoryRollupStore
 from obsalt.analysis.judge import judge_from_settings
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
@@ -51,11 +52,12 @@ class AppState:
     forward_queue: Any = None
     rollups: Any = None
     worker_id: str = "worker"
-    span_identities: Any = None
+    span_identities: Any = field(default_factory=SpanIdentityIndex)
     reviews: list[dict[str, Any]] = field(default_factory=list)
     webhook_outbox: list[dict[str, Any]] = field(default_factory=list)
     judge: Any = None
     rubric_store: Any = None
+    hangup_clusters: Any = field(default_factory=MemoryHangupClusterStore)
 
 
 def in_memory_state(
@@ -105,6 +107,7 @@ def in_memory_state(
         rollups=MemoryRollupStore(),
         span_identities=SpanIdentityIndex(),
         judge=judge_from_settings(settings),
+        hangup_clusters=MemoryHangupClusterStore(),
     )
 
 
@@ -177,13 +180,14 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         rollup_generation="boot",
         leases=leases,
         key_directory=key_directory,
-        search=PostgresSearchDocuments(conn),
+        search=PostgresSearchDocuments(conn, onnx_path=settings.embedder_onnx_path),
         traces=PostgresTraceAssembler(conn),
         forward_queue=PostgresForwardQueue(conn, objects),
         rollups=_production_rollups(sink),
         span_identities=_production_span_index(conn),
         judge=judge_from_settings(settings),
         rubric_store=PostgresRubricStore(conn),
+        hangup_clusters=MemoryHangupClusterStore(),
     )
 
 

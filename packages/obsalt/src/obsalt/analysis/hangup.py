@@ -150,6 +150,8 @@ def _prefix_vapi(code: str) -> tuple[HangupReason, HangupParty]:
         return HangupReason.CANCELLED, HangupParty.SYSTEM
     if lowered.startswith("assistant-speaks") or lowered.startswith("assistant-waits") or lowered.startswith("assistant-join"):
         return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
+    if "did-not-receive-customer-audio" in lowered or "customer-audio" in lowered:
+        return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
     if "pipeline-error" in lowered or "vapifault" in lowered or "providerfault" in lowered:
         return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
     if "silence" in lowered:

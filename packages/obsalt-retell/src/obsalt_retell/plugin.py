@@ -242,6 +242,8 @@ def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[Nor
     turn_index = 0
     pending: dict[str, str] = {}
     user_texts: list[str] = []
+    last_anchor: datetime | None = None
+    last_anchor_path: str | None = None
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -256,12 +258,26 @@ def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[Nor
                 except json.JSONDecodeError:
                     args = {"_raw": args}
             pending[tool_id] = name
+            provenance: dict[str, ProvenanceStamp] = {
+                "name": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path="call.transcript_with_tool_calls[role=tool_call_invocation].name",
+                )
+            }
+            if last_anchor is not None:
+                provenance["started_at"] = ProvenanceStamp(
+                    provenance=Provenance.OBSALT_DERIVED,
+                    source_path=last_anchor_path,
+                    derivation="coarse_anchor from preceding utterance words; duration not reported by Retell",
+                )
             yield ToolObserved(
                 tool_id=tool_id,
                 name=name,
                 turn_index=turn_index,
+                started_at=last_anchor,
                 status=ToolStatus.PENDING,
                 args=args,
+                provenance_by_field=provenance,
             )
             continue
         if role == "tool_call_result":
@@ -271,9 +287,16 @@ def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[Nor
             yield ToolObserved(
                 tool_id=tool_id,
                 name=pending.get(tool_id, "unknown"),
+                started_at=last_anchor,
                 status=ToolStatus.ERROR if success is False else ToolStatus.SUCCESS,
                 result=content,
                 error=None if success is not False else str(content),
+                provenance_by_field={
+                    "name": ProvenanceStamp(
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="call.transcript_with_tool_calls[role=tool_call_result].name",
+                    )
+                },
             )
             if content:
                 yield GroundingObserved(
@@ -314,6 +337,12 @@ def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[Nor
         )
         if speaker is Speaker.USER and text:
             user_texts.append(text)
+        if ended is not None:
+            last_anchor = ended
+            last_anchor_path = "call.transcript_with_tool_calls[].words[].end (seconds)"
+        elif started is not None:
+            last_anchor = started
+            last_anchor_path = "call.transcript_with_tool_calls[].words[].start (seconds)"
         turn_index += 1
     if user_texts:
         yield GroundingObserved(

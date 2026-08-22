@@ -49,6 +49,7 @@
       <dd>{{ retention.aggregates_days|default(400) }} days</dd>
     </dl>
     <p>Tier-2 baseline sample rate: {{ baseline_sample_rate|default(0) }}</p>
+    <p>Monthly LLM budget: {{ budget_usd|default(0) }}</p>
     <p class="muted">Raw blobs are unredacted by definition. Replay is bounded by the configured raw retention horizon.</p>
     {% if csrf and org %}
     <form method="post" action="/v1/ui/replay">

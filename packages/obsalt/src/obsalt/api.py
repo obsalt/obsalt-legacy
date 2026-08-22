@@ -95,6 +95,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         background: BackgroundTasks,
     ) -> Response:
         raw = await request.body()
+        encoding = request.headers.get("content-encoding")
+        if encoding and encoding not in {"identity"}:
+            from obsalt.otel.receiver import decompress_body
+
+            raw = decompress_body(raw, encoding)
         header_pairs = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in request.headers.items()]
         try:
             loaded = plugin_by_name(provider, state.plugins)
@@ -114,6 +119,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 expanded_bytes=settings.expanded_body_limit,
             ),
             compressed_size=int(request.headers.get("content-length") or len(raw)),
+            leases=getattr(state, "leases", None),
         )
         if result.envelope is not None and result.rejected is None:
             # Ack first. Decode runs as a background worker (TestClient waits for it).
@@ -143,10 +149,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 raise
             raise
         spans = request_to_spans(req)
-        for span in spans:
-            asserted = (span.resource or {}).get("obsalt.org") or (span.attributes or {}).get("obsalt.org")
-            if asserted and str(asserted) != org:
-                raise HTTPException(status_code=401, detail="resource attribute cannot choose an organization")
+        from obsalt.otel.tenancy import reject_tenant_assertions
+
+        denied = reject_tenant_assertions(spans, org)
+        if denied:
+            raise HTTPException(status_code=401, detail=denied)
         try:
             result = receive_otlp_batch(
                 org_id=org,
@@ -160,12 +167,15 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 ),
                 compressed_size=int(request.headers.get("content-length") or len(raw)),
                 spans=spans,
-                span_index=getattr(state, "span_identities", None) or SpanIdentityIndex(),
+                span_index=_span_index(state),
+                leases=getattr(state, "leases", None),
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail="ingest capacity") from exc
         if result.status_code == 413:
             raise HTTPException(status_code=413, detail=result.rejected)
+        if result.status_code == 409:
+            raise HTTPException(status_code=409, detail=result.rejected)
         if result.envelope is not None and result.rejected is None:
             background.add_task(drain_inbox, state)
         return Response(content=serialized_success(), media_type="application/x-protobuf")
@@ -277,7 +287,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _require_key(state, x_api_key, KeyScope.READ)
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
-        return hangup_rollup(calls, as_of_generation=state.rollup_generation)
+        return hangup_rollup(
+            calls,
+            as_of_generation=state.rollup_generation,
+            store=getattr(state, "hangup_clusters", None),
+            org_id=org,
+        )
 
     @app.get("/v1/tools")
     def tools(
@@ -328,7 +343,14 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             baseline_sample_rate=state.settings.baseline_sample_rate,
             budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
             spend_usd=state.spend_usd,
+            judge=state.judge,
         )
+        cost = float((result.payload or {}).get("cost_usd") or 0.0)
+        if cost:
+            state.spend_usd += cost
+            from obsalt.metrics import tier2_spend_usd
+
+            tier2_spend_usd.labels(org_id=org).set(state.spend_usd)
         writer = getattr(state.sink, "write_analysis", None)
         existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
         if writer is not None:
@@ -358,6 +380,34 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if store is not None and hasattr(store, "insert"):
             store.insert(rubric)
         return rubric.model_dump(mode="json")
+
+    @app.put("/v1/rubrics/{rubric_id}")
+    async def update_rubric(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        existing = state.rubrics.get(rubric_id)
+        if existing is None or existing.org_id != org:
+            raise HTTPException(status_code=404, detail="not found")
+        body = await request.json()
+        store = getattr(state, "rubric_store", None)
+        if store is not None and hasattr(store, "new_version"):
+            updated = store.new_version(
+                existing,
+                name=str(body["name"]) if body.get("name") else None,
+                description=str(body["description"]) if body.get("description") is not None else None,
+            )
+        else:
+            updated = existing.model_copy(
+                update={
+                    "name": str(body.get("name") or existing.name),
+                    "description": str(body.get("description") if body.get("description") is not None else existing.description),
+                    "version": existing.version + 1,
+                    "threshold": float(body.get("threshold") or existing.threshold),
+                }
+            )
+        if updated.id != rubric_id:
+            state.rubrics.pop(rubric_id, None)
+        state.rubrics[updated.id] = updated
+        return updated.model_dump(mode="json")
 
     @app.delete("/v1/rubrics/{rubric_id}")
     def delete_rubric(rubric_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -556,7 +606,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"status": "recorded", "item": item}
 
     @app.get("/v1/plugins")
-    def plugins() -> dict:
+    def plugins(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        _require_key(state, x_api_key, KeyScope.READ)
         return {
             "items": [
                 {
@@ -574,22 +625,38 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     def ui_home(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
         calls = active_calls(state, org) if org else []
+        start = request.query_params.get("start") or ""
+        end = request.query_params.get("end") or ""
         filters = {
             "agent_id": request.query_params.get("agent_id") or "",
             "hangup_reason": request.query_params.get("hangup_reason") or "",
             "source": request.query_params.get("source") or "",
             "flag": request.query_params.get("flag") or "",
+            "outcome": request.query_params.get("outcome") or "",
+            "start": start,
+            "end": end,
         }
-        if filters["agent_id"]:
-            calls = [c for c in calls if c.agent_id == filters["agent_id"]]
-        if filters["source"]:
-            calls = [c for c in calls if c.source == filters["source"]]
-        if filters["hangup_reason"]:
-            calls = [
-                c
-                for c in calls
-                if c.hangup is not None and c.hangup.reason.value == filters["hangup_reason"]
-            ]
+        if start and end:
+            from datetime import datetime as dt
+
+            try:
+                start_dt = dt.fromisoformat(start.replace("Z", "+00:00"))
+                end_dt = dt.fromisoformat(end.replace("Z", "+00:00"))
+                calls = [c for c in calls if in_range(c, start_dt, end_dt)]
+            except ValueError:
+                pass
+        calls = [
+            c
+            for c in calls
+            if matches_call_filters(
+                c,
+                agent_id=filters["agent_id"] or None,
+                outcome=filters["outcome"] or filters["hangup_reason"] or None,
+                source=filters["source"] or None,
+                flag=filters["flag"] or None,
+                analysis=getattr(state.sink, "analysis", {}).get((org, c.call_id, c.revision), []) if org else [],
+            )
+        ]
         return _render(request, "call_list.html", {"calls": calls, "org": org, "filters": filters})
 
     @app.get("/v1/ui/login", response_class=HTMLResponse)
@@ -677,7 +744,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui/hangups", response_class=HTMLResponse)
     def ui_hangups(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
-        data = hangup_rollup(active_calls(state, org) if org else [], as_of_generation=state.rollup_generation)
+        data = hangup_rollup(
+            active_calls(state, org) if org else [],
+            as_of_generation=state.rollup_generation,
+            store=getattr(state, "hangup_clusters", None),
+            org_id=org,
+        )
         return _render(
             request,
             "hangups.html",
@@ -743,6 +815,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                     "aggregates_days": state.settings.aggregate_retention_days,
                 },
                 "csrf": _ui_csrf(request, state),
+                "baseline_sample_rate": state.settings.baseline_sample_rate,
+                "budget_usd": state.settings.llm_monthly_budget_usd,
             },
         )
 
@@ -785,6 +859,14 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
 
     return app
+
+
+def _span_index(state: AppState) -> SpanIdentityIndex:
+    existing = getattr(state, "span_identities", None)
+    if existing is None:
+        existing = SpanIdentityIndex()
+        state.span_identities = existing
+    return existing
 
 
 def _require_range(start: datetime | None, end: datetime | None) -> None:

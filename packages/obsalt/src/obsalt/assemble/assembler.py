@@ -197,6 +197,7 @@ class Assembler:
             processing_run_id=self.processing_run_id,
             conflicts=conflicts,
             rooted=rooted,
+            accepted_fact_ids=sorted(fid for fid in accepted if fid not in retracted),
             created_at=utcnow(),
         )
 

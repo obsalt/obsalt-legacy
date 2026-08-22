@@ -27,6 +27,12 @@
       {% for turn in timeline.turns %}
         <div>{{ turn.index }} {{ turn.speaker }}</div>
       {% endfor %}
+      {% if timeline.anchored_stage_chips %}
+        <h3>Anchored durations</h3>
+        {% for item in timeline.anchored_stage_chips %}
+          <div class="chip">{{ item.stage }} {{ item.metric }} {{ item.value_ms }}ms (anchored, not an interval)</div>
+        {% endfor %}
+      {% endif %}
       {% if timeline.unplaced_stage_chips %}
         <h3>Unplaced stage chips</h3>
         {% for item in timeline.unplaced_stage_chips %}

@@ -88,10 +88,11 @@ def forward_otlp_batch(
     if extra_headers:
         headers.update(extra_headers)
 
-    # emit_pii is destination-policy parity with derived-metric export. Identity-
-    # preserving forward never mutates ``raw`` and never attaches a second PII copy.
-    _ = emit_pii
     payload = raw
+    if content_type.startswith("application/json") and not emit_pii:
+        from obsalt.otel.export_policy import redact_otlp_json
+
+        payload = redact_otlp_json(raw, emit_pii=False)
 
     own_client = client is None
     http = client or httpx.Client(timeout=timeout, follow_redirects=False)
