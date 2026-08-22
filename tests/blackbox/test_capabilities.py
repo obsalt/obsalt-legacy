@@ -57,7 +57,8 @@ def test_six_capability_endpoints_respond_for_an_ingested_call() -> None:
     assert body["stage_intervals"] == []
     assert body["unplaced_stage_chips"]
     assert "hallucinations" in quality.json()
-    assert "items" in search.json()
+    hits = search.json()["items"]
+    assert any(item.get("call_id") == call_id for item in hits)
 
 
 def test_vapi_timeline_http_never_invents_a_stage_waterfall() -> None:

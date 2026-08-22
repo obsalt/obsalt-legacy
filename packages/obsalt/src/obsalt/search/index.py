@@ -8,6 +8,7 @@ filter + lexical + vector + RRF without a database.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -176,5 +177,30 @@ def _hit(doc: _Document, score: float) -> dict[str, Any]:
 
 
 def _embed_sync(embedder: LocalEmbedder, doc_id: str, text: str) -> list[float]:
-    vectors = asyncio.run(embedder.embed([RedactedDocument(id=doc_id, text=text)]))
-    return list(vectors[0].values)
+    """Run an embedder from sync code, including inside an already-running loop.
+
+    ``asyncio.run`` cannot be used from FastAPI request handlers or TestClient
+    background tasks. Prefer a sync bag when the embedder has one.
+    """
+
+    bag = getattr(embedder, "bag", None)
+    if callable(bag):
+        return list(bag(text))
+
+    async def _go() -> list[float]:
+        vectors = await embedder.embed([RedactedDocument(id=doc_id, text=text)])
+        return list(vectors[0].values)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_go())
+    box: dict[str, list[float]] = {}
+
+    def _thread() -> None:
+        box["result"] = asyncio.run(_go())
+
+    worker = threading.Thread(target=_thread)
+    worker.start()
+    worker.join()
+    return box["result"]

@@ -54,7 +54,7 @@ def test_s2s_skips_invalid_timestamps_but_still_emits_explicit_barge_in() -> Non
             [
                 _span(SPAN_USER_INPUT, start=0, end=2_000_000_000, attrs={"gen_ai.conversation.id": "c1"}),
                 _span(SPAN_GENERATION, start=3_000_000_000, end=1_000_000_000),
-                _span(SPAN_GENERATION, start=1_000_000_000, end=2_000_000_000, attrs={"obsalt.barge_in": True}),
+                    _span(SPAN_GENERATION, start=0, end=0, attrs={"obsalt.barge_in": True}),
             ]
         )
     )
