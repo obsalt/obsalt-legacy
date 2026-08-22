@@ -70,7 +70,10 @@ def test_hangup_clusters_and_tier2_sampled_out_at_zero_rate() -> None:
     clustered = cluster_hangups([call], "g1")
     assert clustered["as_of_generation"] == "g1"
     assert clustered["clusters"][0]["reason"] == HangupReason.USER_HANGUP.value
-    execution = decide_tier2(call, baseline_sample_rate=0.0)
+    execution = decide_tier2(
+        call.model_copy(update={"hangup": Hangup(reason=HangupReason.COMPLETED)}),
+        baseline_sample_rate=0.0,
+    )
     assert execution.state is AnalysisState.SAMPLED_OUT
 
 

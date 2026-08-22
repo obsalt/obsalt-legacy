@@ -147,7 +147,8 @@ def header_values(headers: list[tuple[bytes, bytes]] | Mapping[str, str], name: 
         return found
     values: list[str] = []
     for key, value in headers:
-        if key.lower() == want:
+        key_bytes = key.lower() if isinstance(key, bytes) else key.lower().encode("latin-1")
+        if key_bytes == want:
             values.append(value.decode("latin-1") if isinstance(value, bytes) else str(value))
     return values
 

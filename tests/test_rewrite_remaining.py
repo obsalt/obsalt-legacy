@@ -153,13 +153,21 @@ def test_vapi_oauth2_uses_jwt_not_static_bearer() -> None:
         secrets={"oauth_token": secret},
         settings={"auth_mode": "oauth2"},
     )
-    ok = plugin.authenticate(b"{}", [("authorization", f"Bearer {token}".encode())], cfg)
+    ok = plugin.authenticate(
+        b"{}",
+        [(b"authorization", f"Bearer {token}".encode())],
+        cfg,
+    )
     assert ok.ok
     expired = jwt_hs256_sign({"sub": "vapi", "exp": time.time() - 10}, secret)
-    bad = plugin.authenticate(b"{}", [("authorization", f"Bearer {expired}".encode())], cfg)
+    bad = plugin.authenticate(
+        b"{}",
+        [(b"authorization", f"Bearer {expired}".encode())],
+        cfg,
+    )
     assert not bad.ok
     assert bad.outcome is VerifyOutcome.BAD_SIGNATURE
-    static = plugin.authenticate(b"{}", [("authorization", b"Bearer oauth-secret")], cfg)
+    static = plugin.authenticate(b"{}", [(b"authorization", b"Bearer oauth-secret")], cfg)
     assert not static.ok
 
 
