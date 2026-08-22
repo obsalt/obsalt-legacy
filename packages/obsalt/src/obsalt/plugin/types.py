@@ -125,6 +125,7 @@ class JudgeResult(BaseModel):
     quotes: list[str] = Field(default_factory=list)
     model: str | None = None
     prompt_version: str = "1"
+    cost_usd: float | None = None
 
 
 class RedactedDocument(BaseModel):

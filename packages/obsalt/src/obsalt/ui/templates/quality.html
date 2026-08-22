@@ -7,6 +7,16 @@
   {% set hallucinations = quality.hallucinations|default({}) %}
   <h1>Quality</h1>
   <p>Serving generation <code>{{ quality.as_of_generation|default(as_of_generation) }}</code>.</p>
+  <p class="muted">A time range is required.</p>
+  {% if error %}
+    <p class="decode_failed">{{ error }}</p>
+  {% endif %}
+  {% set filters = filters|default({}) %}
+  <form class="filters" method="get" action="/v1/ui/quality">
+    <label>Start <input name="start" value="{{ filters.start|default('') }}" /></label>
+    <label>End <input name="end" value="{{ filters.end|default('') }}" /></label>
+    <button type="submit">Filter</button>
+  </form>
   <p class="muted">{{ quality.note|default("Missing output is never interpreted as a passing call. Baseline-sample statistics are separate from the trigger-biased review queue.") }}</p>
   <p>Tier-2 spend: {{ spend_usd|default("—") }} / {{ budget_usd|default("—") }} USD</p>
   <section class="panel">
@@ -30,7 +40,7 @@
     <h2>Review queue</h2>
     <table>
       <thead>
-        <tr><th>Call</th><th>Kind</th><th>State</th><th>Passed</th></tr>
+        <tr><th>Call</th><th>Kind</th><th>State</th><th>Passed</th><th>Review</th></tr>
       </thead>
       <tbody>
         {% for item in quality.review_queue|default([]) %}
@@ -39,9 +49,21 @@
           <td>{{ item.kind }}</td>
           <td>{{ item.state }}</td>
           <td>{{ item.passed }}</td>
+          <td>
+            {% if csrf %}
+            <form method="post" action="/v1/ui/quality/review">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <input type="hidden" name="call_id" value="{{ item.call_id }}" />
+              <input type="hidden" name="start" value="{{ filters.start|default('') }}" />
+              <input type="hidden" name="end" value="{{ filters.end|default('') }}" />
+              <button type="submit" name="agree" value="1">Agree</button>
+              <button type="submit" name="agree" value="0">Disagree</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="4">Review queue is empty.</td></tr>
+        <tr><td colspan="5">Review queue is empty.</td></tr>
         {% endfor %}
       </tbody>
     </table>

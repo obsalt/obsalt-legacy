@@ -7,8 +7,23 @@ from pathlib import Path
 
 from obsalt.analysis.cluster import ClickHouseHangupClusterStore
 from obsalt.analysis.contributions import ClickHouseRollupStore
-from obsalt.domain.enums import HangupReason, MeasurementPlacement, Metric, Provenance, Stage
-from obsalt.domain.models import CallRevision, Hangup, StageMeasurement
+from obsalt.config import Settings
+from obsalt.domain.enums import (
+    AnalysisState,
+    HangupReason,
+    MeasurementPlacement,
+    Metric,
+    Provenance,
+    Stage,
+)
+from obsalt.domain.models import (
+    AnalysisExecution,
+    AnalysisResult,
+    CallRevision,
+    Hangup,
+    StageMeasurement,
+)
+from obsalt.store.clickhouse import ClickHouseSink
 from obsalt.store.postgres import PostgresInbox
 
 
@@ -62,6 +77,57 @@ def test_hangup_clusters_persist_payload() -> None:
     store = ClickHouseHangupClusterStore(client)
     store.refresh("acme", [_revision()], "gen-1")
     assert any(table == "hangup_clusters" for table, _rows, _cols in client.inserts)
+
+
+def test_analysis_insert_persists_execution_state() -> None:
+    client = _RecordingCH()
+    sink = ClickHouseSink(Settings(environment="test"), client=client)
+    sink.write_analysis(
+        "acme",
+        "c1",
+        "r1",
+        [
+            AnalysisResult(
+                execution=AnalysisExecution(
+                    call_id="c1",
+                    revision="r1",
+                    analyzer_id="tier2",
+                    analyzer_version="1",
+                    rubric_version="2",
+                    state=AnalysisState.BUDGET_BLOCKED,
+                    error="cap",
+                ),
+                payload={"selection": "budget_blocked"},
+            )
+        ],
+    )
+    table, rows, cols = next(item for item in client.inserts if item[0] == "analysis_results")
+    assert cols is not None
+    assert rows[0][cols.index("state")] == "budget_blocked"
+    assert rows[0][cols.index("error")] == "cap"
+    assert rows[0][cols.index("rubric_version")] == "2"
+
+    client.query = lambda sql, parameters=None: type(
+        "R",
+        (),
+        {
+            "result_rows": [
+                (
+                    "c1",
+                    "r1",
+                    "tier2",
+                    "1",
+                    '{"selection":"budget_blocked"}',
+                    "budget_blocked",
+                    "cap",
+                    "2",
+                )
+            ]
+        },
+    )()
+    loaded = sink.list_analysis("acme", "c1", "r1")
+    assert loaded[0].execution.state is AnalysisState.BUDGET_BLOCKED
+    assert loaded[0].payload.get("passed") is None
 
 
 def test_fair_claim_sql_partitions_by_org() -> None:

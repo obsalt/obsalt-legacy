@@ -1000,7 +1000,7 @@ class PostgresSearchDocuments:
                     literal,
                     index_version,
                     revision.agent_id,
-                    revision.started_at,
+                    revision.started_at or revision.created_at,
                     revision.source,
                     hangup,
                     embedder_version,
@@ -1027,6 +1027,8 @@ class PostgresSearchDocuments:
         agent_id = filters.get("agent_id")
         source = filters.get("source")
         hangup_reason = filters.get("hangup_reason")
+        start = filters.get("start")
+        end = filters.get("end")
         qvec = _embed_sync(q or " ", onnx_path=self._onnx_path)
         literal = "[" + ",".join(str(v) for v in qvec) + "]"
         rows = self._conn.execute(
@@ -1039,6 +1041,8 @@ class PostgresSearchDocuments:
               AND (%s IS NULL OR agent_id = %s)
               AND (%s IS NULL OR source = %s)
               AND (%s IS NULL OR hangup_reason = %s)
+              AND (%s IS NULL OR started_at >= %s)
+              AND (%s IS NULL OR started_at <= %s)
             """,
             (
                 q or "",
@@ -1050,6 +1054,10 @@ class PostgresSearchDocuments:
                 source,
                 hangup_reason,
                 hangup_reason,
+                start,
+                start,
+                end,
+                end,
             ),
         ).fetchall()
         lexical_ids = [

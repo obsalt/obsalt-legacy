@@ -20,6 +20,7 @@ from obsalt.domain.enums import (
     HangupReason,
     MeasurementPlacement,
     Provenance,
+    Speaker,
     ToolStatus,
 )
 from obsalt.domain.events import (
@@ -160,9 +161,14 @@ class Assembler:
             )
             if turns:
                 hangup.last_speaker = turns[-1].speaker
+                last_user = next((t for t in reversed(turns) if t.speaker is Speaker.USER), None)
+                last_agent = next((t for t in reversed(turns) if t.speaker is Speaker.AGENT), None)
+                if last_user is not None:
+                    hangup.last_user_text_ref = last_user.text_ref
+                if last_agent is not None:
+                    hangup.last_agent_text_ref = last_agent.text_ref
 
-        started = call_obs.started_at if call_obs else None
-        ended = call_obs.ended_at if call_obs else (outcome.ended_at if outcome else None)
+        started, ended, derived_provenance = _lifecycle_bounds(call_obs, outcome, turns)
         status = CallStatus.ENDED if finalized or hangup else CallStatus.ONGOING
         agent_id = call_obs.agent_id if call_obs and call_obs.agent_id else "unknown"
         cost = call_obs.cost if call_obs else (outcome.cost if outcome else None)
@@ -183,6 +189,7 @@ class Assembler:
         provenance: dict[str, ProvenanceStamp] = {}
         if call_obs:
             provenance.update(call_obs.provenance_by_field)
+        provenance.update(derived_provenance)
 
         revision = CallRevision(
             org_id=org_id,
@@ -319,6 +326,34 @@ def _merge_or_choose(existing: FactRecord, incoming: FactRecord) -> FactRecord |
 
 
 TEvent = TypeVar("TEvent", bound=NormalizedEvent)
+
+
+def _lifecycle_bounds(
+    call_obs: CallObserved | None,
+    outcome: OutcomeObserved | None,
+    turns: Sequence[Turn],
+) -> tuple[datetime | None, datetime | None, dict[str, ProvenanceStamp]]:
+    """Call clocks come from CallObserved / OutcomeObserved, then earliest turn.
+
+    A missing call-level start is not unknown when turns already carry
+    provider timestamps. Deriving it keeps list, search, and rollups on
+    the same clock as ``in_range``. Call end is never inferred from the
+    last turn — that would invent an end for an ongoing call.
+    """
+    started = call_obs.started_at if call_obs is not None else None
+    ended = call_obs.ended_at if call_obs is not None else None
+    if ended is None and outcome is not None:
+        ended = outcome.ended_at
+    extra: dict[str, ProvenanceStamp] = {}
+    if started is None:
+        turn_starts = [turn.started_at for turn in turns if turn.started_at is not None]
+        if turn_starts:
+            started = min(turn_starts)
+            extra["started_at"] = ProvenanceStamp(
+                provenance=Provenance.OBSALT_DERIVED,
+                derivation="min(turn.started_at)",
+            )
+    return started, ended, extra
 
 
 def _last_of(events: Sequence[NormalizedEvent], typ: type[TEvent]) -> TEvent | None:

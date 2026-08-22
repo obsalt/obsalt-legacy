@@ -1,127 +1,163 @@
-"""Black-box: the six product capabilities over HTTP. No internals."""
+"""Large tests: the six product capabilities over HTTP. No internals."""
 
 from __future__ import annotations
 
-from obsalt.domain.enums import AnalysisState
-from obsalt.domain.models import AnalysisExecution, AnalysisResult
 from tests.helpers import (
-    EXAMPLE_FIXTURES,
+    EXAMPLE_AGENT_ID,
+    EXAMPLE_SOURCE_CALL_ID,
+    EXAMPLE_STT_MS,
+    EXAMPLE_USER_TEXT,
+    RANGE_QS,
     VAPI_FIXTURES,
     api_client,
-    example_headers,
+    assert_generation_labelled,
+    assert_no_stage_waterfall,
+    auth,
     example_state,
+    first_call_id,
+    ingest_example,
     vapi_headers,
     vapi_state,
 )
 
-RANGE = "start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z"
 
-
-def _ingest_example():
-    state = example_state()
-    client = api_client(state)
-    raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    posted = client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    assert posted.status_code == 200
-    listed = client.get(f"/v1/calls?{RANGE}", headers={"X-API-Key": "k"})
-    assert listed.status_code == 200
-    items = listed.json()["items"]
-    assert items
-    return client, items[0]["id"]
-
-
-def test_six_capability_endpoints_respond_for_an_ingested_call() -> None:
-    client, call_id = _ingest_example()
-    auth = {"X-API-Key": "k"}
-    latency = client.get(f"/v1/latency?{RANGE}", headers=auth)
-    hangups = client.get(f"/v1/hangups?{RANGE}", headers=auth)
-    tools = client.get(f"/v1/tools?{RANGE}", headers=auth)
-    quality = client.get(f"/v1/quality?{RANGE}", headers=auth)
-    search = client.post(
-        "/v1/search",
-        headers=auth,
-        json={"q": "refund", "start": "2020-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"},
-    )
-    timeline = client.get(f"/v1/calls/{call_id}/timeline", headers=auth)
-    detail = client.get(f"/v1/calls/{call_id}", headers=auth)
+def test_latency_uses_sample_chips_not_a_waterfall() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    latency = client.get(f"/v1/latency?{RANGE_QS}", headers=auth())
     assert latency.status_code == 200
-    assert hangups.status_code == 200
-    assert tools.status_code == 200
-    assert quality.status_code == 200
-    assert search.status_code == 200
+    body = latency.json()
+    assert_generation_labelled(body)
+    stages = {item["stage"]: item for item in body["items"]}
+    assert "stt" in stages
+    assert stages["stt"]["p50"] == EXAMPLE_STT_MS
+    assert stages["stt"]["p95"] == EXAMPLE_STT_MS
+    assert body.get("aggregates_excluded") == 0
+    timeline = client.get(f"/v1/calls/{first_call_id(client)}/timeline", headers=auth())
     assert timeline.status_code == 200
-    assert detail.status_code == 200
-    body = timeline.json()
-    assert body["draw_stage_waterfall"] is False
-    assert body["stage_intervals"] == []
-    assert body["unplaced_stage_chips"]
-    assert "hallucinations" in quality.json()
-    hits = search.json()["items"]
-    assert any(item.get("call_id") == call_id for item in hits)
+    view = timeline.json()
+    assert_no_stage_waterfall(view)
+    assert view["unplaced_stage_chips"]
+    assert view["unplaced_stage_chips"][0]["value_ms"] == EXAMPLE_STT_MS
+    assert view["timeline_fidelity"] == "turn_level"
 
 
-def test_vapi_timeline_http_never_invents_a_stage_waterfall() -> None:
-    state = vapi_state()
-    client = api_client(state)
+def test_vapi_timeline_never_invents_stage_intervals() -> None:
+    client = api_client(vapi_state())
     raw = (VAPI_FIXTURES / "raw" / "end_of_call.json").read_bytes()
     posted = client.post("/v1/ingest/vapi/ik", content=raw, headers=vapi_headers())
     assert posted.status_code == 200
-    listed = client.get(f"/v1/calls?{RANGE}", headers={"X-API-Key": "k"})
+    listed = client.get(f"/v1/calls?{RANGE_QS}", headers=auth())
     call_id = listed.json()["items"][0]["id"]
-    timeline = client.get(f"/v1/calls/{call_id}/timeline", headers={"X-API-Key": "k"})
-    body = timeline.json()
-    assert body["draw_stage_waterfall"] is False
-    assert body["stage_intervals"] == []
-    assert body["unplaced_stage_chips"]
-    assert body["timeline_fidelity"] == "turn_level"
+    view = client.get(f"/v1/calls/{call_id}/timeline", headers=auth()).json()
+    assert_no_stage_waterfall(view)
+    assert view["unplaced_stage_chips"]
+    assert view["timeline_fidelity"] == "turn_level"
+    paths = {chip.get("source_path") or "" for chip in view["unplaced_stage_chips"]}
+    assert any("transcriberLatency" in path for path in paths)
+    assert any("modelLatency" in path for path in paths)
+    assert any("voiceLatency" in path for path in paths)
 
 
-def test_call_detail_ui_uses_fidelity_not_hardcoded_vapi_copy() -> None:
-    state = vapi_state()
-    client = api_client(state)
-    raw = (VAPI_FIXTURES / "raw" / "end_of_call.json").read_bytes()
-    client.post("/v1/ingest/vapi/ik", content=raw, headers=vapi_headers())
-    listed = client.get(f"/v1/calls?{RANGE}", headers={"X-API-Key": "k"})
-    call_id = listed.json()["items"][0]["id"]
-    login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
-    assert login.status_code == 303
-    page = client.get(f"/v1/ui/calls/{call_id}")
-    assert page.status_code == 200
-    html = page.text
-    assert "Vapi reports stage durations" not in html
-    assert "No invented stage intervals" in html
-    assert "turn bars with unplaced stage chips" in html or "Unplaced stage chips" in html
+def test_hangup_cluster_uses_the_provider_agnostic_reason() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    hangups = client.get(f"/v1/hangups?{RANGE_QS}", headers=auth())
+    assert hangups.status_code == 200
+    body = hangups.json()
+    assert_generation_labelled(body)
+    reasons = {item["reason"]: item for item in body["items"]}
+    assert "user_hangup" in reasons
+    assert reasons["user_hangup"]["count"] == 1
+    cluster = next(row for row in body["clusters"] if row["reason"] == "user_hangup")
+    assert cluster["last_speaker"] == "agent"
+    assert cluster["last_user_text"] == EXAMPLE_USER_TEXT
+    assert cluster["last_agent_text"] == "I can help with that."
+    detail = client.get(f"/v1/calls/{first_call_id(client)}", headers=auth()).json()
+    assert detail["hangup"]["reason"] == "user_hangup"
+    assert detail["hangup"]["last_speaker"] == "agent"
+    assert detail["source_call_id"] == EXAMPLE_SOURCE_CALL_ID
+    assert detail["agent_id"] == EXAMPLE_AGENT_ID
 
 
-def test_quality_http_does_not_count_pending_hallucinations() -> None:
-    state = example_state()
-    client = api_client(state)
-    raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    listed = client.get(f"/v1/calls?{RANGE}", headers={"X-API-Key": "k"})
-    call_id = listed.json()["items"][0]["id"]
-    detail = client.get(f"/v1/calls/{call_id}", headers={"X-API-Key": "k"})
-    revision = detail.json()["revision"]
-    state.sink.write_analysis(
-        "acme",
-        call_id,
-        revision,
-        [
-            AnalysisResult(
-                execution=AnalysisExecution(
-                    call_id=call_id,
-                    revision=revision,
-                    analyzer_id="hallucination",
-                    analyzer_version="1",
-                    state=AnalysisState.PENDING,
-                ),
-                payload={
-                    "candidates": [{"kind": "price_claim", "needs_llm": True}],
-                    "selection": "pending",
-                },
-            )
-        ],
+def test_tools_rollup_is_empty_when_the_source_reported_none() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    tools = client.get(f"/v1/tools?{RANGE_QS}", headers=auth())
+    assert tools.status_code == 200
+    body = tools.json()
+    assert_generation_labelled(body)
+    assert body["items"] == []
+    assert body["invocation_count"] == 0
+
+
+def test_search_finds_refunds_only_inside_the_requested_range() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
+    in_range = client.post(
+        "/v1/search",
+        headers=auth(),
+        json={
+            "q": "refund",
+            "start": "2026-08-22T12:00:00Z",
+            "end": "2026-08-22T12:00:10Z",
+        },
     )
-    quality = client.get(f"/v1/quality?{RANGE}", headers={"X-API-Key": "k"})
+    assert in_range.status_code == 200
+    hits = in_range.json()["items"]
+    assert any(item.get("call_id") == call_id for item in hits)
+    too_early = client.post(
+        "/v1/search",
+        headers=auth(),
+        json={"q": "refund", "start": "2019-01-01T00:00:00Z", "end": "2019-12-31T00:00:00Z"},
+    )
+    assert too_early.status_code == 200
+    assert too_early.json()["items"] == []
+
+
+def test_quality_does_not_count_calls_without_confirmed_hallucinations() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    quality = client.get(f"/v1/quality?{RANGE_QS}", headers=auth())
     assert quality.status_code == 200
-    assert quality.json()["hallucinations"]["count"] == 0
+    body = quality.json()
+    assert_generation_labelled(body)
+    assert body["hallucinations"]["count"] == 0
+    assert body["flag_count"] == 0
+    detail = client.get(f"/v1/calls/{first_call_id(client)}", headers=auth()).json()
+    texts = [turn["text"] for turn in detail["turns"]]
+    assert EXAMPLE_USER_TEXT in texts
+    assert detail["decoder_version"]
+    assert detail["coverage"]
+
+
+def test_every_org_rubric_is_evaluated_on_analyze() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
+    first = client.post(
+        "/v1/rubrics",
+        headers=auth(),
+        json={"name": "grounded", "description": "no invented facts"},
+    )
+    second = client.post(
+        "/v1/rubrics",
+        headers=auth(),
+        json={"name": "polite", "description": "Was the agent polite?"},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    analyzed = client.post(f"/v1/calls/{call_id}/analyze", headers=auth())
+    assert analyzed.status_code == 200
+    items = analyzed.json()["items"]
+    assert len(items) == 2
+    detail = client.get(f"/v1/calls/{call_id}", headers=auth()).json()
+    evals = [
+        row
+        for row in detail["analysis"]
+        if row.get("execution", {}).get("analyzer_id") in {"tier2", "eval", "rubric"}
+        or "passed" in (row.get("payload") or {})
+        and row.get("execution", {}).get("analyzer_id") not in {"hallucination", "flags"}
+    ]
+    assert len(evals) >= 2

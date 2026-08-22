@@ -61,3 +61,10 @@ def test_parser_exposes_doctor_and_plugins() -> None:
     assert doctor.skip_network is True
     plugins = parser.parse_args(["plugins", "--json"])
     assert plugins.command == "plugins"
+
+
+def test_parser_exposes_worker() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["worker", "--once"])
+    assert args.command == "worker"
+    assert args.once is True

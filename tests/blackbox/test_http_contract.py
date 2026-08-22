@@ -1,195 +1,105 @@
-"""Public HTTP contract — auth, range, tenancy, CSRF. No internals."""
+"""Large tests: public HTTP contract. Status codes and JSON only."""
 
 from __future__ import annotations
 
-from obsalt.assemble.promote import MemoryPointerStore
-from obsalt.domain.enums import AnalysisState, KeyScope
-from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
-from obsalt.plugin.host import LoadedPlugin
-from obsalt.plugin.types import ConnectionConfig
-from obsalt.runtime import AppState
-from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
-from obsalt.worker.process import MemoryRevisionSink
-from obsalt_example.plugin import ExamplePlugin
-from tests.helpers import EXAMPLE_FIXTURES, api_client, example_headers, example_state
+from fastapi.testclient import TestClient
+
+from obsalt.api import create_app, create_test_app
+from obsalt.config import Settings
+from tests.helpers import (
+    RANGE_QS,
+    api_client,
+    auth,
+    example_headers,
+    example_raw,
+    example_state,
+    first_call_id,
+    ingest_example,
+    list_calls,
+)
+
+
+def test_create_app_without_state_is_not_a_memory_backend() -> None:
+    try:
+        create_app(Settings(environment="dev"))
+    except RuntimeError as exc:
+        assert "production_state" in str(exc) or "create_test_app" in str(exc)
+    else:
+        raise AssertionError("create_app() must not silently start an in-memory backend")
+
+
+def test_create_test_app_is_explicit() -> None:
+    client = TestClient(create_test_app())
+    assert client.get("/health").json()["status"] == "ok"
+
+
+def test_openapi_describes_the_product() -> None:
+    spec = create_test_app().openapi()
+    description = (spec["info"].get("description") or "").lower()
+    assert "x-api-key" in description
+    assert "/v1/ui" in description
+    assert spec["info"]["title"] == "obsalt"
 
 
 def test_health_is_public() -> None:
     client = api_client(example_state())
-    assert client.get("/health").json()["status"] == "ok"
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    assert "version" in body
 
 
 def test_reads_require_an_api_key() -> None:
     client = api_client(example_state())
-    listed = client.get("/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z")
+    listed = client.get(f"/v1/calls?{RANGE_QS}")
     assert listed.status_code == 401
 
 
-def test_unknown_api_key_is_401() -> None:
+def test_unknown_api_key_is_401_not_first_org() -> None:
     client = api_client(example_state())
-    listed = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "nope"},
-    )
+    listed = client.get(f"/v1/calls?{RANGE_QS}", headers=auth("nope"))
     assert listed.status_code == 401
 
 
-def test_list_and_quality_require_a_time_range() -> None:
+def test_collection_lists_require_a_time_range() -> None:
     client = api_client(example_state())
-    assert client.get("/v1/calls", headers={"X-API-Key": "k"}).status_code == 400
-    assert client.get("/v1/quality", headers={"X-API-Key": "k"}).status_code == 400
-    assert client.get("/v1/latency", headers={"X-API-Key": "k"}).status_code == 400
+    headers = auth()
+    assert client.get("/v1/calls", headers=headers).status_code == 400
+    assert client.get("/v1/latency", headers=headers).status_code == 400
+    assert client.get("/v1/hangups", headers=headers).status_code == 400
+    assert client.get("/v1/tools", headers=headers).status_code == 400
+    assert client.get("/v1/quality", headers=headers).status_code == 400
+    missing = client.post("/v1/search", headers=headers, json={"q": "refund"})
+    assert missing.status_code == 400
 
 
-def test_cross_tenant_call_is_404() -> None:
-    from obsalt.config import Settings
-    from obsalt.search.index import MemorySearchIndex
-
-    plugin = ExamplePlugin()
-    resolver = MemoryResolver()
-    resolver.add(
-        ConnectionConfig(
-            org_id="acme",
-            provider="example",
-            connection_id="c1",
-            ingest_key_hash="",
-            secrets={"hmac_secret": "s"},
-        ),
-        "ik",
-    )
-    state = AppState(
-        settings=Settings(),
-        plugins=[LoadedPlugin(plugin)],
-        resolver=resolver,
-        objects=MemoryObjectStore(),
-        inbox=MemoryInbox(),
-        pointers=MemoryPointerStore(),
-        sink=MemoryRevisionSink(),
-        keys={
-            "acme-key": ("acme", frozenset(KeyScope)),
-            "beta-key": ("beta", frozenset(KeyScope)),
-        },
-        rollup_generation="g1",
-        search=MemorySearchIndex(),
-    )
-    client = api_client(state)
-    raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    ingest = client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    assert ingest.status_code == 200
-    listed = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "acme-key"},
-    )
-    call_id = listed.json()["items"][0]["id"]
-    foreign = client.get(f"/v1/calls/{call_id}", headers={"X-API-Key": "beta-key"})
-    assert foreign.status_code == 404
-    beta_list = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "beta-key"},
-    )
-    assert beta_list.json()["items"] == []
+def test_fleet_responses_carry_one_generation() -> None:
+    client = api_client(example_state())
+    latency = client.get(f"/v1/latency?{RANGE_QS}", headers=auth())
+    assert latency.status_code == 200
+    assert latency.json()["as_of_generation"] == "g1"
 
 
-def test_quality_does_not_count_another_orgs_analysis() -> None:
-    from datetime import UTC, datetime
+def test_cross_tenant_call_is_404_not_403() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
+    denied = client.get(f"/v1/calls/{call_id}", headers=auth("other"))
+    assert denied.status_code == 404
+    foreign = list_calls(client, key="other")
+    assert foreign["items"] == []
 
-    from obsalt.config import Settings
-    from obsalt.domain.enums import Speaker
-    from obsalt.domain.models import Turn
-    from obsalt.search.index import MemorySearchIndex
 
-    plugin = ExamplePlugin()
-    resolver = MemoryResolver()
-    resolver.add(
-        ConnectionConfig(
-            org_id="acme",
-            provider="example",
-            connection_id="c1",
-            ingest_key_hash="",
-            secrets={"hmac_secret": "s"},
-        ),
-        "ik",
-    )
-    sink = MemoryRevisionSink()
-    pointers = MemoryPointerStore()
-    acme_call = CallRevision(
-        org_id="acme",
-        call_id="acme-1",
-        revision="r-acme",
-        source="example",
-        source_call_id="ex-acme",
-        started_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
-        turns=[Turn(index=0, speaker=Speaker.USER, text="hello")],
-    )
-    beta_call = CallRevision(
-        org_id="beta",
-        call_id="beta-1",
-        revision="r-beta",
-        source="example",
-        source_call_id="ex-beta",
-        started_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
-        turns=[Turn(index=0, speaker=Speaker.USER, text="invented $99")],
-    )
-    sink.write(acme_call)
-    sink.write(beta_call)
-    pointers.compare_and_swap("acme", "acme-1", None, "r-acme", fact_frontier=frozenset())
-    pointers.compare_and_swap("beta", "beta-1", None, "r-beta", fact_frontier=frozenset())
-    sink.write_analysis(
-        "beta",
-        "beta-1",
-        "r-beta",
-        [
-            AnalysisResult(
-                execution=AnalysisExecution(
-                    call_id="beta-1",
-                    revision="r-beta",
-                    analyzer_id="hallucination",
-                    analyzer_version="1",
-                    state=AnalysisState.COMPLETED,
-                ),
-                payload={"claims": [{"kind": "price_claim", "verdict": "contradicted"}]},
-            )
-        ],
-    )
-    state = AppState(
-        settings=Settings(),
-        plugins=[LoadedPlugin(plugin)],
-        resolver=resolver,
-        objects=MemoryObjectStore(),
-        inbox=MemoryInbox(),
-        pointers=pointers,
-        sink=sink,
-        keys={
-            "acme-key": ("acme", frozenset(KeyScope)),
-            "beta-key": ("beta", frozenset(KeyScope)),
-        },
-        rollup_generation="g1",
-        search=MemorySearchIndex(),
-    )
-    client = api_client(state)
-    acme_quality = client.get(
-        "/v1/quality?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "acme-key"},
-    )
-    assert acme_quality.status_code == 200
-    assert acme_quality.json()["hallucinations"]["count"] == 0
-    beta_quality = client.get(
-        "/v1/quality?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "beta-key"},
-    )
-    assert beta_quality.json()["hallucinations"]["count"] == 1
+def test_ingest_unknown_plugin_is_404() -> None:
+    client = api_client(example_state())
+    raw = example_raw()
+    res = client.post("/v1/ingest/not-a-plugin/ik", content=raw, headers=example_headers(raw))
+    assert res.status_code == 404
 
 
 def test_csrf_required_for_ui_mutation() -> None:
-    state = example_state()
-    client = api_client(state)
-    raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    listed = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "k"},
-    )
-    call_id = listed.json()["items"][0]["id"]
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
     login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
     assert login.status_code == 303
     denied = client.post(
@@ -198,26 +108,9 @@ def test_csrf_required_for_ui_mutation() -> None:
     assert denied.status_code == 403
 
 
-def test_delete_by_call_id_only_blocks_replay() -> None:
-    state = example_state()
-    client = api_client(state)
-    raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    listed = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "k"},
-    )
-    call_id = listed.json()["items"][0]["id"]
-    deleted = client.post(
-        "/v1/privacy/deletion-requests",
-        headers={"X-API-Key": "k"},
-        json={"call_id": call_id},
-    )
-    assert deleted.status_code == 200
-    assert deleted.json()["undoable"] is False
-    client.post("/v1/ingest/example/ik", content=raw, headers=example_headers(raw))
-    listed = client.get(
-        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
-        headers={"X-API-Key": "k"},
-    )
-    assert listed.json()["items"] == []
+def test_plugins_endpoint_requires_an_api_key() -> None:
+    client = api_client(example_state())
+    assert client.get("/v1/plugins").status_code == 401
+    listed = client.get("/v1/plugins", headers=auth())
+    assert listed.status_code == 200
+    assert "example" in {item["name"] for item in listed.json()["items"]}

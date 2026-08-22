@@ -7,7 +7,14 @@ from datetime import datetime
 from typing import Any
 
 from obsalt.analysis.cluster import cluster_hangups
-from obsalt.analysis.rollups import build_latency_rollup, build_quality_rollup, build_tools_rollup
+from obsalt.analysis.rollups import (
+    _NON_EVAL_ANALYZERS,
+    _percentile,
+    build_latency_rollup,
+    build_quality_rollup,
+    build_tools_rollup,
+)
+from obsalt.domain.enums import AnalysisState
 from obsalt.domain.models import AnalysisResult, CallRevision
 from obsalt.search.index import MemorySearchIndex
 
@@ -63,13 +70,20 @@ def active_calls(state: Any, org_id: str) -> list[CallRevision]:
             if state.pointers.get(rev.org_id, rev.call_id) != rev.revision:
                 continue
             items.append(rev)
-    items.sort(key=lambda r: (r.started_at or r.created_at, r.call_id), reverse=True)
+    items.sort(key=lambda r: (range_clock(r), r.call_id), reverse=True)
     return items
 
 
+def range_clock(call: CallRevision) -> datetime:
+    """One clock for list, search, and rollup windows. Never ingest time alone
+    when the source reported a start; never drop a call that only has
+    ``created_at``.
+    """
+    return call.started_at or call.created_at
+
+
 def in_range(call: CallRevision, start: datetime, end: datetime) -> bool:
-    ts = call.started_at or call.created_at
-    return start <= ts <= end
+    return start <= range_clock(call) <= end
 
 
 def matches_call_filters(
@@ -110,23 +124,51 @@ def matches_call_filters(
 
 
 def _flag_kinds(rows: list[Any]) -> set[str]:
+    """Confirmed flags only. Pending Tier-1 candidates are not filterable failures."""
     kinds: set[str] = set()
     for row in rows:
+        execution = getattr(row, "execution", None)
+        if getattr(execution, "state", None) is not AnalysisState.COMPLETED:
+            continue
         payload = row.payload if hasattr(row, "payload") else {}
-        for item in (
-            payload.get("flags") or payload.get("candidates") or payload.get("claims") or []
-        ):
+        analyzer = getattr(execution, "analyzer_id", "")
+        if analyzer == "flags":
+            items = payload.get("flags") or []
+        elif analyzer == "hallucination":
+            items = [
+                item
+                for item in (payload.get("claims") or [])
+                if isinstance(item, dict) and item.get("verdict") in {"contradicted", "unsupported"}
+            ]
+        else:
+            continue
+        for item in items:
             if isinstance(item, dict) and item.get("kind"):
                 kinds.add(str(item["kind"]))
     return kinds
 
 
 def _eval_passed(rows: list[Any]) -> bool | None:
+    """Rubric/eval verdicts only. Hallucination ``passed`` is a different signal.
+
+    Fail-closed: any completed eval that is not explicitly ``passed is True``
+    makes the call a fail. Missing output is not a pass.
+    """
+    seen = False
+    all_passed = True
     for row in rows:
+        analyzer = getattr(getattr(row, "execution", None), "analyzer_id", "")
+        if analyzer in _NON_EVAL_ANALYZERS:
+            continue
         payload = row.payload if hasattr(row, "payload") else {}
-        if "passed" in payload:
-            return bool(payload.get("passed"))
-    return None
+        if "passed" not in payload:
+            continue
+        seen = True
+        if payload.get("passed") is not True:
+            all_passed = False
+    if not seen:
+        return None
+    return all_passed
 
 
 def call_list_item(rev: CallRevision) -> dict[str, Any]:
@@ -164,13 +206,7 @@ def paginate_calls(
 
 def sample_percentile(values: list[float], pct: float) -> float | None:
     """Sample percentile. Provider AggregateMeasurements must never enter this list."""
-    if not values:
-        return None
-    if len(values) == 1:
-        return values[0]
-    n = max(1, int(round((len(values) - 1) * pct / 100.0)))
-    ordered = sorted(values)
-    return ordered[min(n, len(ordered) - 1)]
+    return _percentile(values, pct)
 
 
 def latency_rollup(
@@ -180,12 +216,8 @@ def latency_rollup(
     store: Any | None = None,
     org_id: str | None = None,
 ) -> dict[str, Any]:
-    if store is not None and getattr(store, "samples", None):
-        from obsalt.analysis.contributions import latency_from_store_or_calls
-
-        return latency_from_store_or_calls(
-            calls, as_of_generation=as_of_generation, store=store, org_id=org_id
-        )
+    # Always score the caller-provided window. The contribution store is
+    # written on promote; it is not an all-time override of start/end.
     data = build_latency_rollup(calls, as_of_generation)
     items = []
     for stage, stats in (data.get("sample_percentiles") or {}).items():
@@ -217,21 +249,7 @@ def hangup_rollup(
     store: Any | None = None,
     org_id: str | None = None,
 ) -> dict[str, Any]:
-    if store is not None and org_id:
-        cached = store.get(org_id, as_of_generation)
-        if cached is not None:
-            data = dict(cached)
-            data.setdefault(
-                "items",
-                [
-                    {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
-                    for row in data.get("clusters") or []
-                ],
-            )
-            return data
-        data = store.refresh(org_id, calls, as_of_generation)
-    else:
-        data = cluster_hangups(calls, as_of_generation)
+    data = cluster_hangups(calls, as_of_generation)
     data["items"] = [
         {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
         for row in data.get("clusters") or []
@@ -256,8 +274,22 @@ def quality_rollup(
     return data
 
 
+def _restrict_hits_to_calls(
+    items: list[dict[str, Any]], calls: list[CallRevision] | None
+) -> list[dict[str, Any]]:
+    """Time-range and other prefilters are applied by the caller via ``calls``.
+
+    ``None`` means “do not restrict” (index-only unit tests). An empty list
+    means the caller already applied a filter that matched nothing.
+    """
+    if calls is None:
+        return items
+    allowed = {call.call_id for call in calls}
+    return [item for item in items if item.get("call_id") in allowed]
+
+
 def search_calls(
-    calls: list[CallRevision],
+    calls: list[CallRevision] | None,
     query: str,
     *,
     index: Any | None = None,
@@ -266,7 +298,7 @@ def search_calls(
 ) -> list[dict[str, Any]]:
     if index is not None and hasattr(index, "query") and not isinstance(index, MemorySearchIndex):
         result = index.query(org_id or "", query, filters=filters)
-        return list(result.get("items") or [])
+        return _restrict_hits_to_calls(list(result.get("items") or []), calls)
     if not query.strip():
         return []
     search_index = (
@@ -284,4 +316,4 @@ def search_calls(
     if org_id:
         merged.setdefault("org_id", org_id)
     result = search_index.query(query, filters=merged or None)
-    return list(result.get("items") or [])
+    return _restrict_hits_to_calls(list(result.get("items") or []), calls)

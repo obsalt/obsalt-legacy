@@ -50,6 +50,23 @@ def test_hard_budget_blocks_before_judge() -> None:
     assert execution.state is AnalysisState.BUDGET_BLOCKED
 
 
+def test_zero_budget_blocks_paid_judges_and_allows_heuristic() -> None:
+    from obsalt.analysis.judge import HeuristicJudge
+    from obsalt.analysis.tier2 import budget_for_judge, is_paid_judge
+
+    class PaidJudge:
+        name = "openai_compatible"
+
+    assert is_paid_judge(PaidJudge()) is True
+    assert is_paid_judge(HeuristicJudge()) is False
+    assert budget_for_judge(0.0, PaidJudge()) == 0.0
+    assert budget_for_judge(0.0, HeuristicJudge()) == float("inf")
+    blocked = decide_tier2(_call(), manual=True, budget_usd=0.0, spend_usd=0.0)
+    # decide_tier2 itself is judge-agnostic; $0 is a real cap when the caller
+    # passes it through. The API/worker use budget_for_judge first.
+    assert blocked.state is AnalysisState.BUDGET_BLOCKED
+
+
 def test_manual_trigger_runs_and_cache_is_free() -> None:
     call = _call()
     cache: dict = {}

@@ -7,7 +7,7 @@ import json
 from fastapi.testclient import TestClient
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
 
-from obsalt.api import create_app
+from obsalt.api import create_test_app
 from obsalt.config import Settings
 from obsalt.domain.enums import EnvelopeState
 from obsalt.ingest.otlp import receive_otlp_batch
@@ -42,7 +42,7 @@ def test_otlp_uses_inbox_and_does_not_forward_on_request_path() -> None:
 
 def test_otlp_span_identity_conflict_is_partial_success() -> None:
     state = example_state()
-    client = TestClient(create_app(Settings(environment="test", trace_grace_seconds=0), state))
+    client = TestClient(create_test_app(Settings(environment="test", trace_grace_seconds=0), state))
     first = {
         "resourceSpans": [
             {
@@ -114,7 +114,7 @@ def test_otlp_span_identity_conflict_is_partial_success() -> None:
 
 def test_otlp_complete_batch_assembles_stage_level() -> None:
     state = example_state(extra_plugins=[LoadedPlugin(PipecatPlugin())])
-    client = TestClient(create_app(Settings(environment="test", trace_grace_seconds=0), state))
+    client = TestClient(create_test_app(Settings(environment="test", trace_grace_seconds=0), state))
     payload = {
         "resourceSpans": [
             {
@@ -125,8 +125,8 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "traceId": "aa" * 16,
                                 "spanId": "bb" * 8,
                                 "name": "turn",
-                                "startTimeUnixNano": "1000000000",
-                                "endTimeUnixNano": "2000000000",
+                                "startTimeUnixNano": "1787400001000000000",
+                                "endTimeUnixNano": "1787400002000000000",
                                 "attributes": [
                                     {"key": "turn.index", "value": {"intValue": "0"}},
                                     {
@@ -141,8 +141,8 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "spanId": "cc" * 8,
                                 "parentSpanId": "bb" * 8,
                                 "name": "stt.transcription",
-                                "startTimeUnixNano": "1000000000",
-                                "endTimeUnixNano": "1300000000",
+                                "startTimeUnixNano": "1787400001000000000",
+                                "endTimeUnixNano": "1787400001300000000",
                                 "attributes": [
                                     {
                                         "key": "gen_ai.conversation.id",
@@ -170,4 +170,6 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
     item = listed.json()["items"][0]
     detail = client.get(f"/v1/calls/{item['id']}", headers={"X-API-Key": "k"})
     assert detail.status_code == 200
-    assert detail.json()["timeline_fidelity"] == "stage_level"
+    body = detail.json()
+    assert body["timeline_fidelity"] == "stage_level"
+    assert body["started_at"].startswith("2026-08-22T12:00:01")

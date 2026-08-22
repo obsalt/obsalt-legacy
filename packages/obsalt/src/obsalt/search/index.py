@@ -11,6 +11,7 @@ import asyncio
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from obsalt.domain.models import CallRevision
@@ -29,6 +30,8 @@ class _Document:
     agent_id: str
     source: str
     hangup_reason: str | None
+    started_at: datetime | None
+    created_at: datetime | None
     text: str
     tokens: set[str]
     vector: list[float]
@@ -59,6 +62,8 @@ class MemorySearchIndex:
             agent_id=call.agent_id,
             source=call.source,
             hangup_reason=hangup_reason,
+            started_at=call.started_at,
+            created_at=call.created_at,
             text=text,
             tokens=set(TOKEN_RE.findall(text.lower())),
             vector=vector,
@@ -121,8 +126,18 @@ def _transcript(call: CallRevision) -> str:
 def _matches(doc: _Document, filters: dict[str, Any] | None) -> bool:
     if not filters:
         return True
+    start = filters.get("start")
+    end = filters.get("end")
+    if start is not None or end is not None:
+        ts = doc.started_at or doc.created_at
+        if ts is None:
+            return False
+        if start is not None and ts < start:
+            return False
+        if end is not None and ts > end:
+            return False
     for key, expected in filters.items():
-        if expected is None:
+        if expected is None or key in {"start", "end"}:
             continue
         actual = doc.facets.get(key)
         if actual is None and key not in doc.facets:

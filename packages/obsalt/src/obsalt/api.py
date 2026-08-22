@@ -368,13 +368,15 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         )
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end
         filters = {k: body.get(k) for k in ("agent_id", "source", "hangup_reason") if body.get(k)}
+        filters["start"] = start_dt
+        filters["end"] = end_dt
         calls = [c for c in active_calls(state, org) if in_range(c, start_dt, end_dt)]
         items = search_calls(
             calls,
             query,
             index=state.search,
             org_id=org,
-            filters=filters or None,
+            filters=filters,
         )
         return {"items": items}
 
@@ -441,37 +443,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")
     ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
-        rev = _active(state, org, call_id)
-        spend = org_spend_usd(state, org)
-        if spend >= state.settings.llm_monthly_budget_usd > 0:
-            execution = AnalysisExecution(
-                call_id=call_id,
-                revision=rev.revision,
-                analyzer_id="eval",
-                analyzer_version="1",
-                state=AnalysisState.BUDGET_BLOCKED,
-            )
-            return execution.model_dump(mode="json")
-        from obsalt.analysis.tier2 import run_tier2
-
-        rubrics = [r for r in state.rubrics.values() if r.org_id == org]
-        result = await run_tier2(
-            rev,
-            rubric=rubrics[0] if rubrics else None,
-            manual=True,
-            baseline_sample_rate=state.settings.baseline_sample_rate,
-            budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend,
-            judge=state.judge,
-        )
-        cost = float((result.payload or {}).get("cost_usd") or 0.0)
-        if cost:
-            add_org_spend(state, org, cost)
-        writer = getattr(state.sink, "write_analysis", None)
-        existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
-        if writer is not None:
-            writer(org, call_id, rev.revision, list(existing) + [result])
-        return result.model_dump(mode="json")
+        return await _run_manual_analysis(state, org, call_id)
 
     @app.get("/v1/rubrics")
     def list_rubrics(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -887,9 +859,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui", response_class=HTMLResponse)
     def ui_home(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
-        calls = active_calls(state, org) if org else []
-        start = request.query_params.get("start") or ""
-        end = request.query_params.get("end") or ""
+        start_dt, end_dt, start, end = _parse_ui_range(request)
         filters = {
             "agent_id": request.query_params.get("agent_id") or "",
             "hangup_reason": request.query_params.get("hangup_reason") or "",
@@ -899,15 +869,10 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             "start": start,
             "end": end,
         }
-        if start and end:
-            from datetime import datetime as dt
-
-            try:
-                start_dt = dt.fromisoformat(start.replace("Z", "+00:00"))
-                end_dt = dt.fromisoformat(end.replace("Z", "+00:00"))
-                calls = [c for c in calls if in_range(c, start_dt, end_dt)]
-            except ValueError:
-                pass
+        calls = _ui_in_range_calls(state, org, start_dt, end_dt)
+        error = (
+            "start and end are required" if org and (start_dt is None or end_dt is None) else None
+        )
         calls = [
             c
             for c in calls
@@ -933,7 +898,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return _render(
             request,
             "call_list.html",
-            {"calls": calls, "org": org, "filters": filters, "next_cursor": next_cursor},
+            {
+                "calls": calls,
+                "org": org,
+                "filters": filters,
+                "next_cursor": next_cursor,
+                "error": error,
+            },
         )
 
     @app.get("/v1/ui/login", response_class=HTMLResponse)
@@ -978,24 +949,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if not org:
             raise HTTPException(status_code=401, detail="session required")
         rev = _active(state, org, call_id)
-        analysis = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
-        flags: list[dict] = []
-        evals: list[dict] = []
-        for row in analysis:
-            payload = row.payload if hasattr(row, "payload") else {}
-            analyzer = row.execution.analyzer_id if hasattr(row, "execution") else ""
-            if analyzer == "flags":
-                flags.extend(payload.get("flags") or [])
-            if analyzer in {"eval", "tier2", "hallucination"}:
-                evals.append(
-                    {
-                        "analyzer_id": analyzer,
-                        "state": row.execution.state.value,
-                        "passed": payload.get("passed"),
-                        "score": payload.get("score"),
-                        "rationale": payload.get("rationale"),
-                    }
-                )
+        flags, evals = _ui_flags_and_evals(analysis_for(state, org, call_id, rev.revision))
         return _render(
             request,
             "call_detail.html",
@@ -1012,19 +966,34 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui/latency", response_class=HTMLResponse)
     def ui_latency(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
+        start_dt, end_dt, start, end = _parse_ui_range(request)
+        calls = _ui_in_range_calls(state, org, start_dt, end_dt)
         data = latency_rollup(
-            active_calls(state, org) if org else [],
+            calls,
             as_of_generation=state.rollup_generation,
             store=getattr(state, "rollups", None),
             org_id=org,
         )
-        return _render(request, "latency.html", {"rollup": data, "org": org})
+        return _render(
+            request,
+            "latency.html",
+            {
+                "rollup": data,
+                "org": org,
+                "filters": {"start": start, "end": end},
+                "error": "start and end are required"
+                if org and (start_dt is None or end_dt is None)
+                else None,
+            },
+        )
 
     @app.get("/v1/ui/hangups", response_class=HTMLResponse)
     def ui_hangups(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
+        start_dt, end_dt, start, end = _parse_ui_range(request)
+        calls = _ui_in_range_calls(state, org, start_dt, end_dt)
         data = hangup_rollup(
-            active_calls(state, org) if org else [],
+            calls,
             as_of_generation=state.rollup_generation,
             store=getattr(state, "hangup_clusters", None),
             org_id=org,
@@ -1036,13 +1005,18 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 "clusters": data.get("clusters") or [],
                 "as_of_generation": data.get("as_of_generation"),
                 "org": org,
+                "filters": {"start": start, "end": end},
+                "error": "start and end are required"
+                if org and (start_dt is None or end_dt is None)
+                else None,
             },
         )
 
     @app.get("/v1/ui/quality", response_class=HTMLResponse)
     def ui_quality(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
-        calls = active_calls(state, org) if org else []
+        start_dt, end_dt, start, end = _parse_ui_range(request)
+        calls = _ui_in_range_calls(state, org, start_dt, end_dt)
         data = quality_rollup(
             calls,
             analysis_for_active(state, org, calls) if org else [],
@@ -1056,27 +1030,47 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 "org": org,
                 "spend_usd": org_spend_usd(state, org) if org else 0.0,
                 "budget_usd": state.settings.llm_monthly_budget_usd,
+                "filters": {"start": start, "end": end},
+                "error": "start and end are required"
+                if org and (start_dt is None or end_dt is None)
+                else None,
             },
         )
 
     @app.get("/v1/ui/search", response_class=HTMLResponse)
     def ui_search(request: Request, q: str = "") -> HTMLResponse:
         org = _ui_org(request, state)
+        start_dt, end_dt, start, end = _parse_ui_range(request)
         filters = {
             "agent_id": request.query_params.get("agent_id") or "",
             "source": request.query_params.get("source") or "",
+            "start": start,
+            "end": end,
         }
         hits = []
+        error = None
         if q and org:
-            hits = search_calls(
-                active_calls(state, org),
-                q,
-                index=state.search,
-                org_id=org,
-                filters={k: v for k, v in filters.items() if v} or None,
-            )
+            if start_dt is None or end_dt is None:
+                error = "start and end are required"
+            else:
+                structured = {
+                    key: value
+                    for key, value in filters.items()
+                    if value and key not in {"start", "end"}
+                }
+                structured["start"] = start_dt
+                structured["end"] = end_dt
+                hits = search_calls(
+                    _ui_in_range_calls(state, org, start_dt, end_dt),
+                    q,
+                    index=state.search,
+                    org_id=org,
+                    filters=structured,
+                )
         return _render(
-            request, "search.html", {"q": q, "results": hits, "org": org, "filters": filters}
+            request,
+            "search.html",
+            {"q": q, "results": hits, "org": org, "filters": filters, "error": error},
         )
 
     @app.get("/v1/ui/settings", response_class=HTMLResponse)
@@ -1129,30 +1123,33 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         _require_csrf(
             request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or "")
         )
-        rev = _active(state, org, call_id)
-        spend = org_spend_usd(state, org)
-        if spend >= state.settings.llm_monthly_budget_usd > 0:
-            return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
-        from obsalt.analysis.tier2 import run_tier2
-
-        rubrics = [r for r in state.rubrics.values() if r.org_id == org]
-        result = await run_tier2(
-            rev,
-            rubric=rubrics[0] if rubrics else None,
-            manual=True,
-            baseline_sample_rate=state.settings.baseline_sample_rate,
-            budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend,
-            judge=state.judge,
-        )
-        cost = float((result.payload or {}).get("cost_usd") or 0.0)
-        if cost:
-            add_org_spend(state, org, cost)
-        writer = getattr(state.sink, "write_analysis", None)
-        existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
-        if writer is not None:
-            writer(org, call_id, rev.revision, list(existing) + [result])
+        await _run_manual_analysis(state, org, call_id)
         return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
+
+    @app.post("/v1/ui/quality/review")
+    async def ui_quality_review(request: Request) -> Response:
+        org = _ui_require(request, state, "quality.review")
+        form = await request.form()
+        _require_csrf(
+            request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or "")
+        )
+        item = {
+            "org_id": org,
+            "call_id": str(form.get("call_id") or ""),
+            "agree": str(form.get("agree") or "") in {"1", "true", "yes", "on"},
+            "note": str(form.get("note") or ""),
+        }
+        store = getattr(state, "review_store", None)
+        if getattr(store, "durable", False):
+            store.insert(item)
+        else:
+            state.reviews.append(item)
+        start = str(form.get("start") or "")
+        end = str(form.get("end") or "")
+        dest = "/v1/ui/quality"
+        if start and end:
+            dest = f"/v1/ui/quality?start={start}&end={end}"
+        return RedirectResponse(dest, status_code=303)
 
     return app
 
@@ -1168,6 +1165,58 @@ def _span_index(state: AppState) -> SpanIdentityIndex:
 def _require_range(start: datetime | None, end: datetime | None) -> None:
     if start is None or end is None:
         raise HTTPException(status_code=400, detail="start and end are required")
+
+
+def _parse_ui_range(request: Request) -> tuple[datetime | None, datetime | None, str, str]:
+    start_raw = request.query_params.get("start") or ""
+    end_raw = request.query_params.get("end") or ""
+    if not start_raw or not end_raw:
+        return None, None, start_raw, end_raw
+    try:
+        return (
+            datetime.fromisoformat(start_raw.replace("Z", "+00:00")),
+            datetime.fromisoformat(end_raw.replace("Z", "+00:00")),
+            start_raw,
+            end_raw,
+        )
+    except ValueError:
+        return None, None, start_raw, end_raw
+
+
+def _ui_in_range_calls(
+    state: AppState, org: str | None, start: datetime | None, end: datetime | None
+) -> list[CallRevision]:
+    if not org or start is None or end is None:
+        return []
+    return [call for call in active_calls(state, org) if in_range(call, start, end)]
+
+
+def _ui_flags_and_evals(analysis: list) -> tuple[list[dict], list[dict]]:
+    flags: list[dict] = []
+    evals: list[dict] = []
+    for row in analysis:
+        payload = row.payload if hasattr(row, "payload") else {}
+        analyzer = row.execution.analyzer_id if hasattr(row, "execution") else ""
+        if analyzer == "flags":
+            flags.extend(payload.get("flags") or [])
+        elif analyzer == "hallucination":
+            for claim in payload.get("claims") or []:
+                if isinstance(claim, dict) and claim.get("verdict") in {
+                    "contradicted",
+                    "unsupported",
+                }:
+                    flags.append(claim)
+        if analyzer in {"eval", "tier2", "hallucination", "rubric"}:
+            evals.append(
+                {
+                    "analyzer_id": analyzer,
+                    "state": row.execution.state.value,
+                    "passed": payload.get("passed"),
+                    "score": payload.get("score"),
+                    "rationale": payload.get("rationale"),
+                }
+            )
+    return flags, evals
 
 
 def _lookup_key(state: AppState, key: str | None) -> tuple[str, frozenset[KeyScope]]:
@@ -1293,6 +1342,47 @@ def _require_csrf(request: Request, state: AppState, provided: str | None) -> No
         request.cookies.get("obsalt_session"), provided, state.settings.session_secret
     ):
         raise HTTPException(status_code=403, detail="csrf required")
+
+
+async def _run_manual_analysis(state: AppState, org: str, call_id: str) -> dict:
+    """Evaluate every org rubric (or entailment if none). $0 blocks paid judges."""
+    from obsalt.analysis.tier2 import budget_for_judge, run_tier2
+
+    rev = _active(state, org, call_id)
+    spend = org_spend_usd(state, org)
+    cap = budget_for_judge(state.settings.llm_monthly_budget_usd, state.judge)
+    if spend >= cap:
+        execution = AnalysisExecution(
+            call_id=call_id,
+            revision=rev.revision,
+            analyzer_id="eval",
+            analyzer_version="1",
+            state=AnalysisState.BUDGET_BLOCKED,
+        )
+        return {"items": [execution.model_dump(mode="json")]}
+    rubrics = [r for r in state.rubrics.values() if r.org_id == org]
+    targets = rubrics or [None]
+    results = []
+    writer = getattr(state.sink, "write_analysis", None)
+    existing = analysis_for(state, org, call_id, rev.revision)
+    for rubric in targets:
+        spend = org_spend_usd(state, org)
+        result = await run_tier2(
+            rev,
+            rubric=rubric,
+            manual=True,
+            baseline_sample_rate=state.settings.baseline_sample_rate,
+            budget_usd=cap,
+            spend_usd=spend,
+            judge=state.judge,
+        )
+        cost = float((result.payload or {}).get("cost_usd") or 0.0)
+        if cost:
+            add_org_spend(state, org, cost)
+        results.append(result)
+    if writer is not None:
+        writer(org, call_id, rev.revision, list(existing) + results)
+    return {"items": [item.model_dump(mode="json") for item in results]}
 
 
 def _active(state: AppState, org: str, call_id: str) -> CallRevision:
