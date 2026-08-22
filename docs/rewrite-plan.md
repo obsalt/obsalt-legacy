@@ -212,8 +212,9 @@ These are the claims the plan rests on. Each one is a direct response to evidenc
 
 > **T4. Decoders are validated against published schemas, not against themselves.**
 > A provider fixture that does not validate against the vendor's published OpenAPI/JSON Schema
-> fails CI. Captured payloads, golden normalized outputs, unit assertions, and semantic
-> invariants cover what schemas cannot express.
+> fails CI unless it uses the reviewed, additive, expiring schema-overlay process in §13.1,
+> which preserves and reports the original vendor-schema mismatch. Captured payloads, golden
+> normalized outputs, unit assertions, and semantic invariants cover what schemas cannot express.
 
 > **T5. One choke point per cross-cutting concern.**
 > All sources funnel through one normalization and assembly path. Queryable normalized content
@@ -347,8 +348,11 @@ There is no cross-database transaction between ClickHouse and Postgres, so the d
 pretend there is one:
 
 1. Write a complete immutable candidate revision to ClickHouse and verify it is query-visible.
-2. Compare-and-swap the Postgres active-revision pointer from the expected old revision to the
-   candidate. A failed CAS means the candidate is historical, not active.
+2. Compare-and-swap the Postgres active-revision pointer from the expected base revision to the
+   candidate. A failed CAS rebases the candidate's accepted fact frontier onto the new active
+   revision and retries until the frontier is promoted or a conflict blocks it. An accepted
+   envelope is not marked assembled until an active revision covers its fact frontier, so a
+   concurrent winner cannot strand accepted facts in an inactive candidate.
 3. Call-detail reads fetch the pointer first and query the exact ClickHouse revision; they never
    ask ClickHouse to guess "latest."
 4. Analysis and search build revision-keyed outputs after promotion. Their execution state is
@@ -523,8 +527,9 @@ CallFinalized(reason)
 ```
 
 Core, not plugin code, stamps every event with `(org_id, call_key, fact_id, envelope_id,
-decoder_version, processing_run_id, event_occurred_at, envelope_sequence)`. `fact_id` is
-deterministic for a source fact.
+decoder_version, processing_run_id, event_occurred_at, envelope_sequence)`. A plugin may also
+emit optional `source_revision`; core validates its declared ordered type and scope before using
+it for precedence. `fact_id` is deterministic for a source fact.
 
 `source_revision` is present only when the provider supplies an ordered sequence, revision, or
 documented update timestamp. A content hash identifies content but does not establish which
@@ -574,8 +579,8 @@ Ordered pipeline, non-negotiable order:
    transaction. An object without a committed index is a sweepable orphan; a committed envelope
    can never exist without queued work. A tombstoned orphan is purged before acknowledgement.
 8. Generate the provider/event/format-specific acknowledgement from the classified
-   observational event. Some ElevenLabs webhook guides require `200`, while its OTLP-shaped
-   endpoint accepts any `2xx`; the plugin contract pins the applicable response.
+   observational event. Some ElevenLabs webhook guides specify or recommend `200`, while its
+   OTLP-shaped endpoint accepts any `2xx`; the plugin contract pins the applicable response.
 
 Decode happens in a worker. The worker rechecks call, caller, and range tombstones after full
 identity extraction and before normalized persistence. Deletion jobs also suppress matching
@@ -646,11 +651,15 @@ Waiting for trace completion is unsolvable in general. The industry answer, and 
    root-owned semantic fields such as call name, outcome, or end time.
 3. When the root arrives (`parent_span_id` empty, or explicit `obsalt.as_root=true` for
    frameworks that emit orphan roots), mark the candidate rooted.
-4. Finalize at `min(root_ended_at + grace, first_seen_at + max_call_duration)`. **Voice calls
+4. For rooted traces, finalize at
+   `min(root_ended_at + grace, first_seen_at + max_call_duration)`. For a trace still rootless at
+   `first_seen_at + max_call_duration`, finalize an `unrooted` revision containing only facts
+   valid without root authority; do not invent call name, outcome, or end time. **Voice calls
    have a natural upper bound that generic tracing lacks** — use the configured platform bound.
 5. Validate and promote the complete revision through §4.2. Late spans build a candidate newer
    revision and increment `obsalt_late_spans_after_finalize_total`; conflicting replacements
-   require a comparable source revision or explicit resolution.
+   require a comparable source revision or explicit resolution. A late root upgrades an
+   `unrooted` call through a new rooted revision.
 
 ### 6.4 Provider REST backfill (Q6 — including it)
 
