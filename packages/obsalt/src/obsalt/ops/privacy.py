@@ -69,6 +69,8 @@ def apply_deletion(
         for rev in _all_revisions(state, org_id)
         if rev.call_id in to_delete and rev.source_call_id
     }
+    if resolved_source:
+        source_ids.add(resolved_source)
     for source_id in source_ids:
         state.inbox.tombstone(org_id, TombstoneHints(source_call_id=source_id, caller_token=token))
     for cid in to_delete:
@@ -81,6 +83,12 @@ def apply_deletion(
             rollups.delete_call(org_id, cid)
         if objects is not None:
             _purge_evidence(objects, org_id, cid)
+        _purge_queues(state, org_id, cid, source_ids)
+
+    # In-flight inbox/outbox/forward rows can exist before a revision is promoted.
+    # Purge is org-scoped; do not add an unowned id to deleted_calls (T10).
+    pending_ids = {item for item in (call_id, source_call_id) if item} - to_delete
+    for cid in pending_ids:
         _purge_queues(state, org_id, cid, source_ids)
 
     bump_generation(state)
