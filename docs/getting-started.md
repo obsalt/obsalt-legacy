@@ -24,22 +24,29 @@ There is no SQLite mode. Compose is the supported path.
 From a clone:
 
 ```bash
-python -m pip install -r requirements-dev.txt
-docker compose up -d
-obsalt init
+python -m pip install -r requirements-dev.txt   # or: make install
+docker compose up -d                            # or: make up
+obsalt init --write-env
 obsalt doctor
-obsalt serve
+obsalt serve                                    # or: make serve
 ```
 
 In a second terminal:
 
 ```bash
-obsalt worker
+obsalt worker                                   # or: make worker
 ```
 
 `serve` is the API and the console. `worker` decodes. Webhook
 acknowledgement never waits on decode. In development, `serve` also drains
 the inbox after ack so a single process can demo; production is both.
+
+`obsalt doctor` probes Postgres, ClickHouse, object storage, and Redis.
+Exit 2 means a required store is down — start compose and wait until
+`docker compose ps` is healthy. Exit 1 means no plugins loaded. Redis is
+optional. `--json` is for scripts; `--skip-network` prints plugins only.
+
+`obsalt plugins` lists what `serve` will actually accept.
 
 From packages, once they are on an index:
 
@@ -49,9 +56,11 @@ docker compose up -d
 obsalt serve
 ```
 
-`obsalt init` writes `.env.example`. Copy it to `.env`. Replace every
-`change-me` and `dev-key` before the box is reachable from a network you
-do not trust.
+`obsalt init` writes `.env.example`. `--write-env` also writes `.env`
+when it is missing (it will not overwrite an existing file). Replace
+every `change-me` and `dev-key` before the box is reachable from a
+network you do not trust. The committed example lists every `OBSALT_*`
+key; see [Configuration](reference/configuration.md).
 
 `obsalt demo` is the same compose stack with a loud banner: **not for
 production, data is not durable.**
@@ -71,6 +80,20 @@ Open http://localhost:8080/v1/ui, paste the same key, continue.
 You should see an empty call list, plus Latency / Hangups / Quality /
 Search / Settings in the header. Settings lists installed plugins. If the
 plugin you need is missing, you installed core without it.
+
+## Did it work?
+
+| Check | Command / URL |
+| --- | --- |
+| Process is up | `curl -sS http://localhost:8080/health` → `{"status":"ok",…}` |
+| Stack + plugins | `obsalt doctor` and `GET /ready` |
+| Console renders | http://localhost:8080/v1/ui after login |
+| Interactive API | http://localhost:8080/docs (OpenAPI) |
+
+An empty call list is success. obsalt has nothing to show until a
+**live** agent sends a call. If serve failed, the list is empty *and*
+`/health` fails, or doctor reports `FAIL`, see
+[Troubleshooting](troubleshooting.md).
 
 ## What to do next
 

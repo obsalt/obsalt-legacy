@@ -24,6 +24,14 @@ def test_create_test_app_is_explicit() -> None:
     assert client.get("/health").json()["status"] == "ok"
 
 
+def test_openapi_describes_the_product() -> None:
+    spec = create_test_app().openapi()
+    description = (spec["info"].get("description") or "").lower()
+    assert "x-api-key" in description
+    assert "/v1/ui" in description
+    assert spec["info"]["title"] == "obsalt"
+
+
 def test_unknown_api_key_is_401_not_first_org(client: TestClient) -> None:
     res = client.get(
         "/v1/calls?start=2026-01-01T00:00:00Z&end=2026-12-31T00:00:00Z",

@@ -8,10 +8,13 @@ Install a source plugin such as `obsalt-vapi` or `obsalt-pipecat`.
 pip install "obsalt[vapi,retell]"
 docker compose up -d
 obsalt serve
+obsalt worker    # production: decode does not run on the webhook path
 ```
 
 `obsalt demo` launches the same stack with a not-for-production banner.
+`obsalt doctor` probes the durable stack and lists plugins.
 
 This is a **service** (plus a small `VoiceCall` tracer for custom agents),
 not an SDK that replaces your voice platform. Start at the
-[documentation index](../../docs/README.md).
+[documentation index](../../docs/README.md) or the
+[product guide](../../docs/product.md).

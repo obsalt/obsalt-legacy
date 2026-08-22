@@ -50,6 +50,7 @@ dev = [
   "ruff>=0.6.0",
   "mypy>=1.11.0",
   "hypothesis>=6.112.0",
+  "pre-commit>=4.0.0",
   "types-jsonschema>=4.23.0",
   "types-redis>=4.6.0",
 ]

@@ -151,4 +151,5 @@ Received OTLP is forwarded from the durable raw spine, identity preserved
 the ingest ack. Provider aggregate latency is exported as **metrics**, not
 as span widths.
 
-Next: [The console](console.md).
+Next: [The console](console.md). If traces never appear:
+[Troubleshooting](troubleshooting.md).

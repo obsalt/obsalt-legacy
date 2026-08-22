@@ -1,7 +1,36 @@
 # Contributing
 
-Setup, the PR bar, and how to add a source: [docs/developing.md](docs/developing.md).
+## I want to use obsalt
 
-If you are trying to **use** obsalt with a live voice agent, start at the
-[README](README.md) and [docs/getting-started.md](docs/getting-started.md)
-instead.
+Start at the [README](README.md) and [Getting started](docs/getting-started.md).
+This file is for changing the code.
+
+## I want to change the code
+
+```bash
+python -m pip install -r requirements-dev.txt
+make test-unit          # no Docker
+make lint
+```
+
+Optional, once: `pre-commit install` (hooks live in
+`.pre-commit-config.yaml`). CI already runs Ruff.
+
+Read, in this order:
+
+1. [Developing](docs/developing.md) — layout, commands, how to add a source
+2. [Conventions](docs/conventions.md) — the rules a formatter cannot see
+3. [AGENTS.md](AGENTS.md) — one-screen version for you and for coding agents
+
+## Pull request bar
+
+- One concern per PR.
+- Tests for the behavior you changed. Plugin changes need fixture +
+  golden + schema validation.
+- No invented provider fields.
+- Docs if you change a product surface, a public contract, or how
+  someone connects an agent.
+- `make lint` and `make test-unit` green. `make ci` before you call it
+  done.
+
+Use [`.github/pull_request_template.md`](.github/pull_request_template.md).

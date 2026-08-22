@@ -7,6 +7,9 @@ plugin contract.
 If you are connecting a voice agent, you want [Getting started](getting-started.md),
 not this page.
 
+Coding rules a formatter cannot see: [Conventions](conventions.md).
+One-screen version: [AGENTS.md](../AGENTS.md).
+
 ## Local setup
 
 Python 3.11+. Docker for the durable stack.
@@ -23,13 +26,17 @@ Actions.
 
 | Command | What it does |
 | --- | --- |
+| `make help` | List targets |
 | `make install` | Editable install of core, testkit, and first-party plugins |
+| `make up` | `docker compose up -d` |
 | `make lint` / `make format` | Ruff |
 | `make typecheck` | Strict mypy on core, testkit, example, vapi, retell. CI warns until the backlog is cleared. |
 | `make test` / `make test-unit` | pytest |
+| `make doctor` / `make plugins` | Install / stack checks |
 | `obsalt parse FILE --provider vapi` | Decode without ingesting |
 | `obsalt record-golden FILE --provider vapi` | Write `fixtures/expected/` (review the diff) |
 | `obsalt schema-drift --all` | Offline vendored-pin check |
+| `pre-commit install` | Optional local Ruff hooks |
 
 ## Layout
 
@@ -55,9 +62,12 @@ tests/
 
 ## Style, briefly
 
+The long form is [Conventions](conventions.md). Short form:
+
 Ruff is the formatter and linter. Line length 100. Target Python 3.11.
 `from __future__ import annotations` in every module. Absolute imports.
 Pydantic 2 models for domain objects. `StrEnum` for closed vocabularies.
+Editor defaults live in `.editorconfig` and `.vscode/`.
 
 Do not rename these for taste — they are the product vocabulary:
 

@@ -32,6 +32,12 @@ from obsalt.otel.conventions import (
 
 
 class VoiceCall:
+    """Low-cardinality tracer for custom agents. Hosted platforms use webhooks instead.
+
+    ``org_id`` corroborates the ingest key. It cannot choose another organization.
+    Transcript text belongs on ``obsalt.pii.*`` attributes, never in span names.
+    """
+
     def __init__(self, span: Span, call_id: str, provider_call_id: str) -> None:
         self._span = span
         self.call_id = call_id
@@ -48,6 +54,7 @@ class VoiceCall:
         provider_call_id: str | None = None,
         conversation_id: str | None = None,
     ) -> Iterator[VoiceCall]:
+        """Open the call-lifecycle span. ``conversation_id`` becomes ``gen_ai.conversation.id``."""
         tracer = trace.get_tracer("obsalt")
         attrs: dict[str, Any] = {
             CALL_ID: call_id,

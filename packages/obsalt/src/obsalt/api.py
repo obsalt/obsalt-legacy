@@ -99,7 +99,21 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if grpc_server is not None:
             await grpc_server.stop(grace=2)
 
-    app = FastAPI(title="obsalt", version=__version__, lifespan=lifespan)
+    app = FastAPI(
+        title="obsalt",
+        version=__version__,
+        summary="Self-hosted call analytics and quality for AI voice agents",
+        description=(
+            "HTTP API for the obsalt service. The console at `/v1/ui` is HTML over "
+            "these routes. Scripts authenticate with `X-API-Key`. Collection list "
+            "endpoints require a bounded `start` and `end`. Cross-org identifiers "
+            "return 404.\n\n"
+            "Interactive OpenAPI lives at `/docs`. Human docs: `docs/api.md` and "
+            "`docs/product.md` in the repository."
+        ),
+        lifespan=lifespan,
+        license_info={"name": "Apache-2.0", "url": "https://www.apache.org/licenses/LICENSE-2.0"},
+    )
     app.state.obsalt = state
 
     @app.get("/health")

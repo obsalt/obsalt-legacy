@@ -2,6 +2,9 @@
 
 This is the product. The HTTP API is the same data without the HTML.
 
+If you are deciding whether obsalt is the right tool, read
+[Product](product.md) first — then come back here for the fidelity table.
+
 Open `/v1/ui` after a live call has been decoded. If the list is empty,
 ingest has not promoted a revision yet — check `obsalt worker` and
 `GET /ready`.
