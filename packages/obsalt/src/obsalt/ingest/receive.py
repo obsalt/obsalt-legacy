@@ -49,6 +49,8 @@ class Inbox(Protocol):
 
     def claim_outbox(self, limit: int = 32) -> list[RawEnvelope]: ...
 
+    def outbox_depth(self) -> int: ...
+
     def mark_assembled(self, envelope_id: str) -> None: ...
 
     def mark_failed(self, envelope_id: str, error: str) -> None: ...
@@ -82,6 +84,27 @@ def object_key_for(org_id: str, provider: str, delivery_key: str, content_sha: s
     return f"org/{org_id}/raw/{provider}/{delivery_key}/{content_sha}"
 
 
+def normalize_content_encoding(value: str | None) -> str | None:
+    if not value:
+        return None
+    encoding = value.split(",")[0].strip().lower()
+    if encoding in {"", "identity"}:
+        return None
+    return encoding
+
+
+def decoded_envelope_body(envelope: RawEnvelope) -> bytes:
+    """Expand persisted wire bytes for classify/decode. Archive stays verbatim."""
+
+    raw = envelope.body or b""
+    encoding = normalize_content_encoding((envelope.headers or {}).get("content-encoding"))
+    if encoding is None:
+        return raw
+    from obsalt.otel.receiver import decompress_body
+
+    return decompress_body(raw, encoding)
+
+
 def receive_webhook(
     *,
     provider: str,
@@ -95,12 +118,16 @@ def receive_webhook(
     limits: ReceiveLimits | None = None,
     compressed_size: int | None = None,
     leases: Any | None = None,
+    content_encoding: str | None = None,
 ) -> ReceiveResult:
+    """Authenticate wire bytes first (§6.1). Decompress only after auth for classify/decode."""
+
     limits = limits or ReceiveLimits()
-    if compressed_size is not None and compressed_size > limits.compressed_bytes:
+    wire = raw
+    encoding = normalize_content_encoding(content_encoding)
+    compressed = compressed_size if compressed_size is not None else len(wire)
+    if compressed > limits.compressed_bytes:
         return _reject(413, "compressed body exceeds limit")
-    if len(raw) > limits.expanded_bytes:
-        return _reject(413, "expanded body exceeds limit")
 
     connection = resolver.resolve(provider, ingest_key)
     if connection is None:
@@ -113,17 +140,38 @@ def receive_webhook(
     if dup is not None:
         return ReceiveResult(response=_verify_response(dup), envelope=None, rejected=dup.outcome.value)
 
-    auth = plugin.authenticate(raw, headers.as_list(), connection)
+    auth = plugin.authenticate(wire, headers.as_list(), connection)
+    decoded = wire
+    if encoding in {"gzip", "deflate"}:
+        from obsalt.otel.receiver import decompress_body
+
+        if not auth.ok:
+            try:
+                expanded = decompress_body(wire, encoding)
+            except Exception:
+                expanded = None
+            if expanded is not None:
+                fallback = plugin.authenticate(expanded, headers.as_list(), connection)
+                if fallback.ok:
+                    auth = fallback
+                    decoded = expanded
+        if auth.ok and decoded is wire:
+            try:
+                decoded = decompress_body(wire, encoding)
+            except Exception:
+                return _reject(400, "malformed compressed body")
     if not auth.ok:
         return ReceiveResult(response=_verify_response(auth), envelope=None, rejected=auth.outcome.value)
+    if len(decoded) > limits.expanded_bytes:
+        return _reject(413, "expanded body exceeds limit")
 
-    kind_raw = plugin.classify(raw)
+    kind_raw = plugin.classify(decoded)
     kind = _as_kind(kind_raw)
     if kind is ObservationalEventKind.REJECTED_SYNCHRONOUS:
         return _reject(400, "synchronous provider callbacks are not accepted on this endpoint")
 
-    delivery = plugin.delivery_key(raw, headers.as_list()) or sha256_bytes(raw)
-    hints = plugin.tombstone_hints(raw)
+    delivery = plugin.delivery_key(decoded, headers.as_list()) or sha256_bytes(decoded)
+    hints = plugin.tombstone_hints(decoded)
     if inbox.is_tombstoned(connection.org_id, hints):
         # Tombstoned orphan is purged before acknowledgement.
         return ReceiveResult(
@@ -132,9 +180,12 @@ def receive_webhook(
             rejected="tombstoned",
         )
 
-    content_sha = sha256_bytes(raw)
+    content_sha = sha256_bytes(wire)
     key = object_key_for(connection.org_id, provider, delivery, content_sha)
-    objects.put(key, raw, content_type="application/json")
+    objects.put(key, wire, content_type="application/json")
+    stored_headers = headers.allowlisted()
+    if encoding:
+        stored_headers["content-encoding"] = encoding
 
     envelope = RawEnvelope(
         envelope_id=new_id(),
@@ -147,9 +198,9 @@ def receive_webhook(
         state=EnvelopeState.QUEUED,
         event_kind=kind,
         source_call_id=hints.source_call_id,
-        headers=headers.allowlisted(),
+        headers=stored_headers,
         received_at=utcnow(),
-        body=raw,
+        body=wire,
     )
     stored, created = inbox.accept(envelope, tombstone_hints=hints)
     if stored.state is EnvelopeState.TOMBSTONED:

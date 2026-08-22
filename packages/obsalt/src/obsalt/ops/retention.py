@@ -22,6 +22,92 @@ def replay_horizon(*, raw_retention_days: int, now: datetime | None = None) -> d
     }
 
 
+def sweep(
+    state: Any,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Apply finite retention: raw, transcripts, then aggregates (§12.3)."""
+
+    raw = sweep_raw(state, now=now)
+    transcripts = sweep_transcripts(state, now=now)
+    aggregates = sweep_aggregates(state, now=now)
+    return {**raw, "transcripts": transcripts, "aggregates": aggregates}
+
+
+def sweep_transcripts(
+    state: Any,
+    *,
+    now: datetime | None = None,
+    transcript_retention_days: int | None = None,
+) -> dict[str, Any]:
+    now = now or utcnow()
+    days = (
+        transcript_retention_days
+        if transcript_retention_days is not None
+        else int(getattr(state.settings, "transcript_retention_days", 90))
+    )
+    cutoff = now - timedelta(days=days)
+    purged = 0
+    sink = getattr(state, "sink", None)
+    client = getattr(sink, "_client", None)
+    if client is not None:
+        try:
+            client.command(
+                "ALTER TABLE turns DELETE WHERE started_at < {cutoff:DateTime64}",
+                parameters={"cutoff": cutoff.replace(tzinfo=None) if cutoff.tzinfo else cutoff},
+            )
+            purged += 1
+        except Exception:
+            pass
+    search = getattr(state, "search", None)
+    docs = getattr(search, "_docs", None)
+    if isinstance(docs, dict):
+        for key, doc in list(docs.items()):
+            started = getattr(doc, "started_at", None)
+            if started is not None and started < cutoff:
+                docs.pop(key, None)
+                purged += 1
+    return {"transcript_retention_days": days, "purged": purged}
+
+
+def sweep_aggregates(
+    state: Any,
+    *,
+    now: datetime | None = None,
+    aggregate_retention_days: int | None = None,
+) -> dict[str, Any]:
+    now = now or utcnow()
+    days = (
+        aggregate_retention_days
+        if aggregate_retention_days is not None
+        else int(getattr(state.settings, "aggregate_retention_days", 400))
+    )
+    cutoff = now - timedelta(days=days)
+    purged = 0
+    rollups = getattr(state, "rollups", None)
+    if rollups is not None:
+        samples = getattr(rollups, "samples", None)
+        if isinstance(samples, list):
+            before = len(samples)
+            rollups.samples = [row for row in samples if row.get("started_at", now) >= cutoff]
+            purged += before - len(rollups.samples)
+        client = getattr(rollups, "_client", None)
+        if client is not None:
+            try:
+                client.command(
+                    """
+                    ALTER TABLE rollup_contributions
+                    DELETE WHERE bucket < {cutoff:DateTime64}
+                    """,
+                    parameters={"cutoff": cutoff.replace(tzinfo=None) if cutoff.tzinfo else cutoff},
+                )
+                purged += 1
+            except Exception:
+                pass
+    return {"aggregate_retention_days": days, "purged": purged}
+
+
 def sweep_raw(
     state: Any,
     *,

@@ -80,6 +80,16 @@ class MemoryInbox:
         self.outbox.append(envelope.envelope_id)
         return envelope, True
 
+    def outbox_depth(self) -> int:
+        return len(
+            [
+                envelope_id
+                for envelope_id in self.outbox
+                if (env := self.by_id.get(envelope_id)) is not None
+                and env.state not in {EnvelopeState.ASSEMBLED, EnvelopeState.TOMBSTONED}
+            ]
+        )
+
     def claim_outbox(self, limit: int = 32) -> list[RawEnvelope]:
         claimed: list[RawEnvelope] = []
         for envelope_id in list(self.outbox):

@@ -7,7 +7,7 @@ import secrets as secretsmod
 from dataclasses import dataclass, field
 from typing import Any
 
-from obsalt.analysis.cluster import MemoryHangupClusterStore
+from obsalt.analysis.cluster import ClickHouseHangupClusterStore, MemoryHangupClusterStore
 from obsalt.analysis.contributions import ClickHouseRollupStore, MemoryRollupStore
 from obsalt.analysis.judge import judge_from_settings
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
@@ -58,6 +58,12 @@ class AppState:
     judge: Any = None
     rubric_store: Any = None
     hangup_clusters: Any = field(default_factory=MemoryHangupClusterStore)
+    generation_store: Any = None
+    webhook_store: Any = None
+    review_store: Any = None
+    deletion_store: Any = None
+    key_expiry: dict[str, Any] = field(default_factory=dict)
+    deletion_completions: list[dict[str, Any]] = field(default_factory=list)
 
 
 def in_memory_state(
@@ -108,6 +114,8 @@ def in_memory_state(
         span_identities=SpanIdentityIndex(),
         judge=judge_from_settings(settings),
         hangup_clusters=MemoryHangupClusterStore(),
+        generation_store=MemoryGenerationStore(),
+        deletion_store=MemoryDeletionStore(),
     )
 
 
@@ -120,12 +128,16 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
     from obsalt.store.leases import RedisLeaseAccelerator
     from obsalt.store.objects import S3ObjectStore
     from obsalt.store.postgres import (
+        PostgresDeletionStore,
+        PostgresGenerationStore,
         PostgresInbox,
         PostgresKeyDirectory,
         PostgresPointerStore,
         PostgresResolver,
+        PostgresReviewStore,
         PostgresRubricStore,
         PostgresSearchDocuments,
+        PostgresWebhookStore,
         apply_schema,
         connect,
         ping,
@@ -168,6 +180,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
             key_directory.insert(org_id, settings.bootstrap_api_key, list(KeyScope))
         keys[settings.bootstrap_api_key] = (org_id, frozenset(KeyScope))
 
+    generation_store = PostgresGenerationStore(conn)
     return AppState(
         settings=settings,
         plugins=plugins,
@@ -177,7 +190,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         pointers=pointers,
         sink=sink,
         keys=keys,
-        rollup_generation="boot",
+        rollup_generation=generation_store.get("fleet") or "boot",
         leases=leases,
         key_directory=key_directory,
         search=PostgresSearchDocuments(conn, onnx_path=settings.embedder_onnx_path),
@@ -187,7 +200,11 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         span_identities=_production_span_index(conn),
         judge=judge_from_settings(settings),
         rubric_store=PostgresRubricStore(conn),
-        hangup_clusters=MemoryHangupClusterStore(),
+        hangup_clusters=ClickHouseHangupClusterStore(sink._client),
+        generation_store=generation_store,
+        webhook_store=PostgresWebhookStore(conn, master_key=settings.master_key.encode()),
+        review_store=PostgresReviewStore(conn),
+        deletion_store=PostgresDeletionStore(conn, inbox),
     )
 
 
@@ -231,5 +248,52 @@ def create_connection(
 
 
 def bump_generation(state: AppState) -> str:
-    state.rollup_generation = new_id()
+    nxt = new_id()
+    store = getattr(state, "generation_store", None)
+    if store is not None and hasattr(store, "publish"):
+        store.publish("fleet", nxt, expected=state.rollup_generation)
+    state.rollup_generation = nxt
     return state.rollup_generation
+
+
+class MemoryGenerationStore:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {"fleet": "gen-0"}
+
+    def get(self, name: str = "fleet") -> str | None:
+        return self._values.get(name)
+
+    def publish(self, name: str, generation: str, expected: str | None = None) -> bool:
+        current = self._values.get(name)
+        if expected is not None and current != expected and current is not None:
+            # First publish after boot may not match the in-process token.
+            if current != "gen-0" and current != "boot":
+                return False
+        self._values[name] = generation
+        return True
+
+
+class MemoryDeletionStore:
+    def __init__(self) -> None:
+        self.completed: list[dict[str, Any]] = []
+
+    def complete(
+        self,
+        org_id: str,
+        *,
+        call_ids: Any = None,
+        source_call_id: str | None = None,
+        caller_token: str | None = None,
+    ) -> int:
+        from obsalt.util import utcnow
+
+        item = {
+            "org_id": org_id,
+            "call_ids": list(call_ids or []),
+            "source_call_id": source_call_id,
+            "caller_token": caller_token,
+            "completed_at": utcnow().isoformat(),
+            "status": "completed",
+        }
+        self.completed.append(item)
+        return 1

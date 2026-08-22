@@ -46,12 +46,17 @@ def receive_otlp_batch(
     spans: Sequence[ReadableSpan] | None = None,
     span_index: SpanIdentityIndex | None = None,
     leases: Any | None = None,
+    extra_headers: dict[str, str] | None = None,
+    backpressure_limit: int | None = None,
 ) -> OtlpReceiveResult:
     limits = limits or ReceiveLimits()
     if compressed_size is not None and compressed_size > limits.compressed_bytes:
         return OtlpReceiveResult(envelope=None, rejected="compressed body exceeds limit", status_code=413)
     if len(raw) > limits.expanded_bytes:
         return OtlpReceiveResult(envelope=None, rejected="expanded body exceeds limit", status_code=413)
+    depth_fn = getattr(inbox, "outbox_depth", None)
+    if backpressure_limit is not None and callable(depth_fn) and depth_fn() >= backpressure_limit:
+        return OtlpReceiveResult(envelope=None, rejected="outbox backpressure", status_code=503)
 
     hints = TombstoneHints(source_call_id=source_call_id)
     if inbox.is_tombstoned(org_id, hints):
@@ -80,7 +85,7 @@ def receive_otlp_batch(
         state=EnvelopeState.QUEUED,
         event_kind=ObservationalEventKind.OTLP_BATCH,
         source_call_id=source_call_id,
-        headers={"content-type": content_type},
+        headers={"content-type": content_type, **(extra_headers or {})},
         received_at=utcnow(),
         body=raw,
     )

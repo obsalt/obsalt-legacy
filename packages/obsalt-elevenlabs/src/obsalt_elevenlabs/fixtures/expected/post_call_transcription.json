@@ -97,6 +97,18 @@
     "decoder_version": null,
     "envelope_sequence": null,
     "source_revision": null,
+    "type": "grounding_observed",
+    "kind": "user_text",
+    "content": "I want a refund.",
+    "provenance": "provider_reported",
+    "source_path": "data.transcript[role=user].message"
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
     "type": "outcome_observed",
     "provider_code": "End of conversation",
     "reason": null,

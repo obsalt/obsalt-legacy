@@ -38,6 +38,113 @@ class MemoryHangupClusterStore:
         return payload
 
 
+class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
+    """Persist scheduled cluster generations. Pageviews read the table, not re-embed."""
+
+    def __init__(self, client: Any) -> None:
+        super().__init__()
+        self._client = client
+
+    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
+        payload = super().refresh(org_id, calls, generation)
+        try:
+            import json
+
+            from obsalt.store.clickhouse import _ch_dt
+            from obsalt.util import utcnow
+
+            rows = [
+                [
+                    org_id,
+                    generation,
+                    row["id"],
+                    row["reason"],
+                    row["party"],
+                    int(row["size"]),
+                    row["top_call_id"],
+                    json.dumps(row),
+                    _ch_dt(utcnow()),
+                ]
+                for row in payload.get("clusters") or []
+            ]
+            if rows:
+                self._client.insert(
+                    "hangup_clusters",
+                    rows,
+                    column_names=[
+                        "org_id",
+                        "generation",
+                        "cluster_id",
+                        "reason",
+                        "party",
+                        "size",
+                        "top_call_id",
+                        "payload",
+                        "created_at",
+                    ],
+                )
+        except Exception:
+            pass
+        return payload
+
+    def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:
+        cached = super().get(org_id, generation)
+        if cached is not None:
+            return cached
+        try:
+            import json
+
+            result = self._client.query(
+                """
+                SELECT generation, cluster_id, reason, party, size, top_call_id, payload
+                FROM hangup_clusters
+                WHERE org_id = {org:String}
+                  AND ({gen:String} = '' OR generation = {gen:String})
+                ORDER BY created_at DESC
+                """,
+                parameters={"org": org_id, "gen": generation or ""},
+            )
+        except Exception:
+            return None
+        if not getattr(result, "result_rows", None):
+            return None
+        clusters = []
+        served_gen = generation or ""
+        for gen, cluster_id, reason, party, size, top_call_id, payload in result.result_rows:
+            served_gen = served_gen or str(gen)
+            if generation and str(gen) != generation:
+                continue
+            parsed = {}
+            if payload:
+                if isinstance(payload, bytes):
+                    payload = payload.decode("utf-8")
+                try:
+                    parsed = json.loads(payload) if isinstance(payload, str) else {}
+                except json.JSONDecodeError:
+                    parsed = {}
+            clusters.append(
+                parsed
+                or {
+                    "id": cluster_id,
+                    "reason": reason,
+                    "party": party,
+                    "size": size,
+                    "top_call_id": top_call_id,
+                    "call_ids": [],
+                }
+            )
+        if not clusters:
+            return None
+        payload = {
+            "as_of_generation": served_gen,
+            "clusters": clusters,
+            "call_count": sum(int(row.get("size") or 0) for row in clusters),
+            "note": "scheduled clustering of the active-revision set; not re-embedded per pageview",
+        }
+        self.by_org[org_id] = payload
+        return payload
+
+
 def cluster_hangups(
     calls: Sequence[CallRevision],
     as_of_generation: str = "",

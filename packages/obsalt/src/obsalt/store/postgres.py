@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -272,6 +272,17 @@ class PostgresInbox:
                 )
             return stored, False
 
+    def outbox_depth(self) -> int:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM outbox o
+            JOIN raw_envelopes e ON e.envelope_id = o.envelope_id
+            WHERE e.state NOT IN ('assembled', 'tombstoned')
+            """
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
     def claim_outbox(self, limit: int = 32) -> list[RawEnvelope]:
         with self._conn.transaction():
             rows = self._conn.execute(
@@ -281,15 +292,18 @@ class PostgresInbox:
                     lease_owner = COALESCE(lease_owner, 'worker'),
                     attempts = attempts + 1
                 WHERE id IN (
-                    SELECT o.id
-                    FROM outbox o
-                    JOIN raw_envelopes e ON e.envelope_id = o.envelope_id
-                    WHERE o.available_at <= now()
-                      AND (o.leased_until IS NULL OR o.leased_until < now())
-                      AND e.state NOT IN ('assembled', 'tombstoned')
-                      AND o.attempts < 16
-                    ORDER BY o.id
-                    FOR UPDATE OF o SKIP LOCKED
+                    SELECT id FROM (
+                        SELECT o.id,
+                               ROW_NUMBER() OVER (PARTITION BY o.org_id ORDER BY o.id) AS per_org
+                        FROM outbox o
+                        JOIN raw_envelopes e ON e.envelope_id = o.envelope_id
+                        WHERE o.available_at <= now()
+                          AND (o.leased_until IS NULL OR o.leased_until < now())
+                          AND e.state NOT IN ('assembled', 'tombstoned')
+                          AND o.attempts < 16
+                        FOR UPDATE OF o SKIP LOCKED
+                    ) ranked
+                    ORDER BY per_org, id
                     LIMIT %s
                 )
                 RETURNING envelope_id
@@ -516,6 +530,8 @@ class PostgresResolver:
 
 
 class PostgresPointerStore(RevisionPointerStore):
+    supports_sql_list = True
+
     def __init__(self, conn: PgConn) -> None:
         self._conn = conn
 
@@ -594,6 +610,95 @@ class PostgresPointerStore(RevisionPointerStore):
             (org_id, call_id),
         )
 
+    def update_summary(self, revision: CallRevision) -> None:
+        hangup = revision.hangup.reason.value if revision.hangup else None
+        self._conn.execute(
+            """
+            UPDATE active_calls
+            SET agent_id = %s,
+                started_at = %s,
+                source = %s,
+                hangup_reason = %s,
+                status = %s
+            WHERE org_id = %s AND call_id = %s AND revision = %s
+            """,
+            (
+                revision.agent_id,
+                revision.started_at or revision.created_at,
+                revision.source,
+                hangup,
+                revision.status.value,
+                revision.org_id,
+                revision.call_id,
+                revision.revision,
+            ),
+        )
+
+    def list_summaries(
+        self,
+        org_id: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+        source: str | None = None,
+        outcome: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        cursor_started = None
+        cursor_call = None
+        if cursor and ":" in cursor:
+            cursor_call, _rev = cursor.split(":", 1)
+            row = self._conn.execute(
+                "SELECT started_at FROM active_calls WHERE org_id = %s AND call_id = %s",
+                (org_id, cursor_call),
+            ).fetchone()
+            if row:
+                cursor_started = row["started_at"]
+        rows = self._conn.execute(
+            """
+            SELECT call_id, revision, agent_id, started_at, source, hangup_reason, status
+            FROM active_calls
+            WHERE org_id = %s
+              AND (%s IS NULL OR started_at >= %s)
+              AND (%s IS NULL OR started_at <= %s)
+              AND (%s IS NULL OR agent_id = %s)
+              AND (%s IS NULL OR source = %s)
+              AND (%s IS NULL OR hangup_reason = %s OR status = %s)
+              AND (
+                    %s IS NULL
+                 OR (started_at, call_id) < (%s, %s)
+              )
+            ORDER BY started_at DESC NULLS LAST, call_id DESC
+            LIMIT %s
+            """,
+            (
+                org_id,
+                start,
+                start,
+                end,
+                end,
+                agent_id,
+                agent_id,
+                source,
+                source,
+                outcome,
+                outcome,
+                outcome,
+                cursor_started,
+                cursor_started,
+                cursor_call,
+                limit + 1,
+            ),
+        ).fetchall()
+        items = [dict(row) for row in rows[:limit]]
+        next_cursor = None
+        if len(rows) > limit and items:
+            last = items[-1]
+            next_cursor = f"{last['call_id']}:{last['revision']}"
+        return items, next_cursor
+
 
 @dataclass(frozen=True)
 class ApiKeyRecord:
@@ -646,6 +751,32 @@ class PostgresKeyDirectory:
                 (key_id, org_id, hash_key(plaintext), [s.value for s in scopes], expires_at),
             )
         return key_id
+
+    def revoke(self, key_id: str) -> None:
+        with self._conn.transaction():
+            self._conn.execute(
+                "UPDATE api_keys SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL",
+                (key_id,),
+            )
+
+    def rotate(
+        self,
+        org_id: str,
+        old_plaintext: str,
+        new_plaintext: str,
+        *,
+        overlap_seconds: int = 86_400,
+    ) -> str:
+        current = self.lookup(old_plaintext)
+        if current is None or current.org_id != org_id:
+            raise ValueError("unknown or expired key")
+        new_id = self.insert(org_id, new_plaintext, current.scopes)
+        with self._conn.transaction():
+            self._conn.execute(
+                "UPDATE api_keys SET expires_at = %s WHERE id = %s",
+                (utcnow() + timedelta(seconds=overlap_seconds), current.key_id),
+            )
+        return new_id
 
 
 class PostgresRubricStore:
@@ -745,7 +876,13 @@ class PostgresSearchDocuments:
         self._conn = conn
         self._onnx_path = onnx_path
 
-    def upsert_revision(self, revision: CallRevision, *, index_version: str = "1") -> None:
+    def upsert_revision(
+        self,
+        revision: CallRevision,
+        *,
+        index_version: str = "1",
+        embedder_version: str = "local/256",
+    ) -> None:
         body = " ".join(turn.text for turn in revision.turns)
         embedding = _embed_sync(body, onnx_path=self._onnx_path)
         literal = "[" + ",".join(str(v) for v in embedding) + "]"
@@ -755,10 +892,10 @@ class PostgresSearchDocuments:
                 """
                 INSERT INTO search_documents (
                     org_id, call_id, revision, body, tsv, embedding, index_version,
-                    agent_id, started_at, source, hangup_reason
+                    agent_id, started_at, source, hangup_reason, embedder_version
                 )
                 VALUES (
-                    %s, %s, %s, %s, to_tsvector('simple', %s), %s::vector, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, to_tsvector('simple', %s), %s::vector, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (org_id, call_id) DO UPDATE SET
                     revision = EXCLUDED.revision,
@@ -769,7 +906,8 @@ class PostgresSearchDocuments:
                     agent_id = EXCLUDED.agent_id,
                     started_at = EXCLUDED.started_at,
                     source = EXCLUDED.source,
-                    hangup_reason = EXCLUDED.hangup_reason
+                    hangup_reason = EXCLUDED.hangup_reason,
+                    embedder_version = EXCLUDED.embedder_version
                 """,
                 (
                     revision.org_id,
@@ -783,6 +921,7 @@ class PostgresSearchDocuments:
                     revision.started_at,
                     revision.source,
                     hangup,
+                    embedder_version,
                 ),
             )
 
@@ -871,6 +1010,265 @@ class PostgresDeletionStore:
             (org_id, source_call_id),
         ).fetchone()
         return str(row["id"]) if row else ""
+
+    def complete(
+        self,
+        org_id: str,
+        *,
+        call_ids: Iterable[str] | None = None,
+        source_call_id: str | None = None,
+        caller_token: str | None = None,
+    ) -> int:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                """
+                UPDATE deletion_requests
+                SET status = 'completed', completed_at = now()
+                WHERE org_id = %s
+                  AND completed_at IS NULL
+                  AND (
+                        (%s IS NOT NULL AND source_call_id = %s)
+                     OR (%s IS NOT NULL AND caller_token = %s)
+                     OR (%s AND call_id = ANY(%s))
+                  )
+                """,
+                (
+                    org_id,
+                    source_call_id,
+                    source_call_id,
+                    caller_token,
+                    caller_token,
+                    bool(call_ids),
+                    list(call_ids or []),
+                ),
+            )
+        return int(getattr(row, "rowcount", 0) or 0)
+
+
+class PostgresGenerationStore:
+    """CAS pointer for fleet rollup serving generations (§4.2)."""
+
+    def __init__(self, conn: PgConn) -> None:
+        self._conn = conn
+
+    def get(self, name: str = "fleet") -> str | None:
+        row = self._conn.execute(
+            "SELECT generation FROM rollup_generations WHERE name = %s",
+            (name,),
+        ).fetchone()
+        return str(row["generation"]) if row else None
+
+    def publish(self, name: str, generation: str, expected: str | None = None) -> bool:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                "SELECT generation FROM rollup_generations WHERE name = %s FOR UPDATE",
+                (name,),
+            ).fetchone()
+            current = str(row["generation"]) if row else None
+            if expected is not None and current != expected:
+                return False
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO rollup_generations (name, generation) VALUES (%s, %s)",
+                    (name, generation),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE rollup_generations SET generation = %s, updated_at = now() WHERE name = %s",
+                    (generation, name),
+                )
+            return True
+
+
+class PostgresWebhookStore:
+    durable = True
+
+    def __init__(self, conn: PgConn, *, master_key: bytes) -> None:
+        self._conn = conn
+        self._master_key = master_key
+
+    def list_destinations(self, org_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM webhook_destinations
+            WHERE org_id = %s AND enabled IS TRUE
+            ORDER BY created_at
+            """,
+            (org_id,),
+        ).fetchall()
+        return [self._dest(row) for row in rows]
+
+    def create(self, dest: dict[str, Any]) -> dict[str, Any]:
+        ciphertext = encrypt_secret(str(dest["secret"]), self._master_key)
+        with self._conn.transaction():
+            self._conn.execute(
+                "INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (dest["org_id"], dest["org_id"]),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO webhook_destinations (id, org_id, url, secret_ciphertext, event_type, enabled)
+                VALUES (%s, %s, %s, %s, %s, TRUE)
+                """,
+                (
+                    dest["id"],
+                    dest["org_id"],
+                    dest["url"],
+                    ciphertext,
+                    dest.get("event_type") or "call.finalized",
+                ),
+            )
+        return dest
+
+    def rotate_secret(
+        self,
+        org_id: str,
+        dest_id: str,
+        new_secret: str,
+        *,
+        overlap_seconds: int = 86_400,
+    ) -> None:
+        current = self._conn.execute(
+            "SELECT secret_ciphertext FROM webhook_destinations WHERE org_id = %s AND id = %s",
+            (org_id, dest_id),
+        ).fetchone()
+        if current is None:
+            raise ValueError("unknown destination")
+        with self._conn.transaction():
+            self._conn.execute(
+                """
+                UPDATE webhook_destinations
+                SET previous_secret_ciphertext = secret_ciphertext,
+                    previous_secret_expires_at = %s,
+                    secret_ciphertext = %s
+                WHERE org_id = %s AND id = %s
+                """,
+                (
+                    utcnow() + timedelta(seconds=overlap_seconds),
+                    encrypt_secret(new_secret, self._master_key),
+                    org_id,
+                    dest_id,
+                ),
+            )
+
+    def enqueue(self, item: dict[str, Any]) -> None:
+        dest = item.get("dest") or {}
+        payload = item.get("payload") or {}
+        with self._conn.transaction():
+            self._conn.execute(
+                """
+                INSERT INTO webhook_outbox (
+                    id, org_id, destination_id, event_type, payload, call_id, revision
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    item.get("event_id") or new_id(),
+                    payload.get("org_id") or dest.get("org_id"),
+                    dest.get("id"),
+                    payload.get("type") or "call.finalized",
+                    Json(payload),
+                    payload.get("call_id"),
+                    payload.get("revision"),
+                ),
+            )
+
+    def claim(self, limit: int = 32) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT o.*, d.url, d.secret_ciphertext, d.previous_secret_ciphertext,
+                   d.previous_secret_expires_at, d.event_type AS dest_event
+            FROM webhook_outbox o
+            LEFT JOIN webhook_destinations d ON d.id = o.destination_id
+            WHERE o.delivered_at IS NULL AND o.attempts < 8
+            ORDER BY o.available_at
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            dest = {
+                "id": row.get("destination_id"),
+                "url": row.get("url"),
+                "secret": decrypt_secret(bytes(row["secret_ciphertext"]), self._master_key)
+                if row.get("secret_ciphertext")
+                else "",
+                "previous_secret": (
+                    decrypt_secret(bytes(row["previous_secret_ciphertext"]), self._master_key)
+                    if row.get("previous_secret_ciphertext")
+                    else None
+                ),
+                "previous_secret_expires_at": row.get("previous_secret_expires_at"),
+                "event_type": row.get("dest_event") or row.get("event_type"),
+            }
+            items.append(
+                {
+                    "event_id": row["id"],
+                    "dest": dest,
+                    "payload": row["payload"],
+                    "attempts": int(row["attempts"] or 0),
+                }
+            )
+        return items
+
+    def mark_delivered(self, event_id: str) -> None:
+        self._conn.execute(
+            "UPDATE webhook_outbox SET delivered_at = now() WHERE id = %s",
+            (event_id,),
+        )
+
+    def mark_failed(self, event_id: str, detail: str, attempts: int) -> None:
+        self._conn.execute(
+            """
+            UPDATE webhook_outbox
+            SET attempts = %s, last_error = %s, available_at = now() + interval '5 seconds' * LEAST(%s, 10)
+            WHERE id = %s
+            """,
+            (attempts, detail, attempts, event_id),
+        )
+
+    def _dest(self, row: dict[str, Any]) -> dict[str, Any]:
+        secret = decrypt_secret(bytes(row["secret_ciphertext"]), self._master_key)
+        previous = None
+        if row.get("previous_secret_ciphertext"):
+            previous = decrypt_secret(bytes(row["previous_secret_ciphertext"]), self._master_key)
+        return {
+            "id": row["id"],
+            "org_id": row["org_id"],
+            "url": row["url"],
+            "secret": secret,
+            "previous_secret": previous,
+            "previous_secret_expires_at": row.get("previous_secret_expires_at"),
+            "event_type": row.get("event_type") or "call.finalized",
+        }
+
+
+class PostgresReviewStore:
+    durable = True
+
+    def __init__(self, conn: PgConn) -> None:
+        self._conn = conn
+
+    def insert(self, item: dict[str, Any]) -> dict[str, Any]:
+        rid = item.get("id") or new_id()
+        with self._conn.transaction():
+            self._conn.execute(
+                """
+                INSERT INTO quality_reviews (id, org_id, call_id, agree, note)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (rid, item["org_id"], item["call_id"], item["agree"], item.get("note") or ""),
+            )
+        return {**item, "id": rid}
+
+    def list(self, org_id: str) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT * FROM quality_reviews WHERE org_id = %s ORDER BY created_at",
+            (org_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 # Names used by runtime.production_state and the plugin contract.

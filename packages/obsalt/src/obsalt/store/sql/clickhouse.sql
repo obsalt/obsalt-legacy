@@ -88,9 +88,12 @@ CREATE TABLE IF NOT EXISTS obsalt.hangup_clusters (
     party String,
     size UInt32,
     top_call_id String,
+    payload String,
     created_at DateTime64(3)
 ) ENGINE = MergeTree
 ORDER BY (org_id, generation, cluster_id);
+
+ALTER TABLE obsalt.hangup_clusters ADD COLUMN IF NOT EXISTS payload String;
 
 CREATE TABLE IF NOT EXISTS obsalt.stage_quantile_states (
     org_id String,

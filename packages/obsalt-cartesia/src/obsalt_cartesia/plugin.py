@@ -8,6 +8,7 @@ from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import constant_time_eq, header_values
 from obsalt.domain.enums import (
     Capability,
+    GroundingKind,
     MeasurementPlacement,
     Metric,
     ObservationalEventKind,
@@ -21,6 +22,7 @@ from obsalt.domain.enums import (
 from obsalt.domain.events import (
     CallFinalized,
     CallObserved,
+    GroundingObserved,
     NormalizedEvent,
     StageObserved,
     TurnObserved,
@@ -51,7 +53,9 @@ class CartesiaPlugin:
         source_format="cartesia.line.webhook",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.UNPLACED}),
-        provides=frozenset({Signal.TURN_INTERVAL, Signal.STT_DURATION, Signal.TTS_TTFB, Signal.TRANSCRIPT}),
+        provides=frozenset(
+            {Signal.TURN_INTERVAL, Signal.STT_DURATION, Signal.TTS_TTFB, Signal.TRANSCRIPT, Signal.GROUNDING_USER}
+        ),
         structurally_absent={Signal.STAGE_INTERVAL: "Cartesia Line reports unplaced STT/TTS TTFBs, not stage intervals"},
         schema_source="https://docs.cartesia.ai (Line webhooks, x-webhook-secret)",
         schema_revision="2026-08-22",
@@ -95,15 +99,18 @@ class CartesiaPlugin:
             ended_at=parse_datetime(payload.get("ended_at")),
             provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call_id")},
         )
+        user_texts: list[str] = []
         for index, turn in enumerate(payload.get("turns") or []):
             if not isinstance(turn, dict):
                 continue
             started = parse_datetime(turn.get("started_at"))
             ended = parse_datetime(turn.get("ended_at"))
+            speaker = Speaker.USER if turn.get("speaker") == "user" else Speaker.AGENT
+            text = as_str(turn.get("text")) or ""
             yield TurnObserved(
                 turn_index=index,
-                speaker=Speaker.USER if turn.get("speaker") == "user" else Speaker.AGENT,
-                text=as_str(turn.get("text")) or "",
+                speaker=speaker,
+                text=text,
                 started_at=started,
                 ended_at=ended,
                 provenance_by_field={
@@ -141,6 +148,15 @@ class CartesiaPlugin:
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path=f"turns[{index}].{tts_field}",
                     )
+            if speaker is Speaker.USER and text:
+                user_texts.append(text)
+        if user_texts:
+            yield GroundingObserved(
+                kind=GroundingKind.USER_TEXT,
+                content="\n".join(user_texts),
+                provenance=Provenance.PROVIDER_REPORTED,
+                source_path="turns[speaker=user].text",
+            )
         yield CallFinalized(reason="provider")
 
 

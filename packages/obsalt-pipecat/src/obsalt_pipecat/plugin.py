@@ -27,6 +27,7 @@ from obsalt.otel.conventions import (
     PROVIDER_CALL_ID,
     SPAN_LLM,
     SPAN_STT,
+    SPAN_STT_PROVIDER_ATTEMPT,
     SPAN_TOOL,
     SPAN_TTS,
     SPAN_TURN,
@@ -58,7 +59,7 @@ class PipecatPlugin:
         attrs = span.attributes or {}
         if "metrics.ttfb" in attrs or str(attrs.get("turn.index", "")).isdigit():
             return 70
-        if span.name in {SPAN_TURN, SPAN_STT, SPAN_LLM, SPAN_TTS, SPAN_TOOL}:
+        if span.name in {SPAN_TURN, SPAN_STT, SPAN_STT_PROVIDER_ATTEMPT, SPAN_LLM, SPAN_TTS, SPAN_TOOL}:
             return 30
         if genai_provider_name(attrs):
             return 25
@@ -113,9 +114,34 @@ class PipecatPlugin:
                     source_path=f"span:{span.name}",
                 )
                 continue
-            stage = {SPAN_STT: Stage.STT, SPAN_LLM: Stage.LLM, SPAN_TTS: Stage.TTS}.get(span.name)
+            stage = {
+                SPAN_STT: Stage.STT,
+                SPAN_STT_PROVIDER_ATTEMPT: Stage.STT,
+                SPAN_LLM: Stage.LLM,
+                SPAN_TTS: Stage.TTS,
+            }.get(span.name)
+            if stage is None and attrs.get("metrics.ttfb") is not None:
+                stage = Stage.TTS
             if stage is None:
                 continue
+            ttfb = attrs.get("metrics.ttfb")
+            if ttfb is not None:
+                try:
+                    ttfb_ms = float(ttfb)
+                except (TypeError, ValueError):
+                    ttfb_ms = None
+                if ttfb_ms is not None:
+                    yield StageObserved(
+                        stage=stage,
+                        metric=Metric.TTFB,
+                        value_ms=ttfb_ms,
+                        turn_index=turn_i,
+                        placement=MeasurementPlacement.INTERVAL,
+                        started_at=started,
+                        ended_at=ended,
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="span.attributes.metrics.ttfb",
+                    )
             yield StageObserved(
                 stage=stage,
                 metric=Metric.DURATION,

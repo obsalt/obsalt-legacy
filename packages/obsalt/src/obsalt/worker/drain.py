@@ -87,6 +87,8 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
     if envelope.body is None:
         envelope = envelope.model_copy(update={"body": objects.get(envelope.object_key)})
 
+    from obsalt.ingest.receive import decoded_envelope_body
+
     if envelope.provider == "otlp" or envelope.event_kind is ObservationalEventKind.OTLP_BATCH:
         return persist_otlp_envelope(state, envelope)
 
@@ -100,6 +102,9 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
         return None
 
     plugin = loaded_plugin.plugin
+    decoded = decoded_envelope_body(envelope)
+    if decoded is not envelope.body:
+        envelope = envelope.model_copy(update={"body": decoded})
     events = list(plugin.decode(envelope))
     source_call_id = envelope.source_call_id or _source_call_id(events) or envelope.envelope_id
     extracted = TombstoneHints(source_call_id=source_call_id)
@@ -129,7 +134,8 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     raw = envelope.body or b""
     content_type = (envelope.headers or {}).get("content-type", "application/json")
     ct = content_type.split(";")[0].strip()
-    req = parse_otlp_request(ct, raw, None)
+    encoding = (envelope.headers or {}).get("content-encoding")
+    req = parse_otlp_request(ct, raw, encoding)
     spans = request_to_spans(req)
     registry = MapperRegistry(state.plugins)
     events = registry.decode(spans)
@@ -350,6 +356,7 @@ def _after_promote(
 
         emit_call_finalized(state, revision)
         _emit_analysis_hooks(state, revision)
+        _emit_slo(state, revision)
     except Exception:
         log.warning("outbound webhook emit failed for %s", envelope.envelope_id)
     leases = getattr(state, "leases", None)
@@ -376,7 +383,16 @@ def _index_and_rollup(state: Any, revision: CallRevision) -> None:
     rollups = getattr(state, "rollups", None)
     if rollups is not None and hasattr(rollups, "contribute"):
         generation = rollups.contribute(revision)
+        store = getattr(state, "generation_store", None)
+        if store is not None and hasattr(store, "publish"):
+            store.publish("fleet", generation, expected=getattr(state, "rollup_generation", None))
         state.rollup_generation = generation
+    updater = getattr(state.pointers, "update_summary", None)
+    if callable(updater):
+        try:
+            updater(revision)
+        except Exception:
+            log.warning("active_calls summary update failed for %s", revision.call_id)
     try:
         _refresh_hangup_clusters(state, revision.org_id)
     except Exception:
@@ -499,6 +515,12 @@ def _run_tier2_blocking(revision: CallRevision, **kwargs: Any) -> Any:
     worker.start()
     worker.join()
     return box["result"]
+
+
+def _emit_slo(state: Any, revision: CallRevision) -> None:
+    from obsalt.webhooks.outbound import maybe_emit_slo
+
+    maybe_emit_slo(state, revision)
 
 
 def _emit_analysis_hooks(state: Any, revision: CallRevision) -> None:

@@ -68,13 +68,55 @@ def apply_deletion(
             _purge_evidence(objects, org_id, cid)
 
     bump_generation(state)
+    completed = _complete_deletion(
+        state,
+        org_id,
+        call_ids=to_delete,
+        source_call_id=source_call_id or call_id,
+        caller_token=token,
+    )
     return {
         "status": "accepted",
         "undoable": False,
         "deleted_calls": sorted(to_delete),
         "caller_token_retained": bool(token),
+        "completed_at": completed.get("completed_at"),
         "note": "External warehouse copies cannot be revoked.",
     }
+
+
+def _complete_deletion(
+    state: Any,
+    org_id: str,
+    *,
+    call_ids: set[str],
+    source_call_id: str | None,
+    caller_token: str | None,
+) -> dict[str, Any]:
+    from obsalt.util import utcnow
+
+    item = {
+        "org_id": org_id,
+        "call_ids": sorted(call_ids),
+        "source_call_id": source_call_id,
+        "caller_token": caller_token,
+        "completed_at": utcnow().isoformat(),
+        "status": "completed",
+    }
+    store = getattr(state, "deletion_store", None)
+    if store is not None and hasattr(store, "complete"):
+        store.complete(
+            org_id,
+            call_ids=call_ids,
+            source_call_id=source_call_id,
+            caller_token=caller_token,
+        )
+    completions = getattr(state, "deletion_completions", None)
+    if completions is None:
+        state.deletion_completions = []
+        completions = state.deletion_completions
+    completions.append(item)
+    return item
 
 
 def _all_revisions(state: Any, org_id: str) -> list[CallRevision]:

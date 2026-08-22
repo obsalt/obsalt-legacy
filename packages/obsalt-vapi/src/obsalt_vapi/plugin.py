@@ -10,6 +10,7 @@ from obsalt.crypto.primitives import (
     enforce_window,
     header_values,
     hmac_hex,
+    jwt_hs256_verify,
     parse_kv_header,
 )
 from obsalt.domain.enums import (
@@ -165,14 +166,16 @@ class VapiPlugin:
                 return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
             return VerifyResult(outcome=VerifyOutcome.OK)
         if mode == "oauth2":
-            token = cfg.secrets.get("oauth_token")
-            if not token:
+            secret = cfg.secrets.get("oauth_token") or cfg.secrets.get("jwt_secret")
+            if not secret:
                 return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="oauth_token required")
             values = header_values(headers, "authorization")
             if not values or not values[0].lower().startswith("bearer "):
                 return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing bearer token")
-            if not constant_time_eq(values[0][7:], token):
-                return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
+            token = values[0][7:]
+            claims = jwt_hs256_verify(token, secret)
+            if claims is None:
+                return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE, detail="oauth2 jwt invalid or expired")
             return VerifyResult(outcome=VerifyOutcome.OK)
         if mode == "hmac":
             secret = cfg.secrets.get("hmac_secret")

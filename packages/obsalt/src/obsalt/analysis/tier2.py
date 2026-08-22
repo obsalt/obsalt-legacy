@@ -13,11 +13,23 @@ from typing import Any
 from obsalt.analysis.entailment import entail_claims
 from obsalt.analysis.evals import HeuristicJudge, rubric_to_request
 from obsalt.analysis.hallucination import extract_candidate_claims
-from obsalt.domain.enums import AnalysisState
+from obsalt.domain.enums import AnalysisState, HangupReason, ToolStatus
 from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision, Rubric
 from obsalt.util import canonical_json, sha256_text
 
 DEFAULT_BASELINE_SAMPLE_RATE = 0.0
+DEFAULT_LATENCY_TRIGGER_MS = 2000.0
+WATCHED_HANGUPS = frozenset(
+    {
+        HangupReason.USER_HANGUP,
+        HangupReason.ERROR_STT,
+        HangupReason.ERROR_LLM,
+        HangupReason.ERROR_TTS,
+        HangupReason.ERROR_TOOL,
+        HangupReason.INACTIVITY,
+        HangupReason.SILENCE_TIMEOUT,
+    }
+)
 ANALYZER_ID = "tier2"
 ANALYZER_VERSION = "1"
 JUDGE_VERSION = "heuristic/1"
@@ -109,7 +121,12 @@ def decide_tier2(
         execution.state = AnalysisState.BUDGET_BLOCKED
         return execution
 
-    trigger = _trigger(call, manual=manual, hallucination_candidates=hallucination_candidates)
+    trigger = _trigger(
+        call,
+        manual=manual,
+        hallucination_candidates=hallucination_candidates,
+        latency_threshold_ms=DEFAULT_LATENCY_TRIGGER_MS,
+    )
     sampled = in_baseline_sample(call, baseline_sample_rate)
     if trigger is None and not sampled:
         execution.state = AnalysisState.SAMPLED_OUT
@@ -165,7 +182,12 @@ async def run_tier2(
         return AnalysisResult(execution=execution, payload={"selection": execution.state.value})
 
     execution.state = AnalysisState.RUNNING
-    trigger = _trigger(call, manual=manual, hallucination_candidates=candidates)
+    trigger = _trigger(
+        call,
+        manual=manual,
+        hallucination_candidates=candidates,
+        latency_threshold_ms=DEFAULT_LATENCY_TRIGGER_MS,
+    )
     selection = trigger or "baseline_sample"
     judge_impl = judge or HeuristicJudge()
     try:
@@ -194,11 +216,24 @@ def _trigger(
     *,
     manual: bool,
     hallucination_candidates: Sequence[Mapping[str, Any]] | None,
+    latency_threshold_ms: float = DEFAULT_LATENCY_TRIGGER_MS,
 ) -> str | None:
+    # Precedence from §9.1: manual, then tier-1 signals, then baseline sample.
     if manual:
         return "manual"
     if _needs_llm(_candidates(call, hallucination_candidates)):
         return "hallucination_candidate"
+    if any(tool.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT} for tool in call.tools):
+        return "tool_failure"
+    if call.hangup is not None and call.hangup.reason in WATCHED_HANGUPS:
+        return "watched_hangup"
+    values = [item.value_ms for item in call.stage_measurements]
+    if values and max(values) > latency_threshold_ms:
+        return "latency_threshold"
+    if call.hangup is not None and (
+        call.hangup.loss_score >= 0.5 or any("negative" in reason for reason in call.hangup.loss_reasons)
+    ):
+        return "negative_sentiment"
     return None
 
 

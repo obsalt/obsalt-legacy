@@ -14,6 +14,7 @@ from obsalt.crypto.primitives import (
 )
 from obsalt.domain.enums import (
     Capability,
+    GroundingKind,
     MeasurementPlacement,
     ObservationalEventKind,
     PipelineArchitecture,
@@ -25,6 +26,7 @@ from obsalt.domain.enums import (
 from obsalt.domain.events import (
     CallFinalized,
     CallObserved,
+    GroundingObserved,
     NormalizedEvent,
     OutcomeObserved,
     TurnObserved,
@@ -53,7 +55,7 @@ class ElevenLabsPlugin:
         source_format="elevenlabs.post_call_transcription",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
         possible_placements=frozenset({MeasurementPlacement.COARSE_ANCHOR}),
-        provides=frozenset({Signal.TRANSCRIPT, Signal.TURN_INTERVAL, Signal.HANGUP}),
+        provides=frozenset({Signal.TRANSCRIPT, Signal.TURN_INTERVAL, Signal.HANGUP, Signal.GROUNDING_USER}),
         structurally_absent={
             Signal.STAGE_INTERVAL: "post-call JSON uses whole-second message anchors without documented end timestamps",
         },
@@ -159,6 +161,7 @@ class ElevenLabsPlugin:
             },
         )
         transcript = data.get("transcript") or []
+        user_texts: list[str] = []
         if isinstance(transcript, list):
             for index, item in enumerate(transcript):
                 if not isinstance(item, dict):
@@ -170,10 +173,11 @@ class ElevenLabsPlugin:
                 if call_started is not None and offset_s is not None:
                     # whole-second message anchors; not a unix timestamp
                     started = call_started + timedelta(seconds=int(offset_s))
+                text = as_str(item.get("message")) or ""
                 yield TurnObserved(
                     turn_index=index,
                     speaker=speaker,
-                    text=as_str(item.get("message")) or "",
+                    text=text,
                     started_at=started,
                     provenance_by_field={
                         "started_at": ProvenanceStamp(
@@ -183,6 +187,15 @@ class ElevenLabsPlugin:
                         )
                     },
                 )
+                if speaker is Speaker.USER and text:
+                    user_texts.append(text)
+        if user_texts:
+            yield GroundingObserved(
+                kind=GroundingKind.USER_TEXT,
+                content="\n".join(user_texts),
+                provenance=Provenance.PROVIDER_REPORTED,
+                source_path="data.transcript[role=user].message",
+            )
         reason = as_str(data.get("termination_reason") or meta.get("termination_reason") or data.get("status"))
         if reason:
             yield OutcomeObserved(provider_code=reason)

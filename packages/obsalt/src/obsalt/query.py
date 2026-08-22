@@ -11,6 +11,31 @@ from obsalt.domain.models import AnalysisResult, CallRevision
 from obsalt.search.index import MemorySearchIndex
 
 
+def analysis_for(
+    state: Any,
+    org_id: str,
+    call_id: str | None = None,
+    revision: str | None = None,
+) -> list[Any]:
+    lister = getattr(state.sink, "list_analysis", None)
+    if callable(lister):
+        return list(lister(org_id, call_id, revision))
+    store = getattr(state.sink, "analysis", {})
+    if call_id and revision:
+        return list(store.get((org_id, call_id, revision), []))
+    rows: list[Any] = []
+    if isinstance(store, dict):
+        for (stored_org, stored_call, stored_rev), values in store.items():
+            if stored_org != org_id:
+                continue
+            if call_id and stored_call != call_id:
+                continue
+            if revision and stored_rev != revision:
+                continue
+            rows.extend(values)
+    return rows
+
+
 def active_calls(state: Any, org_id: str) -> list[CallRevision]:
     """Hydrate the Postgres/memory active-call pointer with an exact revision get."""
     items: list[CallRevision] = []
