@@ -20,7 +20,9 @@ class MyPlugin:
 ```
 
 `obsalt-testkit` ships inheritable conformance tests. Skipping a required test needs
-an explicit marker plus a written reason.
+an explicit marker plus a written reason. `obsalt record-golden PATH --provider vapi`
+writes `fixtures/expected/` from a raw payload so adding an event type is one command
+plus a reviewed diff.
 
 `StreamSource` is declared in v2 with an example implementation so Deepgram is
 additive and does not require a core change.

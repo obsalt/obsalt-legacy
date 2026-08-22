@@ -14,6 +14,7 @@ services:
     ports: ["8123:8123"]
     volumes:
       - chdata:/var/lib/clickhouse
+      - ./packages/obsalt/src/obsalt/store/sql/clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
   redis:
     image: redis:7
     ports: ["6379:6379"]

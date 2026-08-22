@@ -126,6 +126,7 @@ class ToolInvocation(BaseModel):
 class GroundingRef(BaseModel):
     kind: GroundingKind
     content_ref: str
+    content: str = ""  # hydrated for analysis; hot tables store the ref only
     provenance: Provenance
     source_path: str | None = None
 

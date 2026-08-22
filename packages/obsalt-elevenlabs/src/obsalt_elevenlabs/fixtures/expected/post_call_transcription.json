@@ -1,0 +1,117 @@
+[
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "call_observed",
+    "source_call_id": "el-conv-refund-1",
+    "agent_id": "support-el",
+    "agent_version": null,
+    "direction": "unknown",
+    "from_number": null,
+    "to_number": null,
+    "started_at": "2025-08-21T12:00:00Z",
+    "ended_at": null,
+    "architecture": "cascade",
+    "cost": 42.0,
+    "status": null,
+    "provenance_by_field": {
+      "source_call_id": {
+        "provenance": "provider_reported",
+        "source_path": "data.conversation_id",
+        "derivation": null
+      }
+    }
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "turn_observed",
+    "turn_index": 0,
+    "speaker": "agent",
+    "text": "Thanks for calling. How can I help?",
+    "started_at": "2025-08-21T12:00:00Z",
+    "ended_at": null,
+    "confidence": null,
+    "interrupted": false,
+    "provenance_by_field": {
+      "started_at": {
+        "provenance": "provider_reported",
+        "source_path": "data.transcript[0].time_in_call_secs",
+        "derivation": "coarse_anchor_whole_seconds"
+      }
+    }
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "turn_observed",
+    "turn_index": 1,
+    "speaker": "user",
+    "text": "I want a refund.",
+    "started_at": "2025-08-21T12:00:03Z",
+    "ended_at": null,
+    "confidence": null,
+    "interrupted": false,
+    "provenance_by_field": {
+      "started_at": {
+        "provenance": "provider_reported",
+        "source_path": "data.transcript[1].time_in_call_secs",
+        "derivation": "coarse_anchor_whole_seconds"
+      }
+    }
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "turn_observed",
+    "turn_index": 2,
+    "speaker": "agent",
+    "text": "I can help with that. Goodbye.",
+    "started_at": "2025-08-21T12:00:08Z",
+    "ended_at": null,
+    "confidence": null,
+    "interrupted": false,
+    "provenance_by_field": {
+      "started_at": {
+        "provenance": "provider_reported",
+        "source_path": "data.transcript[2].time_in_call_secs",
+        "derivation": "coarse_anchor_whole_seconds"
+      }
+    }
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "outcome_observed",
+    "provider_code": "End of conversation",
+    "reason": null,
+    "party": null,
+    "ended_at": null,
+    "cost": null,
+    "provenance_by_field": {}
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
+    "type": "call_finalized",
+    "reason": "provider"
+  }
+]

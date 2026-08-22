@@ -1,0 +1,5 @@
+# Volatile core-stamped fields excluded from golden NormalizedEvent comparison.
+envelope_id
+processing_run_id
+event_occurred_at
+fact_id

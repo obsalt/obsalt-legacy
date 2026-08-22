@@ -31,14 +31,18 @@ def derive_fidelity(events: list[NormalizedEvent]) -> TimelineFidelity:
         if isinstance(event, StageObserved):
             if event.placement is MeasurementPlacement.INTERVAL and event.started_at and event.ended_at:
                 has_interval = True
-            elif event.turn_index is not None:
-                has_turn = True
             elif event.placement is MeasurementPlacement.COARSE_ANCHOR:
                 has_coarse = True
+            elif event.turn_index is not None:
+                has_turn = True
             else:
                 has_call = True
-        elif isinstance(event, TurnObserved) and (event.started_at or event.ended_at):
-            has_turn = True
+        elif isinstance(event, TurnObserved):
+            if event.started_at and event.ended_at:
+                has_turn = True
+            elif event.started_at or event.ended_at:
+                # start XOR end at message resolution (ElevenLabs whole-second anchors)
+                has_coarse = True
         elif isinstance(event, AggregateObserved):
             has_call = True
     if has_interval:
@@ -131,10 +135,14 @@ def _stage_signal(event: StageObserved) -> Signal:
 def _stage_signal_from_names(stage: str, metric: str) -> Signal:
     mapping = {
         ("stt", "duration"): Signal.STT_DURATION,
+        ("stt", "ttfb"): Signal.STT_DURATION,
         ("llm", "ttft"): Signal.LLM_TTFT,
         ("llm", "duration"): Signal.LLM_DURATION,
         ("tts", "duration"): Signal.TTS_DURATION,
         ("tts", "ttfb"): Signal.TTS_TTFB,
+        ("user_input", "duration"): Signal.STAGE_INTERVAL,
+        ("generation", "duration"): Signal.STAGE_INTERVAL,
+        ("playout", "duration"): Signal.STAGE_INTERVAL,
         ("e2e", "duration"): Signal.E2E_DURATION,
         ("ttfa", "duration"): Signal.TTFA,
         ("ttfa", "first_audio"): Signal.TTFA,

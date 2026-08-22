@@ -313,6 +313,7 @@ def _grounding(event: GroundingObserved) -> GroundingRef:
     return GroundingRef(
         kind=event.kind,
         content_ref=sha256_text(event.content),
+        content=event.content,
         provenance=event.provenance,
         source_path=event.source_path,
     )

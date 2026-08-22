@@ -14,7 +14,8 @@ from obsalt.domain.enums import (
     Stage,
 )
 from obsalt.domain.events import CallObserved, NormalizedEvent, StageObserved
-from obsalt.domain.models import FidelityDeclaration
+from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 
@@ -44,14 +45,32 @@ class LiveKitPlugin:
 
     def decode(self, spans: Sequence[ReadableSpan]) -> Iterable[NormalizedEvent]:
         conv = None
+        token_key = None
         for span in spans:
             attrs = span.attributes or {}
-            conv = attrs.get("gen_ai.conversation.id") or attrs.get("lk.room.name") or conv
+            conv = attrs.get(CONVERSATION_ID) or attrs.get("lk.room.name") or conv
+            _count, key = genai_audio_input_tokens(attrs)
+            if key:
+                token_key = token_key or key
+        provenance: dict[str, ProvenanceStamp] = {}
+        if token_key:
+            provenance["input_audio_tokens"] = ProvenanceStamp(
+                provenance=Provenance.PROVIDER_REPORTED, source_path=token_key
+            )
         if conv:
-            yield CallObserved(source_call_id=str(conv), architecture=PipelineArchitecture.CASCADE)
+            yield CallObserved(
+                source_call_id=str(conv),
+                architecture=PipelineArchitecture.CASCADE,
+                provenance_by_field=provenance,
+            )
         for span in spans:
             if not span.name:
                 continue
+            attrs = span.attributes or {}
+            _count, key = genai_audio_input_tokens(attrs)
+            source_path = f"span:{span.name}"
+            if key:
+                source_path = f"span:{span.name}/{key}"
             yield StageObserved(
                 stage=Stage.E2E,
                 metric=Metric.DURATION,
@@ -60,5 +79,5 @@ class LiveKitPlugin:
                 started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
                 ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
                 provenance=Provenance.PROVIDER_REPORTED,
-                source_path=f"span:{span.name}",
+                source_path=source_path,
             )

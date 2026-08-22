@@ -61,7 +61,8 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
 
 def _grounding_corpus(call: CallRevision) -> list[str]:
     parts = [t.text for t in call.user_turns()]
-    # content refs are hashes; hydrated text lives on turns for the in-process path
+    parts.extend(g.content for g in call.grounding if g.content)
+    parts.extend(t.error or t.name for t in call.tools)
     return parts
 
 

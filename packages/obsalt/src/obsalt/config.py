@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     master_key: str = "change-me-master-key-not-for-production"
     session_secret: str = "change-me-session"
+    bootstrap_org_id: str = "local"
+    bootstrap_api_key: str = "dev-key"
 
     otlp_grpc_enabled: bool = False
     otlp_grpc_port: int = 4317
@@ -42,4 +44,8 @@ class Settings(BaseSettings):
     baseline_sample_rate: float = 0.0
 
     def insecure_defaults(self) -> bool:
-        return self.master_key.startswith("change-me") or self.session_secret.startswith("change-me")
+        return (
+            self.master_key.startswith("change-me")
+            or self.session_secret.startswith("change-me")
+            or self.bootstrap_api_key == "dev-key"
+        )

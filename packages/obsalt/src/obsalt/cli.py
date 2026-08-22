@@ -4,27 +4,26 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import uvicorn
 
 from obsalt._version import __version__
-from obsalt.api import AppState, create_app
-from obsalt.assemble.promote import MemoryPointerStore
+from obsalt.api import create_app
 from obsalt.config import Settings
-from obsalt.domain.enums import KeyScope
-from obsalt.plugin.host import discover_plugins
-from obsalt.plugin.types import ConnectionConfig
-from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
-from obsalt.worker.process import MemoryRevisionSink
+from obsalt.plugin.host import discover_plugins, plugin_by_name
+from obsalt.runtime import in_memory_state, production_state
 
 _INIT_ENV = """# Secrets. Do not commit.
 OBSALT_MASTER_KEY=change-me-master-key-not-for-production
 OBSALT_SESSION_SECRET=change-me-session
+OBSALT_BOOTSTRAP_API_KEY=dev-key
+OBSALT_BOOTSTRAP_ORG_ID=local
 OBSALT_POSTGRES_DSN=postgresql://obsalt:obsalt@localhost:5432/obsalt
 OBSALT_CLICKHOUSE_URL=http://localhost:8123
 OBSALT_REDIS_URL=redis://localhost:6379/0
-OBSALT_S3_ENDPOINT=http://localhost:9000
+OBSALT_S3_ENDPOINT=http://localhost:9010
 OBSALT_S3_ACCESS_KEY=obsalt
 OBSALT_S3_SECRET_KEY=obsalt-secret
 """
@@ -34,9 +33,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="obsalt", description="Self-hosted call analytics for AI voice agents")
     parser.add_argument("-V", "--version", action="store_true")
     sub = parser.add_subparsers(dest="command")
-    serve = sub.add_parser("serve", help="Run the HTTP API")
+    serve = sub.add_parser("serve", help="Run the HTTP API against the compose stack")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
+    serve.add_argument(
+        "--in-memory",
+        action="store_true",
+        help="Forbidden in production. Tests only: inject memory doubles.",
+    )
     serve.set_defaults(func=cmd_serve)
     init = sub.add_parser("init", help="Write .env.example")
     init.add_argument("--dir", default=".")
@@ -49,6 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
     parse.add_argument("path")
     parse.add_argument("--provider", required=True)
     parse.set_defaults(func=cmd_parse)
+    record = sub.add_parser(
+        "record-golden",
+        help="Write fixtures/expected from a raw payload (review the diff)",
+    )
+    record.add_argument("path")
+    record.add_argument("--provider", required=True)
+    record.add_argument("--out", default=None)
+    record.set_defaults(func=cmd_record_golden)
     version = sub.add_parser("version")
     version.set_defaults(func=lambda _a: (print(__version__) or 0))
     return parser
@@ -69,31 +81,53 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"plugins: {', '.join(p.name for p in plugins) or '(none installed)'}")
     print(f"postgres: {settings.postgres_dsn}")
     print(f"clickhouse: {settings.clickhouse_url}")
+    print(f"object store: {settings.s3_endpoint}/{settings.s3_bucket}")
     if settings.insecure_defaults():
         print("WARNING: default master/session keys are in use")
     print("require_auth=false has been removed. Every key is hashed and org-bound.")
+    if settings.bootstrap_api_key == "dev-key":
+        print("WARNING: OBSALT_BOOTSTRAP_API_KEY is the default dev-key")
     print(f"raw retention days: {settings.raw_retention_days}")
+    print("Supported path: docker compose up -d && obsalt serve")
     return 0
 
 
-def cmd_demo(_args: argparse.Namespace) -> int:
+def _compose_file() -> Path:
     here = Path(__file__).resolve()
-    compose = None
     for parent in here.parents:
         candidate = parent / "docker-compose.yml"
         if candidate.is_file():
-            compose = candidate
-            break
-    if compose is None:
-        compose = Path("docker-compose.yml")
+            return candidate
+    return Path("docker-compose.yml")
+
+
+def cmd_demo(_args: argparse.Namespace) -> int:
+    compose = _compose_file()
     if not compose.exists():
-        compose = Path.cwd() / "docker-compose.yml"
+        print("docker-compose.yml not found", file=sys.stderr)
+        return 2
     print("NOT FOR PRODUCTION. Data is not durable beyond this compose project.")
-    return subprocess.call(["docker", "compose", "-f", str(compose), "up"])
+    rc = subprocess.call(["docker", "compose", "-f", str(compose), "up", "-d"])
+    if rc != 0:
+        return rc
+    settings = Settings()
+    for _ in range(30):
+        try:
+            state = production_state(settings)
+            break
+        except Exception:
+            time.sleep(1)
+    else:
+        print("compose services did not become ready", file=sys.stderr)
+        return 2
+    host = settings.host
+    port = settings.port
+    app = create_app(settings, state)
+    uvicorn.run(app, host=host, port=port)
+    return 0
 
 
 def cmd_parse(args: argparse.Namespace) -> int:
-    from obsalt.plugin.host import plugin_by_name
     from obsalt.plugin.types import RawEnvelope
     from obsalt.util import new_id, utcnow
 
@@ -115,52 +149,39 @@ def cmd_parse(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record_golden(args: argparse.Namespace) -> int:
+    from obsalt_testkit import decode_raw_fixture, stable_event_dump
+
+    raw_path = Path(args.path)
+    plugin = plugin_by_name(args.provider).plugin
+    events = [stable_event_dump(event) for event in decode_raw_fixture(plugin, raw_path)]
+    dest = Path(args.out) if args.out else raw_path.parent.parent / "expected" / raw_path.name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(events, indent=2) + "\n")
+    print(f"wrote {dest}")
+    print("Review the golden diff before committing.")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = Settings()
     host = args.host or settings.host
     port = args.port or settings.port
-    app = create_app(settings, _dev_state(settings))
+    if args.in_memory:
+        print("WARNING: --in-memory is a test double, not a production backend.", file=sys.stderr)
+        state = in_memory_state(settings)
+    else:
+        try:
+            state = production_state(settings)
+        except Exception as exc:
+            print("Could not connect to Postgres / ClickHouse / object storage.", file=sys.stderr)
+            print("Supported path: docker compose up -d && obsalt serve", file=sys.stderr)
+            print("There is no SQLite or Postgres-only production mode.", file=sys.stderr)
+            print(exc, file=sys.stderr)
+            return 2
+    app = create_app(settings, state)
     uvicorn.run(app, host=host, port=port)
     return 0
-
-
-def _dev_state(settings: Settings) -> AppState:
-    """In-process wiring used when compose services are not injected.
-
-    Production docker-compose replaces these with Postgres, ClickHouse, MinIO, and Redis.
-    This is not a supported production backend.
-    """
-    plugins = discover_plugins()
-    resolver = MemoryResolver()
-    # Bootstrap a demo connection per installed webhook plugin so local ingest works.
-    for plugin in plugins:
-        if "webhook_source" not in {c.value for c in plugin.capabilities}:
-            continue
-        secrets = {name: "dev-secret" for name in plugin.manifest.secret_fields} or {"hmac_secret": "dev-secret"}
-        cfg = ConnectionConfig(
-            org_id="dev",
-            provider=plugin.name,
-            connection_id=f"{plugin.name}-dev",
-            ingest_key_hash="",
-            secrets=secrets,
-            settings={"auth_mode": "legacy_secret"} if plugin.name == "vapi" else {},
-        )
-        resolver.add(cfg, "dev")
-        if plugin.name == "vapi":
-            cfg.secrets["legacy_secret"] = "dev-secret"
-        if plugin.name == "retell":
-            cfg.secrets["api_key"] = "dev-secret"
-    state = AppState(
-        settings=settings,
-        plugins=plugins,
-        resolver=resolver,
-        objects=MemoryObjectStore(),
-        inbox=MemoryInbox(),
-        pointers=MemoryPointerStore(),
-        sink=MemoryRevisionSink(),
-        keys={"dev-key": ("dev", frozenset(KeyScope))},
-    )
-    return state
 
 
 def main(argv: list[str] | None = None) -> int:

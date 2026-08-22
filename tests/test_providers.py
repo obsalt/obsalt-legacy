@@ -13,19 +13,35 @@ from obsalt.domain.enums import (
     Provenance,
     Stage,
     Statistic,
+    TimelineFidelity,
     VerifyOutcome,
 )
-from obsalt.domain.events import AggregateObserved, GroundingObserved, StageObserved, ToolObserved
+from obsalt.domain.events import (
+    AggregateObserved,
+    GroundingObserved,
+    StageObserved,
+    ToolObserved,
+    TurnObserved,
+)
 from obsalt.ingest.headers import RawHeaders
 from obsalt.plugin.types import ConnectionConfig, RawEnvelope
 from obsalt.util import new_id, utcnow
 from obsalt.worker.process import MemoryRevisionSink, process_envelope
+from obsalt_cartesia.plugin import CartesiaPlugin
+from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_retell.plugin import RetellPlugin
-from obsalt_testkit import DecoderConformanceTests, SchemaFixtureTests, SecondsVsMillisecondsTests
+from obsalt_testkit import (
+    AuthenticationConformanceTests,
+    DecoderConformanceTests,
+    SchemaFixtureTests,
+    SecondsVsMillisecondsTests,
+)
 from obsalt_vapi.plugin import VapiPlugin
 
 VAPI_FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-vapi" / "src" / "obsalt_vapi" / "fixtures"
 RETELL_FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-retell" / "src" / "obsalt_retell" / "fixtures"
+ELEVEN_FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elevenlabs" / "fixtures"
+CARTESIA_FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-cartesia" / "src" / "obsalt_cartesia" / "fixtures"
 VAPI_ENUM = Path(__file__).resolve().parents[1] / "packages" / "obsalt-vapi" / "src" / "obsalt_vapi" / "data" / "ended_reasons.json"
 RETELL_ENUM = Path(__file__).resolve().parents[1] / "packages" / "obsalt-retell" / "src" / "obsalt_retell" / "data" / "disconnection_reasons.json"
 
@@ -36,6 +52,7 @@ class TestVapiDecoder(DecoderConformanceTests):
 
 
 class TestVapiSchema(SchemaFixtureTests):
+    plugin = VapiPlugin()
     fixtures_dir = VAPI_FIXTURES
 
 
@@ -45,6 +62,7 @@ class TestRetellDecoder(DecoderConformanceTests):
 
 
 class TestRetellSchema(SchemaFixtureTests):
+    plugin = RetellPlugin()
     fixtures_dir = RETELL_FIXTURES
 
 
@@ -169,6 +187,87 @@ def test_replay_promotes_new_revision() -> None:
     second = process_envelope(env, plugin, declaration=plugin.fidelity, pointers=pointers, sink=sink, decoder_version="vapi/3", source="vapi")
     assert first.revision != second.revision
     assert sink.get("acme", first.call_id, first.revision) is not None
+
+
+class TestElevenLabsDecoder(DecoderConformanceTests):
+    plugin = ElevenLabsPlugin()
+    fixtures_dir = ELEVEN_FIXTURES
+
+
+class TestElevenLabsSchema(SchemaFixtureTests):
+    plugin = ElevenLabsPlugin()
+    fixtures_dir = ELEVEN_FIXTURES
+
+
+class TestElevenLabsAuth(AuthenticationConformanceTests):
+    plugin = ElevenLabsPlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="elevenlabs",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={"webhook_secret": "eleven-secret"},
+    )
+    valid_raw = (ELEVEN_FIXTURES / "raw" / "post_call_transcription.json").read_bytes()
+
+    @property
+    def valid_headers(self) -> dict[str, str]:
+        ts = str(int(time.time()))
+        sig = hmac_hex("eleven-secret", f"{ts}.".encode() + self.valid_raw)
+        return {"elevenlabs-signature": f"t={ts},v0={sig}"}
+
+
+class TestCartesiaDecoder(DecoderConformanceTests):
+    plugin = CartesiaPlugin()
+    fixtures_dir = CARTESIA_FIXTURES
+
+
+class TestCartesiaSchema(SchemaFixtureTests):
+    plugin = CartesiaPlugin()
+    fixtures_dir = CARTESIA_FIXTURES
+
+
+class TestCartesiaAuth(AuthenticationConformanceTests):
+    plugin = CartesiaPlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="cartesia",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={"webhook_secret": "line-secret"},
+    )
+    valid_raw = (CARTESIA_FIXTURES / "raw" / "call_ended.json").read_bytes()
+    valid_headers = {"x-webhook-secret": "line-secret"}
+
+
+def test_elevenlabs_coarse_message_anchors() -> None:
+    from datetime import timedelta
+
+    from obsalt.domain.coverage import derive_fidelity
+
+    plugin = ElevenLabsPlugin()
+    events = list(plugin.decode(_env(ELEVEN_FIXTURES / "raw" / "post_call_transcription.json", "elevenlabs")))
+    turns = [e for e in events if isinstance(e, TurnObserved)]
+    assert len(turns) == 3
+    assert turns[0].started_at is not None and turns[0].ended_at is None
+    assert turns[1].started_at is not None
+    assert (turns[1].started_at - turns[0].started_at) == timedelta(seconds=3)
+    assert (turns[2].started_at - turns[0].started_at) == timedelta(seconds=8)
+    assert derive_fidelity(events) is TimelineFidelity.MESSAGE_LEVEL
+    assert not any(isinstance(e, StageObserved) and e.stage in {Stage.STT, Stage.LLM, Stage.TTS} for e in events)
+
+
+def test_cartesia_turn_intervals_and_unplaced_ttfbs() -> None:
+    plugin = CartesiaPlugin()
+    events = list(plugin.decode(_env(CARTESIA_FIXTURES / "raw" / "call_ended.json", "cartesia")))
+    turns = [e for e in events if isinstance(e, TurnObserved)]
+    assert all(t.started_at and t.ended_at for t in turns)
+    stages = [e for e in events if isinstance(e, StageObserved)]
+    assert all(e.placement is MeasurementPlacement.UNPLACED for e in stages)
+    assert all(e.started_at is None and e.ended_at is None for e in stages)
+    assert any(e.stage is Stage.STT and e.metric is Metric.TTFB and e.value_ms == 90 for e in stages)
+    assert any(e.stage is Stage.TTS and e.metric is Metric.TTFB and e.value_ms == 110 for e in stages)
+    assert not any(e.placement is MeasurementPlacement.INTERVAL for e in stages)
 
 
 def _env(path: Path, provider: str) -> RawEnvelope:

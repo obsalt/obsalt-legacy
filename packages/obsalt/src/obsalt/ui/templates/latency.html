@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}obsalt — latency{% endblock %}
+{% block content %}
+  {% set rollup = rollup|default({}) %}
+  <h1>Latency</h1>
+  <p>Serving generation <code>{{ rollup.as_of_generation|default(as_of_generation) }}</code>. One generation per response; never mixed.</p>
+  <p class="muted">{{ rollup.note|default("Sample p50/p95 come from StageMeasurement rows only. Provider-published AggregateMeasurement percentiles are listed separately and never enter sample percentiles.") }}</p>
+  <h2>Sample percentiles</h2>
+  <table>
+    <thead>
+      <tr><th>Stage</th><th>Metric</th><th>P50 (ms)</th><th>P95 (ms)</th><th>n</th></tr>
+    </thead>
+    <tbody>
+      {% for stage, stats in (rollup.sample_percentiles|default({})).items() %}
+      <tr>
+        <td>{{ stage }}</td>
+        <td>{{ stats.metric }}</td>
+        <td>{{ stats.p50 }}</td>
+        <td>{{ stats.p95 }}</td>
+        <td>{{ stats.n }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No sample stage measurements in this generation.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2>Provider-published aggregates</h2>
+  <p class="muted">Not mixed into sample p50/p95.</p>
+  <table>
+    <thead>
+      <tr><th>Call</th><th>Stage</th><th>Statistic</th><th>Value (ms)</th><th>Source path</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rollup.provider_aggregates|default([]) %}
+      <tr>
+        <td><a href="/v1/ui/calls/{{ row.call_id }}">{{ row.call_id }}</a></td>
+        <td>{{ row.stage }}</td>
+        <td>{{ row.statistic }}</td>
+        <td>{{ row.value_ms }}</td>
+        <td>{{ row.source_path }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No provider aggregates in this generation.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

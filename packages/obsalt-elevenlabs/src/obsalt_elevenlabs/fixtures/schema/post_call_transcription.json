@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendored/elevenlabs/post_call_transcription.schema.json",
+  "title": "ElevenLabsPostCallTranscription",
+  "description": "Vendored subset of ElevenLabs post_call_transcription webhook. time_in_call_secs is whole seconds from call start. Pinned 2026-08-22 from elevenlabs.io post-call webhooks.",
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "post_call_transcription" },
+    "event_timestamp": { "type": "number" },
+    "data": {
+      "type": "object",
+      "required": ["conversation_id"],
+      "properties": {
+        "agent_id": { "type": "string" },
+        "conversation_id": { "type": "string" },
+        "status": { "type": "string" },
+        "termination_reason": { "type": "string" },
+        "transcript": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string" },
+              "message": { "type": ["string", "null"] },
+              "time_in_call_secs": {
+                "type": "integer",
+                "description": "Whole seconds from call start. Coarse message anchor; no documented end timestamp."
+              },
+              "tool_calls": {},
+              "tool_results": {},
+              "conversation_turn_metrics": {}
+            },
+            "additionalProperties": true
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "start_time_unix_secs": { "type": "number" },
+            "call_duration_secs": { "type": "number" },
+            "cost": { "type": "number" },
+            "termination_reason": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "analysis": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}obsalt — settings{% endblock %}
+{% block content %}
+  <h1>Settings</h1>
+  <p class="muted">Provider connections, versioned rubrics, retention, plugins, and keys. Plugins are trusted, operator-installed code.</p>
+  <section class="panel">
+    <h2>Provider connections</h2>
+    <table>
+      <thead><tr><th>Provider</th><th>Connection</th><th>Org</th></tr></thead>
+      <tbody>
+        {% for item in connections|default([]) %}
+        <tr>
+          <td>{{ item.provider }}</td>
+          <td>{{ item.connection_id }}</td>
+          <td>{{ item.org_id }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">No connections.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <h2>Rubrics</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Version</th><th>Enabled</th></tr></thead>
+      <tbody>
+        {% for item in rubrics|default([]) %}
+        <tr>
+          <td>{{ item.name }}</td>
+          <td>{{ item.version }}</td>
+          <td>{{ item.enabled }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">No rubrics.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <h2>Retention</h2>
+    {% set retention = retention|default({}) %}
+    <dl>
+      <dt>Transcripts / recordings</dt>
+      <dd>{{ retention.transcripts_days|default(90) }} days</dd>
+      <dt>Raw envelopes</dt>
+      <dd>{{ retention.raw_days|default(raw_retention_days)|default(30) }} days</dd>
+      <dt>Aggregates</dt>
+      <dd>{{ retention.aggregates_days|default(400) }} days</dd>
+    </dl>
+    <p>Tier-2 baseline sample rate: {{ baseline_sample_rate|default(0) }}</p>
+    <p class="muted">Raw blobs are unredacted by definition. Replay is bounded by the configured raw retention horizon.</p>
+  </section>
+  <section class="panel">
+    <h2>Plugins</h2>
+    <ul>
+      {% for item in plugins|default([]) %}
+        <li>{{ item.name }} — {{ item.display_name|default(item.name) }}</li>
+      {% else %}
+        <li>No plugins loaded.</li>
+      {% endfor %}
+    </ul>
+    <p><a href="/v1/plugins">Installed plugins (API)</a></p>
+  </section>
+  <section class="panel">
+    <h2>Keys</h2>
+    <p class="muted">Service keys are hashed at rest, org-bound, and scoped. Secrets are never returned after creation.</p>
+    <ul>
+      {% for item in keys|default([]) %}
+        <li>{{ item.label|default(item.scope) }} · {{ item.scope }}</li>
+      {% else %}
+        <li>No keys listed.</li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

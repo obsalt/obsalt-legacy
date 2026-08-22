@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from obsalt.api import AppState, create_app
+from obsalt.api import create_app
 from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.config import Settings
 from obsalt.crypto.primitives import hmac_hex
 from obsalt.domain.enums import KeyScope
+from obsalt.plugin.host import LoadedPlugin
 from obsalt.plugin.types import ConnectionConfig
+from obsalt.runtime import AppState
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
 from obsalt_example.plugin import ExamplePlugin
@@ -29,18 +31,15 @@ def _client() -> TestClient:
     resolver.add(cfg, "ik")
     state = AppState(
         settings=Settings(),
-        plugins=__import__("obsalt.plugin.host", fromlist=["LoadedPlugin"]).LoadedPlugin(plugin),  # type: ignore[arg-type]
+        plugins=[LoadedPlugin(plugin)],
         resolver=resolver,
         objects=MemoryObjectStore(),
         inbox=MemoryInbox(),
         pointers=MemoryPointerStore(),
         sink=MemoryRevisionSink(),
         keys={"k": ("acme", frozenset(KeyScope))},
+        rollup_generation="g1",
     )
-    # LoadedPlugin expects ObsaltPlugin; wrap properly
-    from obsalt.plugin.host import LoadedPlugin
-
-    state.plugins = [LoadedPlugin(plugin)]
     return TestClient(create_app(Settings(), state))
 
 
@@ -78,6 +77,27 @@ def test_ingest_example_and_ui() -> None:
         headers={"X-API-Key": "k"},
     )
     assert listed.status_code == 200
+    assert listed.json()["items"]
     ui = client.get("/v1/ui")
     assert ui.status_code == 200
     assert b"obsalt" in ui.content
+
+
+def test_fleet_endpoints_require_range_and_carry_generation() -> None:
+    client = _client()
+    assert client.get("/v1/latency", headers={"X-API-Key": "k"}).status_code == 400
+    res = client.get(
+        "/v1/latency?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
+    )
+    assert res.status_code == 200
+    assert res.json()["as_of_generation"] == "g1"
+
+
+def test_login_sets_httponly_session_cookie() -> None:
+    client = _client()
+    res = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
+    assert res.status_code == 303
+    cookie = res.headers.get("set-cookie", "")
+    assert "obsalt_session=" in cookie
+    assert "HttpOnly" in cookie

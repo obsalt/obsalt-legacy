@@ -25,17 +25,31 @@ class MemoryObjectStore:
 class MemoryInbox:
     def __init__(self) -> None:
         self.envelopes: dict[tuple[str, str], RawEnvelope] = {}
+        self.by_id: dict[str, RawEnvelope] = {}
         self.tombstones: list[tuple[str, TombstoneHints]] = []
         self.outbox: list[str] = []
+        self.failures: dict[str, str] = {}
+        self.leased: set[str] = set()
 
     def tombstone(self, org_id: str, hints: TombstoneHints) -> None:
         self.tombstones.append((org_id, hints))
+        # Suppress matching inbox/outbox work so deletion after receive cannot be undone.
+        for envelope in list(self.envelopes.values()):
+            if envelope.org_id != org_id:
+                continue
+            if hints.source_call_id and envelope.source_call_id == hints.source_call_id:
+                envelope.state = EnvelopeState.TOMBSTONED
+                if envelope.envelope_id in self.outbox:
+                    self.outbox.remove(envelope.envelope_id)
+                self.leased.discard(envelope.envelope_id)
 
     def is_tombstoned(self, org_id: str, hints: TombstoneHints) -> bool:
         for stored_org, stored in self.tombstones:
             if stored_org != org_id:
                 continue
             if hints.source_call_id and stored.source_call_id == hints.source_call_id:
+                return True
+            if hints.caller_token and stored.caller_token == hints.caller_token:
                 return True
         return False
 
@@ -47,17 +61,55 @@ class MemoryInbox:
         existing = self.envelopes.get(key)
         if existing is not None:
             if existing.state != EnvelopeState.ASSEMBLED:
-                # Resume incomplete acceptance instead of blindly returning already-processed.
                 if existing.object_key != envelope.object_key:
                     existing.object_key = envelope.object_key
                     existing.content_sha256 = envelope.content_sha256
+                    existing.body = envelope.body
+                self.by_id.setdefault(existing.envelope_id, existing)
                 if existing.envelope_id not in self.outbox:
                     self.outbox.append(existing.envelope_id)
                 return existing, False
             return existing, False
         self.envelopes[key] = envelope
+        self.by_id[envelope.envelope_id] = envelope
         self.outbox.append(envelope.envelope_id)
         return envelope, True
+
+    def claim_outbox(self, limit: int = 32) -> list[RawEnvelope]:
+        claimed: list[RawEnvelope] = []
+        for envelope_id in list(self.outbox):
+            if len(claimed) >= limit:
+                break
+            if envelope_id in self.leased:
+                continue
+            envelope = self.by_id.get(envelope_id)
+            if envelope is None:
+                continue
+            if envelope.state in {EnvelopeState.ASSEMBLED, EnvelopeState.TOMBSTONED}:
+                continue
+            self.leased.add(envelope_id)
+            claimed.append(envelope)
+        return claimed
+
+    def mark_assembled(self, envelope_id: str) -> None:
+        envelope = self.by_id.get(envelope_id)
+        if envelope is not None:
+            envelope.state = EnvelopeState.ASSEMBLED
+        if envelope_id in self.outbox:
+            self.outbox.remove(envelope_id)
+        self.leased.discard(envelope_id)
+
+    def mark_failed(self, envelope_id: str, error: str) -> None:
+        self.failures[envelope_id] = error
+        envelope = self.by_id.get(envelope_id)
+        if envelope is not None:
+            envelope.state = EnvelopeState.FAILED
+        self.leased.discard(envelope_id)
+        if envelope_id not in self.outbox:
+            self.outbox.append(envelope_id)
+
+    def get_by_id(self, envelope_id: str) -> RawEnvelope | None:
+        return self.by_id.get(envelope_id)
 
 
 class MemoryResolver:
@@ -70,6 +122,13 @@ class MemoryResolver:
 
     def resolve(self, provider: str, ingest_key: str) -> ConnectionConfig | None:
         return self.connections.get((provider, hash_key(ingest_key)))
+
+    def delete(self, org_id: str, connection_id: str) -> bool:
+        for key, cfg in list(self.connections.items()):
+            if cfg.org_id == org_id and cfg.connection_id == connection_id:
+                del self.connections[key]
+                return True
+        return False
 
 
 def digest_body(body: bytes) -> str:

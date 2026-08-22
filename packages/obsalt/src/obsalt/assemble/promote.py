@@ -37,6 +37,12 @@ class RevisionPointerStore:
     def get(self, org_id: str, call_id: str) -> str | None:
         raise NotImplementedError
 
+    def list_org(self, org_id: str) -> list[tuple[str, str]]:
+        raise NotImplementedError
+
+    def delete(self, org_id: str, call_id: str) -> None:
+        raise NotImplementedError
+
 
 class MemoryPointerStore(RevisionPointerStore):
     def __init__(self) -> None:
@@ -62,6 +68,13 @@ class MemoryPointerStore(RevisionPointerStore):
 
     def get(self, org_id: str, call_id: str) -> str | None:
         return self._ptrs.get((org_id, call_id))
+
+    def list_org(self, org_id: str) -> list[tuple[str, str]]:
+        return [(call_id, revision) for (oid, call_id), revision in self._ptrs.items() if oid == org_id]
+
+    def delete(self, org_id: str, call_id: str) -> None:
+        self._ptrs.pop((org_id, call_id), None)
+        self._frontiers.pop((org_id, call_id), None)
 
 
 def promote(

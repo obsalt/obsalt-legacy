@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 # Span names (v2) — never interpolate turn index or tool name into the name.
 SPAN_CALL = "call.lifecycle"
 SPAN_TURN = "turn"
@@ -90,9 +92,46 @@ METRIC_EVAL_FAILURES = "voice.eval.failures"
 
 
 def strip_pii_attributes(attrs: dict[str, object], *, emit_pii: bool = False) -> dict[str, object]:
+    """Strip ``obsalt.pii.*`` from *our* derived export. Never used to mutate a raw OTLP batch."""
+
     if emit_pii:
         return dict(attrs)
     return {k: v for k, v in attrs.items() if not str(k).startswith(PII_PREFIX)}
+
+
+def genai_provider_name(attrs: Mapping[str, object] | None) -> str | None:
+    """Accept both ``gen_ai.provider.name`` (code) and ``gen_ai.system`` (docs / Azure)."""
+
+    attrs = attrs or {}
+    for key in (GENAI_PROVIDER, GENAI_SYSTEM):
+        value = attrs.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return None
+
+
+def genai_provider_name_key(attrs: Mapping[str, object] | None) -> str | None:
+    attrs = attrs or {}
+    if attrs.get(GENAI_PROVIDER) not in (None, ""):
+        return GENAI_PROVIDER
+    if attrs.get(GENAI_SYSTEM) not in (None, ""):
+        return GENAI_SYSTEM
+    return None
+
+
+def genai_audio_input_tokens(attrs: Mapping[str, object] | None) -> tuple[int | None, str | None]:
+    """Accept merged ``gen_ai.usage.audio.input_tokens`` and LiveKit ``gen_ai.usage.input_audio_tokens``."""
+
+    attrs = attrs or {}
+    for key in (GENAI_AUDIO_IN, GENAI_AUDIO_IN_LIVEKIT):
+        raw = attrs.get(key)
+        if raw is None:
+            continue
+        try:
+            return int(raw), key
+        except (TypeError, ValueError):
+            continue
+    return None, None
 
 
 def setup_tracing(*, otlp_endpoint: str | None = None, emit_pii: bool = False) -> None:

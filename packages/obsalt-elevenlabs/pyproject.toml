@@ -14,3 +14,6 @@ elevenlabs = "obsalt_elevenlabs.plugin:ElevenLabsPlugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_elevenlabs = ["fixtures/**/*"]

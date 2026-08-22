@@ -14,6 +14,10 @@ Create a Vapi connection (hashed ingest key, envelope-encrypted secret) via `POS
 POST /v1/ingest/vapi/{ingest_key}
 ```
 
+Local bootstrap uses `OBSALT_BOOTSTRAP_API_KEY` (default `dev-key`, hashed at rest,
+org-bound). Set a high-entropy value before any network-exposed deploy.
+`require_auth=false` does not exist.
+
 Authentication is fail-closed. An empty secret is not "skip verification."
 
 Then open `http://localhost:8080/v1/ui`.

@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import UTC, date, datetime
+from datetime import date
 
 from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
     MeasurementPlacement,
-    Metric,
     PipelineArchitecture,
-    Provenance,
     Signal,
-    Stage,
 )
-from obsalt.domain.events import CallObserved, NormalizedEvent, StageObserved
+from obsalt.domain.events import NormalizedEvent
 from obsalt.domain.models import FidelityDeclaration
-from obsalt.otel.conventions import SPAN_GENERATION, SPAN_PLAYOUT, SPAN_USER_INPUT
+from obsalt.otel.conventions import (
+    SPAN_GENERATION,
+    SPAN_PLAYOUT,
+    SPAN_USER_INPUT,
+    genai_provider_name,
+)
+from obsalt.otel.s2s import decode_s2s_spans
 from obsalt.plugin.types import InstrumentedClient, PluginManifest, ReadableSpan, SdkConfig
 
 
@@ -47,30 +50,10 @@ class GeminiLivePlugin:
     def claims(self, span: ReadableSpan) -> int:
         if span.name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}:
             return 80
-        if "gemini" in str((span.attributes or {}).get("gen_ai.provider.name", "")).lower():
+        provider = (genai_provider_name(span.attributes) or "").lower()
+        if "gemini" in provider or "google" in provider:
             return 20
         return 0
 
     def decode(self, spans: Sequence[ReadableSpan]) -> Iterable[NormalizedEvent]:
-        if not spans:
-            return
-        conv = None
-        for span in spans:
-            conv = (span.attributes or {}).get("gen_ai.conversation.id") or conv
-        if conv:
-            yield CallObserved(source_call_id=str(conv), architecture=PipelineArchitecture.SPEECH_TO_SPEECH)
-        mapping = {SPAN_USER_INPUT: Stage.USER_INPUT, SPAN_GENERATION: Stage.GENERATION, SPAN_PLAYOUT: Stage.PLAYOUT}
-        for span in spans:
-            stage = mapping.get(span.name)
-            if stage is None:
-                continue
-            yield StageObserved(
-                stage=stage,
-                metric=Metric.DURATION,
-                value_ms=(span.end_unix_nano - span.start_unix_nano) / 1e6,
-                placement=MeasurementPlacement.INTERVAL,
-                started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
-                ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
-                provenance=Provenance.PROVIDER_REPORTED,
-                source_path=f"span:{span.name}",
-            )
+        yield from decode_s2s_spans(spans, architecture=PipelineArchitecture.SPEECH_TO_SPEECH)

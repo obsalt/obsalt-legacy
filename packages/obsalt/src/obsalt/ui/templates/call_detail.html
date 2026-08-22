@@ -1,30 +1,20 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Call {{ call.call_id }}</title>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; color: #111; }
-    header { background: #111; color: #fff; padding: 0.75rem 1.5rem; }
-    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; padding: 1.5rem; }
-    .panel { border: 1px solid #ddd; padding: 1rem; }
-    .chip { display: inline-block; background: #eef; padding: 0.15rem 0.4rem; margin: 0.1rem; font-size: 0.85rem; }
-    .absent { color: #888; }
-    .unsupported { color: #a60; }
-    pre { white-space: pre-wrap; }
-  </style>
-</head>
-<body>
-  <header>
-    <a href="/v1/ui" style="color:#fff">← calls</a>
-    · {{ call.source }} / {{ call.agent_id }}
+{% extends "base.html" %}
+{% block title %}Call {{ call.call_id }}{% endblock %}
+{% block content %}
+  <p class="muted">
+    {{ call.source }} / {{ call.agent_id }}
     · fidelity {{ call.timeline_fidelity.value }}
     · architecture {{ call.pipeline_architecture.value }}
-  </header>
-  <main>
+    · decoder_version {{ call.decoder_version }}
+    · revision {{ call.revision }}
+  </p>
+  <div class="detail">
     <section class="panel">
       <h2>Timeline</h2>
       <p>{{ timeline.reason }}</p>
+      {% if call.timeline_fidelity.value == "turn_level" and call.source == "vapi" %}
+        <p>Vapi reports stage durations without timestamps, so no stage waterfall is drawn.</p>
+      {% endif %}
       {% if timeline.draw_stage_waterfall %}
         <p>Stage waterfall (INTERVAL measurements only).</p>
         {% for item in timeline.stage_intervals %}
@@ -32,10 +22,12 @@
         {% endfor %}
       {% else %}
         <p>No invented stage intervals.</p>
-        <h3>Turns</h3>
-        {% for turn in timeline.turns %}
-          <div>{{ turn.index }} {{ turn.speaker }}</div>
-        {% endfor %}
+      {% endif %}
+      <h3>Turns</h3>
+      {% for turn in timeline.turns %}
+        <div>{{ turn.index }} {{ turn.speaker }}</div>
+      {% endfor %}
+      {% if timeline.unplaced_stage_chips %}
         <h3>Unplaced stage chips</h3>
         {% for item in timeline.unplaced_stage_chips %}
           <div class="chip">{{ item.stage }} {{ item.metric }} {{ item.value_ms }}ms ({{ item.placement }})</div>
@@ -52,20 +44,89 @@
       <h2>Transcript</h2>
       {% for turn in call.turns %}
         <p><strong>{{ turn.speaker.value }}</strong> {{ turn.text }}</p>
+      {% else %}
+        <p class="muted">No transcript on this revision.</p>
       {% endfor %}
-      <h2>Provenance / coverage</h2>
-      <p>Raw retention horizon: configured separately; replay is bounded by that horizon.</p>
+    </section>
+  </div>
+  <section class="panel">
+    <h2>Tools</h2>
+    {% for tool in call.tools %}
+      <div>
+        {{ tool.name }} · {{ tool.status.value }}
+        {% if tool.duration_ms is not none %}
+          · {{ tool.duration_ms }}ms
+        {% else %}
+          · duration: not reported
+        {% endif %}
+        {% if tool.retry_count %} · retries {{ tool.retry_count }}{% endif %}
+      </div>
+    {% else %}
+      <p class="muted">No tool invocations on this call.</p>
+    {% endfor %}
+  </section>
+  <section class="panel">
+    <h2>Flags</h2>
+    {% for flag in flags|default([]) %}
+      <div class="chip">{{ flag.kind }}{% if flag.reason %} · {{ flag.reason }}{% endif %}</div>
+    {% else %}
+      <p class="muted">No flags.</p>
+    {% endfor %}
+  </section>
+  <section class="panel">
+    <h2>Evals</h2>
+    <p class="muted">Missing output is never interpreted as a passing call.</p>
+    {% for ev in evals|default([]) %}
+      <div>
+        {{ ev.rubric_id|default(ev.analyzer_id) }}
+        · state {{ ev.state }}
+        {% if ev.passed is not none %} · {{ "pass" if ev.passed else "fail" }}{% endif %}
+        {% if ev.score is not none %} · score {{ ev.score }}{% endif %}
+        {% if ev.rationale %} · {{ ev.rationale }}{% endif %}
+      </div>
+    {% else %}
+      <p class="muted">No eval results for this revision.</p>
+    {% endfor %}
+  </section>
+  <section class="panel">
+    <h2>Provenance / coverage</h2>
+    <p>decoder_version {{ call.decoder_version }} · assembler_version {{ call.assembler_version }}</p>
+    <p class="muted">Raw retention horizon: configured separately; replay is bounded by that horizon.</p>
+    <ul>
+      {% for row in coverage|default(call.coverage) %}
+        <li class="{{ row.status.value }}">
+          <strong>{{ row.signal.value }}</strong> — {{ row.status.value }}
+          {% if row.reason %} · {{ row.reason }}{% endif %}
+          {% if row.source_path %} · {{ row.source_path }}{% endif %}
+          · decoder {{ row.decoder_version }}
+        </li>
+      {% endfor %}
+    </ul>
+    <h3>Measurements</h3>
+    <ul>
+      {% for m in call.stage_measurements %}
+        <li>
+          {{ m.stage.value }} {{ m.metric.value }} {{ m.value_ms }}ms
+          — {{ m.provenance.value }}
+          · placement {{ m.placement.value }}
+          {% if m.source_path %} · source_path {{ m.source_path }}{% endif %}
+          {% if m.derivation %} · derivation {{ m.derivation }}{% endif %}
+        </li>
+      {% else %}
+        <li class="muted">No stage measurements.</li>
+      {% endfor %}
+    </ul>
+    {% if call.provenance %}
+      <h3>Field provenance</h3>
       <ul>
-        {% for row in coverage %}
-          <li class="{{ row.status.value }}">
-            <strong>{{ row.signal.value }}</strong> — {{ row.status.value }}
-            {% if row.reason %} · {{ row.reason }}{% endif %}
-            {% if row.source_path %} · {{ row.source_path }}{% endif %}
-            · decoder {{ row.decoder_version }}
+        {% for path, stamp in call.provenance.items() %}
+          <li>
+            {{ path }} — {{ stamp.provenance.value }}
+            {% if stamp.source_path %} · {{ stamp.source_path }}{% endif %}
+            {% if stamp.derivation %} · {{ stamp.derivation }}{% endif %}
           </li>
         {% endfor %}
       </ul>
-    </section>
-  </main>
-</body>
-</html>
+    {% endif %}
+  </section>
+{% endblock %}

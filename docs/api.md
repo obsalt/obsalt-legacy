@@ -22,8 +22,13 @@ POST   /v1/replay
 POST   /v1/backfill
 POST   /v1/privacy/deletion-requests
 GET    /v1/plugins
+GET/POST /v1/outbound-webhooks   # Standard Webhooks; secret returned only at creation
 GET    /health  /ready  /metrics
+GET/POST /v1/ui/login
 ```
 
+Collection list cursors are `{call_id}:{revision}`. Fleet responses include
+`as_of_generation`. Cross-org identifiers return 404.
+
 Service keys are hashed at rest, org-bound, and scoped (`ingest`, `read`, `analyze`,
-`admin`). `require_auth=false` does not exist. Cross-org identifiers return 404.
+`admin`). `require_auth=false` does not exist.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, timedelta
 
 from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import (
@@ -38,7 +38,7 @@ from obsalt.plugin.types import (
     VerifyResult,
     WebhookResponse,
 )
-from obsalt.util import as_str, parse_datetime
+from obsalt.util import as_float, as_str, parse_datetime
 
 
 class ElevenLabsPlugin:
@@ -119,10 +119,18 @@ class ElevenLabsPlugin:
         conv = as_str(data.get("conversation_id"))
         if not conv:
             return
+        meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        call_started = parse_datetime(meta.get("start_time_unix_secs") or data.get("start_time_unix_secs"))
         yield CallObserved(
             source_call_id=conv,
             agent_id=as_str(data.get("agent_id")) or "unknown",
-            provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="data.conversation_id")},
+            started_at=call_started,
+            cost=as_float(meta.get("cost")),
+            provenance_by_field={
+                "source_call_id": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="data.conversation_id"
+                )
+            },
         )
         transcript = data.get("transcript") or []
         if isinstance(transcript, list):
@@ -131,16 +139,27 @@ class ElevenLabsPlugin:
                     continue
                 role = as_str(item.get("role")) or "agent"
                 speaker = Speaker.USER if role in {"user", "customer"} else Speaker.AGENT
-                # whole-second message anchors
-                started = parse_datetime(item.get("time_in_call_secs"))
+                offset_s = as_float(item.get("time_in_call_secs"))
+                started = None
+                if call_started is not None and offset_s is not None:
+                    # whole-second message anchors; not a unix timestamp
+                    started = call_started + timedelta(seconds=int(offset_s))
                 yield TurnObserved(
                     turn_index=index,
                     speaker=speaker,
                     text=as_str(item.get("message")) or "",
                     started_at=started,
+                    provenance_by_field={
+                        "started_at": ProvenanceStamp(
+                            provenance=Provenance.PROVIDER_REPORTED,
+                            source_path=f"data.transcript[{index}].time_in_call_secs",
+                            derivation="coarse_anchor_whole_seconds",
+                        )
+                    },
                 )
-        if data.get("status") or data.get("termination_reason"):
-            yield OutcomeObserved(provider_code=as_str(data.get("termination_reason") or data.get("status") or "completed"))
+        reason = as_str(data.get("termination_reason") or meta.get("termination_reason") or data.get("status"))
+        if reason:
+            yield OutcomeObserved(provider_code=reason)
             yield CallFinalized(reason="provider")
 
 

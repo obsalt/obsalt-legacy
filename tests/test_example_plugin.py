@@ -11,7 +11,11 @@ from obsalt.plugin.host import discover_plugins
 from obsalt.plugin.types import ConnectionConfig
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt_example.plugin import ExamplePlugin
-from obsalt_testkit import DecoderConformanceTests, SchemaFixtureTests
+from obsalt_testkit import (
+    AuthenticationConformanceTests,
+    DecoderConformanceTests,
+    SchemaFixtureTests,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-example" / "src" / "obsalt_example" / "fixtures"
 
@@ -22,7 +26,20 @@ class TestExampleDecoder(DecoderConformanceTests):
 
 
 class TestExampleSchema(SchemaFixtureTests):
+    plugin = ExamplePlugin()
     fixtures_dir = FIXTURES
+
+
+class TestExampleAuth(AuthenticationConformanceTests):
+    plugin = ExamplePlugin()
+    connection = ConnectionConfig(
+        org_id="acme", provider="example", connection_id="c1", ingest_key_hash="x", secrets={"hmac_secret": "example-secret"}
+    )
+    valid_raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
+
+    @property
+    def valid_headers(self) -> dict[str, str]:
+        return {"x-obsalt-example-signature": hmac_hex("example-secret", self.valid_raw)}
 
 
 def test_example_plugin_discovered_via_entry_points() -> None:

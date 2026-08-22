@@ -106,29 +106,41 @@ class CartesiaPlugin:
                 text=as_str(turn.get("text")) or "",
                 started_at=started,
                 ended_at=ended,
+                provenance_by_field={
+                    "started_at": ProvenanceStamp(
+                        provenance=Provenance.PROVIDER_REPORTED, source_path=f"turns[{index}].started_at"
+                    ),
+                    "ended_at": ProvenanceStamp(
+                        provenance=Provenance.PROVIDER_REPORTED, source_path=f"turns[{index}].ended_at"
+                    ),
+                },
             )
-            stt = as_float(turn.get("stt_ttfb_ms") or turn.get("stt_ms"))
-            tts = as_float(turn.get("tts_ttfb_ms") or turn.get("tts_ms"))
-            if stt is not None:
-                yield StageObserved(
-                    stage=Stage.STT,
-                    metric=Metric.DURATION,
-                    value_ms=stt,
-                    turn_index=index,
-                    placement=MeasurementPlacement.UNPLACED,
-                    provenance=Provenance.PROVIDER_REPORTED,
-                    source_path=f"turns[{index}].stt_ttfb_ms",
-                )
-            if tts is not None:
-                yield StageObserved(
-                    stage=Stage.TTS,
-                    metric=Metric.TTFB,
-                    value_ms=tts,
-                    turn_index=index,
-                    placement=MeasurementPlacement.UNPLACED,
-                    provenance=Provenance.PROVIDER_REPORTED,
-                    source_path=f"turns[{index}].tts_ttfb_ms",
-                )
+            stt_field = "stt_ttfb_ms" if turn.get("stt_ttfb_ms") is not None else ("stt_ms" if turn.get("stt_ms") is not None else None)
+            tts_field = "tts_ttfb_ms" if turn.get("tts_ttfb_ms") is not None else ("tts_ms" if turn.get("tts_ms") is not None else None)
+            if stt_field is not None:
+                stt = as_float(turn.get(stt_field))
+                if stt is not None:
+                    yield StageObserved(
+                        stage=Stage.STT,
+                        metric=Metric.TTFB if "ttfb" in stt_field else Metric.DURATION,
+                        value_ms=stt,
+                        turn_index=index,
+                        placement=MeasurementPlacement.UNPLACED,
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path=f"turns[{index}].{stt_field}",
+                    )
+            if tts_field is not None:
+                tts = as_float(turn.get(tts_field))
+                if tts is not None:
+                    yield StageObserved(
+                        stage=Stage.TTS,
+                        metric=Metric.TTFB if "ttfb" in tts_field else Metric.DURATION,
+                        value_ms=tts,
+                        turn_index=index,
+                        placement=MeasurementPlacement.UNPLACED,
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path=f"turns[{index}].{tts_field}",
+                    )
         yield CallFinalized(reason="provider")
 
 
