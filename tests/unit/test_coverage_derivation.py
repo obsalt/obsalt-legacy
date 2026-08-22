@@ -19,7 +19,6 @@ from obsalt.domain.enums import (
 from obsalt.domain.events import GroundingObserved, OutcomeObserved, StageObserved, TurnObserved
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import EXAMPLE_FIXTURES, VAPI_FIXTURES
 
 
@@ -55,7 +54,9 @@ def test_example_coverage_marks_stage_interval_unsupported_and_stt_present() -> 
 def test_vapi_coverage_does_not_claim_unobtainable_stage_intervals() -> None:
     plugin = VapiPlugin()
     events = list(plugin.decode(_envelope(VAPI_FIXTURES / "raw" / "end_of_call.json", "vapi")))
-    rows = {row.signal: row for row in derive_coverage(events, plugin.fidelity, plugin.decoder_version)}
+    rows = {
+        row.signal: row for row in derive_coverage(events, plugin.fidelity, plugin.decoder_version)
+    }
     assert rows[Signal.STAGE_INTERVAL].status is SignalCoverageStatus.UNSUPPORTED
     assert rows[Signal.STT_DURATION].status is SignalCoverageStatus.PRESENT
     assert "transcriberLatency" in (rows[Signal.STT_DURATION].source_path or "")
@@ -75,7 +76,11 @@ def test_declared_but_missing_signal_is_absent_not_unsupported() -> None:
             provenance=Provenance.PROVIDER_REPORTED,
             source_path="stt_ms",
         ),
-        GroundingObserved(kind=GroundingKind.SYSTEM_PROMPT, content="be helpful", provenance=Provenance.PROVIDER_REPORTED),
+        GroundingObserved(
+            kind=GroundingKind.SYSTEM_PROMPT,
+            content="be helpful",
+            provenance=Provenance.PROVIDER_REPORTED,
+        ),
         OutcomeObserved(provider_code="user_hangup"),
     ]
     declaration = fidelity_declaration()

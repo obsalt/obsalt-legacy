@@ -48,7 +48,17 @@ def stage_from_span_semantics(name: str, attrs: dict[str, object] | None = None)
         return Stage.GENERATION
     if "playout" in n:
         return Stage.PLAYOUT
-    if any(token in n for token in ("conversation", "call.lifecycle", "session", "e2e", "end_to_end", "room.duration")):
+    if any(
+        token in n
+        for token in (
+            "conversation",
+            "call.lifecycle",
+            "session",
+            "e2e",
+            "end_to_end",
+            "room.duration",
+        )
+    ):
         return Stage.E2E
     if n == "call" or n.startswith("call."):
         return Stage.E2E

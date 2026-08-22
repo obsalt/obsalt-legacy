@@ -10,7 +10,6 @@ from obsalt.ingest.receive import receive_webhook
 from obsalt.query import active_calls
 from obsalt.worker.drain import drain_once
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import VAPI_FIXTURES, vapi_headers, vapi_state
 
 
@@ -83,7 +82,10 @@ def test_vapi_transcript_delta_does_not_emit_snapshot() -> None:
         )
     )
     assert not any(isinstance(event, SnapshotBoundaryObserved) for event in events)
-    assert any(isinstance(event, TurnObserved) and event.text.startswith("I want a refund") for event in events)
+    assert any(
+        isinstance(event, TurnObserved) and event.text.startswith("I want a refund")
+        for event in events
+    )
 
 
 def test_snapshot_then_delta_keeps_omitted_turns() -> None:

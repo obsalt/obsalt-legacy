@@ -25,9 +25,7 @@ def _request(**kwargs) -> JudgeRequest:
 
 def test_ungrounded_price_is_unsupported() -> None:
     judged = asyncio.run(
-        HeuristicJudge().judge(
-            _request(transcript="The ticket is $48.50.", grounding=[])
-        )
+        HeuristicJudge().judge(_request(transcript="The ticket is $48.50.", grounding=[]))
     )
     assert judged.passed is False
     assert judged.score < 0.7
@@ -93,7 +91,9 @@ def test_grounding_corpus_includes_tool_errors() -> None:
                 provenance=Provenance.PROVIDER_REPORTED,
             )
         ],
-        tools=[ToolInvocation(id="t1", name="lookup_order", status=ToolStatus.ERROR, error="not_found")],
+        tools=[
+            ToolInvocation(id="t1", name="lookup_order", status=ToolStatus.ERROR, error="not_found")
+        ],
     )
     corpus = grounding_corpus(call)
     assert "refund please" in corpus

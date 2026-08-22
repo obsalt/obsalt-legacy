@@ -1,13 +1,16 @@
 # obsalt
 
-Core package for obsalt v2: domain model, plugin host, durable ingest, assembly,
-analysis, HTTP API, and UI. **Core ships no providers.** Install a source plugin
-such as `obsalt-vapi` or `obsalt-retell`.
+Core package: domain model, plugin host, durable ingest, assembly, analysis,
+HTTP API, and UI. **Core ships no providers.** Install a source plugin such
+as `obsalt-vapi` or `obsalt-retell`.
 
 ```bash
-pip install obsalt obsalt-vapi obsalt-retell
-obsalt demo   # ephemeral full stack — not for production
+pip install "obsalt[vapi,retell]"
+docker compose up -d
 obsalt serve
 ```
 
-Plugins are trusted, operator-installed code. See `docs/plugins.md`.
+`obsalt demo` launches the same stack with a not-for-production banner.
+
+Plugins are trusted, operator-installed code. Start with the
+[documentation index](../../docs/README.md).

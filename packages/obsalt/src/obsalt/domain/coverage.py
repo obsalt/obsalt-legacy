@@ -29,7 +29,11 @@ def derive_fidelity(events: list[NormalizedEvent]) -> TimelineFidelity:
     has_call = False
     for event in events:
         if isinstance(event, StageObserved):
-            if event.placement is MeasurementPlacement.INTERVAL and event.started_at and event.ended_at:
+            if (
+                event.placement is MeasurementPlacement.INTERVAL
+                and event.started_at
+                and event.ended_at
+            ):
                 has_interval = True
             elif event.placement is MeasurementPlacement.COARSE_ANCHOR:
                 has_coarse = True
@@ -88,7 +92,9 @@ def derive_coverage(
         elif isinstance(event, CallObserved) and event.cost is not None:
             present[Signal.COST] = "call.cost"
         elif isinstance(event, AggregateObserved):
-            present[_stage_signal_from_names(event.stage.value, event.metric.value)] = event.source_path
+            present[_stage_signal_from_names(event.stage.value, event.metric.value)] = (
+                event.source_path
+            )
 
     rows: list[SignalCoverage] = []
     for signal in Signal:
@@ -122,7 +128,9 @@ def derive_coverage(
     return rows
 
 
-def architecture_of(events: list[NormalizedEvent], declaration: FidelityDeclaration) -> PipelineArchitecture:
+def architecture_of(
+    events: list[NormalizedEvent], declaration: FidelityDeclaration
+) -> PipelineArchitecture:
     for event in events:
         if isinstance(event, CallObserved):
             return event.architecture

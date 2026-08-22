@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
+
 from obsalt.api import create_app
 from obsalt.config import Settings
 from obsalt.domain.enums import EnvelopeState
@@ -12,8 +14,6 @@ from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.otel.receiver import serialized_partial_success
 from obsalt.plugin.host import LoadedPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
-from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
-
 from tests.helpers import example_state
 
 
@@ -129,7 +129,10 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "endTimeUnixNano": "2000000000",
                                 "attributes": [
                                     {"key": "turn.index", "value": {"intValue": "0"}},
-                                    {"key": "gen_ai.conversation.id", "value": {"stringValue": "room-1"}},
+                                    {
+                                        "key": "gen_ai.conversation.id",
+                                        "value": {"stringValue": "room-1"},
+                                    },
                                     {"key": "turn.speaker", "value": {"stringValue": "user"}},
                                 ],
                             },
@@ -141,9 +144,12 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "startTimeUnixNano": "1000000000",
                                 "endTimeUnixNano": "1300000000",
                                 "attributes": [
-                                    {"key": "gen_ai.conversation.id", "value": {"stringValue": "room-1"}},
+                                    {
+                                        "key": "gen_ai.conversation.id",
+                                        "value": {"stringValue": "room-1"},
+                                    },
                                 ],
-                            }
+                            },
                         ]
                     }
                 ]

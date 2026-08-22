@@ -52,9 +52,14 @@ def test_s2s_skips_invalid_timestamps_but_still_emits_explicit_barge_in() -> Non
     events = list(
         decode_s2s_spans(
             [
-                _span(SPAN_USER_INPUT, start=0, end=2_000_000_000, attrs={"gen_ai.conversation.id": "c1"}),
+                _span(
+                    SPAN_USER_INPUT,
+                    start=0,
+                    end=2_000_000_000,
+                    attrs={"gen_ai.conversation.id": "c1"},
+                ),
                 _span(SPAN_GENERATION, start=3_000_000_000, end=1_000_000_000),
-                    _span(SPAN_GENERATION, start=0, end=0, attrs={"obsalt.barge_in": True}),
+                _span(SPAN_GENERATION, start=0, end=0, attrs={"obsalt.barge_in": True}),
             ]
         )
     )
@@ -104,7 +109,12 @@ def test_livekit_leftover_and_inverted_spans_emit_nothing() -> None:
         plugin.decode(
             [
                 _span("http.request", attrs={"lk.room.name": "room-1"}),
-                _span("conversation", start=2_000_000_000, end=1_000_000_000, attrs={"lk.room.name": "room-1"}),
+                _span(
+                    "conversation",
+                    start=2_000_000_000,
+                    end=1_000_000_000,
+                    attrs={"lk.room.name": "room-1"},
+                ),
             ]
         )
     )

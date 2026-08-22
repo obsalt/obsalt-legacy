@@ -45,7 +45,10 @@ def test_vapi_prefers_seconds_from_start_over_epoch_time() -> None:
     events = list(plugin.decode(_env((VAPI_FIXTURES / "raw" / "end_of_call.json").read_bytes())))
     first = next(event for event in events if isinstance(event, TurnObserved))
     assert first.started_at == datetime(2026, 8, 21, 12, 0, 0, 400000, tzinfo=UTC)
-    assert first.provenance_by_field["started_at"].source_path == "artifact.messages[].secondsFromStart"
+    assert (
+        first.provenance_by_field["started_at"].source_path
+        == "artifact.messages[].secondsFromStart"
+    )
     call = next(event for event in events if isinstance(event, CallObserved))
     assert call.from_number == raw["message"]["call"]["customer"]["number"]
 
@@ -72,9 +75,13 @@ def test_vapi_bearer_hmac_and_oauth2() -> None:
         secrets={"bearer_token": "tok"},
         settings={"auth_mode": "bearer"},
     )
-    assert plugin.authenticate(raw, RawHeaders.from_mapping({"authorization": "Bearer tok"}).as_list(), bearer).ok
+    assert plugin.authenticate(
+        raw, RawHeaders.from_mapping({"authorization": "Bearer tok"}).as_list(), bearer
+    ).ok
     missing = plugin.authenticate(
-        raw, RawHeaders.from_mapping({"authorization": "Bearer tok"}).as_list(), bearer.model_copy(update={"secrets": {}})
+        raw,
+        RawHeaders.from_mapping({"authorization": "Bearer tok"}).as_list(),
+        bearer.model_copy(update={"secrets": {}}),
     )
     assert missing.outcome is VerifyOutcome.MISSING_CREDENTIAL
 
@@ -89,13 +96,17 @@ def test_vapi_bearer_hmac_and_oauth2() -> None:
     ts = str(int(time.time()))
     sig = hmac_hex("hs", ts.encode() + raw)
     assert plugin.authenticate(
-        raw, RawHeaders.from_mapping({"x-vapi-signature": sig, "x-vapi-timestamp": ts}).as_list(), hmac_cfg
+        raw,
+        RawHeaders.from_mapping({"x-vapi-signature": sig, "x-vapi-timestamp": ts}).as_list(),
+        hmac_cfg,
     ).ok
     stale_ts = str(int(time.time()) - 20 * 60)
     stale_sig = hmac_hex("hs", stale_ts.encode() + raw)
     stale = plugin.authenticate(
         raw,
-        RawHeaders.from_mapping({"x-vapi-signature": stale_sig, "x-vapi-timestamp": stale_ts}).as_list(),
+        RawHeaders.from_mapping(
+            {"x-vapi-signature": stale_sig, "x-vapi-timestamp": stale_ts}
+        ).as_list(),
         hmac_cfg,
     )
     assert not stale.ok
@@ -124,7 +135,11 @@ def test_vapi_hydrate_wraps_list_call_object() -> None:
         cfg,
         BackfillItem(
             upstream_entity_id="vapi-call-1",
-            payload={"id": "vapi-call-1", "endedReason": "hangup", "artifact": {"transcript": "hi"}},
+            payload={
+                "id": "vapi-call-1",
+                "endedReason": "hangup",
+                "artifact": {"transcript": "hi"},
+            },
         ),
     )
     body = json.loads(envelope.body or b"{}")
@@ -132,4 +147,7 @@ def test_vapi_hydrate_wraps_list_call_object() -> None:
     assert body["message"]["call"]["id"] == "vapi-call-1"
     assert body["message"]["endedReason"] == "hangup"
     events = list(plugin.decode(envelope))
-    assert any(isinstance(event, CallObserved) and event.source_call_id == "vapi-call-1" for event in events)
+    assert any(
+        isinstance(event, CallObserved) and event.source_call_id == "vapi-call-1"
+        for event in events
+    )

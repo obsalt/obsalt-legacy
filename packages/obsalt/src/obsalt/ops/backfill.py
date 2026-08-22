@@ -37,7 +37,9 @@ def run_backfill(
                     continue
                 body = envelope.body or b"{}"
                 digest = envelope.content_sha256 or sha256_bytes(body)
-                delivery = f"{cfg.connection_id}:{item.upstream_entity_id}:{item.content_hash or digest}"
+                delivery = (
+                    f"{cfg.connection_id}:{item.upstream_entity_id}:{item.content_hash or digest}"
+                )
                 key = object_key_for(org_id, cfg.provider, delivery, digest)
                 state.objects.put(key, body, content_type="application/json")
                 stored = RawEnvelope(

@@ -15,7 +15,6 @@ from obsalt.search.index import MemorySearchIndex
 from obsalt.util import utcnow
 from obsalt.worker.drain import drain_once
 from obsalt_example.plugin import ExamplePlugin
-
 from tests.helpers import EXAMPLE_FIXTURES, example_headers, example_state
 
 
@@ -61,7 +60,10 @@ def test_pending_hallucination_candidates_are_not_fleet_failures() -> None:
         "r2",
         analyzer="hallucination",
         state=AnalysisState.PENDING,
-        payload={"candidates": [{"kind": "price_claim", "needs_llm": True}], "selection": "pending"},
+        payload={
+            "candidates": [{"kind": "price_claim", "needs_llm": True}],
+            "selection": "pending",
+        },
     )
     confirmed = _result(
         "c1",
@@ -92,8 +94,12 @@ def test_quality_ignores_analysis_from_non_active_revisions() -> None:
 
 
 def test_search_uses_populated_index_and_org_filter() -> None:
-    acme = _call(org_id="acme", call_id="acme-refund", revision="r1", text="customer asking about refunds")
-    other = _call(org_id="beta", call_id="beta-refund", revision="r1", text="customer asking about refunds")
+    acme = _call(
+        org_id="acme", call_id="acme-refund", revision="r1", text="customer asking about refunds"
+    )
+    other = _call(
+        org_id="beta", call_id="beta-refund", revision="r1", text="customer asking about refunds"
+    )
     index = MemorySearchIndex()
     index.index(acme)
     index.index(other)
@@ -108,7 +114,9 @@ def test_range_deletion_tombstones_later_ingest() -> None:
     raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
     plugin = ExamplePlugin()
     now = utcnow()
-    apply_deletion(state, org_id="acme", start=now - timedelta(hours=1), end=now + timedelta(hours=1))
+    apply_deletion(
+        state, org_id="acme", start=now - timedelta(hours=1), end=now + timedelta(hours=1)
+    )
     result = receive_webhook(
         provider="example",
         ingest_key="ik",

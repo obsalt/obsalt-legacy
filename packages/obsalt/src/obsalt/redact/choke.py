@@ -60,14 +60,21 @@ class DefaultRedactor:
             elif isinstance(cloned, OutcomeObserved):
                 pass
             out.append(cloned)
-        return RedactionResult(events=out, policy_version=policy.version, redacted_fields=redacted_fields)
+        return RedactionResult(
+            events=out, policy_version=policy.version, redacted_fields=redacted_fields
+        )
 
 
 def _redact_obj(value: object, policy: RedactionPolicy) -> object:
     if isinstance(value, str):
         return redact_text(value, policy)
     if isinstance(value, dict):
-        return {str(k): f"<{json_type_name(v)}:redacted>" if _sensitive(str(k)) else _redact_obj(v, policy) for k, v in value.items()}
+        return {
+            str(k): f"<{json_type_name(v)}:redacted>"
+            if _sensitive(str(k))
+            else _redact_obj(v, policy)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact_obj(item, policy) for item in value[:20]]
     return value
@@ -75,9 +82,13 @@ def _redact_obj(value: object, policy: RedactionPolicy) -> object:
 
 def _sensitive(key: str) -> bool:
     lowered = key.lower()
-    return any(part in lowered for part in ("email", "phone", "ssn", "card", "secret", "token", "password"))
+    return any(
+        part in lowered for part in ("email", "phone", "ssn", "card", "secret", "token", "password")
+    )
 
 
-def redact_events(events: Sequence[NormalizedEvent], policy: RedactionPolicy | None = None) -> RedactionResult:
+def redact_events(
+    events: Sequence[NormalizedEvent], policy: RedactionPolicy | None = None
+) -> RedactionResult:
     """Single choke point. Every source's normalized events pass through here before persistence."""
     return DefaultRedactor().redact(events, policy or RedactionPolicy())

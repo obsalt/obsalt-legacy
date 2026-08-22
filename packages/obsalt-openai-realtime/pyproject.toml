@@ -7,6 +7,7 @@ name = "obsalt-openai-realtime"
 version = "2.0.0"
 description = "OpenAI Realtime SDK instrumentation and OTLP mapper for obsalt"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
 dependencies = ["obsalt==2.0.0"]
 
 [project.entry-points."obsalt.plugins"]
@@ -14,3 +15,6 @@ openai_realtime = "obsalt_openai_realtime.plugin:OpenAIRealtimePlugin"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_openai_realtime = ["py.typed", "fixtures/**/*"]

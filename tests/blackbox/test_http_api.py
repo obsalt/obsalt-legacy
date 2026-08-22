@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+
 from obsalt.api import create_app, create_test_app
 from obsalt.config import Settings
 from obsalt.crypto.primitives import hmac_hex
-
 from tests.helpers import EXAMPLE_FIXTURES, signed_example_headers
 
 
@@ -46,7 +46,9 @@ def test_list_and_fleet_require_time_range(client: TestClient) -> None:
 
 
 def test_ingest_list_detail_timeline_and_ui(client: TestClient, example_raw: bytes) -> None:
-    res = client.post("/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw))
+    res = client.post(
+        "/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw)
+    )
     assert res.status_code == 200
     listed = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
@@ -70,7 +72,9 @@ def test_ingest_list_detail_timeline_and_ui(client: TestClient, example_raw: byt
 
 
 def test_cross_tenant_read_is_404(client: TestClient, example_raw: bytes) -> None:
-    client.post("/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw))
+    client.post(
+        "/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw)
+    )
     listed = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
         headers={"X-API-Key": "k"},
@@ -81,7 +85,9 @@ def test_cross_tenant_read_is_404(client: TestClient, example_raw: bytes) -> Non
 
 
 def test_replay_promotes_a_new_revision(client: TestClient, example_raw: bytes) -> None:
-    client.post("/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw))
+    client.post(
+        "/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw)
+    )
     first = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
         headers={"X-API-Key": "k"},
@@ -98,7 +104,9 @@ def test_replay_promotes_a_new_revision(client: TestClient, example_raw: bytes) 
 
 
 def test_evidence_and_session_cookie(client: TestClient, example_raw: bytes) -> None:
-    client.post("/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw))
+    client.post(
+        "/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw)
+    )
     listed = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
         headers={"X-API-Key": "k"},
@@ -116,7 +124,9 @@ def test_evidence_and_session_cookie(client: TestClient, example_raw: bytes) -> 
 
 
 def test_csrf_required_for_ui_analyze(client: TestClient, example_raw: bytes) -> None:
-    client.post("/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw))
+    client.post(
+        "/v1/ingest/example/ik", content=example_raw, headers=signed_example_headers(example_raw)
+    )
     listed = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
         headers={"X-API-Key": "k"},
@@ -124,7 +134,9 @@ def test_csrf_required_for_ui_analyze(client: TestClient, example_raw: bytes) ->
     call_id = listed.json()["items"][0]["id"]
     login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
     assert login.status_code == 303
-    denied = client.post(f"/v1/ui/calls/{call_id}/analyze", data={"csrf": "nope"}, follow_redirects=False)
+    denied = client.post(
+        f"/v1/ui/calls/{call_id}/analyze", data={"csrf": "nope"}, follow_redirects=False
+    )
     assert denied.status_code == 403
 
 

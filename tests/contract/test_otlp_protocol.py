@@ -5,16 +5,17 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+    ExportTraceServiceRequest,
+    ExportTraceServiceResponse,
+)
+
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind
 from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.otel.receiver import parse_otlp_request, serialized_partial_success, serialized_success
 from obsalt.plugin.types import RawEnvelope, TombstoneHints
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore
 from obsalt.util import utcnow
-from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
-    ExportTraceServiceRequest,
-    ExportTraceServiceResponse,
-)
 
 
 def test_wrong_content_type_is_415(client: TestClient) -> None:
@@ -64,7 +65,9 @@ def test_mixed_org_resource_cannot_choose_tenant(client: TestClient) -> None:
     payload = {
         "resourceSpans": [
             {
-                "resource": {"attributes": [{"key": "obsalt.org", "value": {"stringValue": "other"}}]},
+                "resource": {
+                    "attributes": [{"key": "obsalt.org", "value": {"stringValue": "other"}}]
+                },
                 "scopeSpans": [
                     {
                         "spans": [
@@ -89,7 +92,9 @@ def test_mixed_org_resource_cannot_choose_tenant(client: TestClient) -> None:
     assert res.status_code == 401
 
 
-def test_span_identity_conflict_is_partial_success_not_retryable(memory_state, client: TestClient) -> None:
+def test_span_identity_conflict_is_partial_success_not_retryable(
+    memory_state, client: TestClient
+) -> None:
     from obsalt.otel.span_identity import SpanIdentityIndex
     from obsalt.plugin.types import ReadableSpan
 

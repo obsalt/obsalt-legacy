@@ -4,7 +4,6 @@ import json
 from collections.abc import Iterable
 from datetime import date, timedelta
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import (
     constant_time_eq,
     enforce_window,
@@ -33,6 +32,7 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import (
     ConnectionConfig,
     PluginManifest,
@@ -49,14 +49,20 @@ class ElevenLabsPlugin:
     name = "elevenlabs"
     display_name = "ElevenLabs"
     decoder_version = "elevenlabs/1"
-    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.OTLP_MAPPER})
+    capabilities = frozenset(
+        {Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.OTLP_MAPPER}
+    )
     singleton_headers = frozenset({b"elevenlabs-signature"})
     manifest = PluginManifest(secret_fields=frozenset({"webhook_secret"}))
     fidelity = FidelityDeclaration(
         source_format="elevenlabs.post_call_transcription",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset({MeasurementPlacement.COARSE_ANCHOR, MeasurementPlacement.INTERVAL}),
-        provides=frozenset({Signal.TRANSCRIPT, Signal.TURN_INTERVAL, Signal.HANGUP, Signal.GROUNDING_USER}),
+        possible_placements=frozenset(
+            {MeasurementPlacement.COARSE_ANCHOR, MeasurementPlacement.INTERVAL}
+        ),
+        provides=frozenset(
+            {Signal.TRANSCRIPT, Signal.TURN_INTERVAL, Signal.HANGUP, Signal.GROUNDING_USER}
+        ),
         structurally_absent={
             Signal.STAGE_INTERVAL: "post-call JSON uses whole-second message anchors without documented end timestamps",
         },
@@ -65,19 +71,29 @@ class ElevenLabsPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         secret = cfg.secrets.get("webhook_secret")
         if not secret:
-            return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="webhook_secret required")
+            return VerifyResult(
+                outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="webhook_secret required"
+            )
         values = header_values(headers, "elevenlabs-signature")
         if not values:
-            return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing ElevenLabs-Signature")
+            return VerifyResult(
+                outcome=VerifyOutcome.MALFORMED, detail="missing ElevenLabs-Signature"
+            )
         parsed = parse_kv_header(values[0])
         ts = parsed.get("t")
         # header may contain multiple v0= values; parse_kv_header keeps the last
-        sigs = [part.split("=", 1)[1] for part in values[0].split(",") if part.strip().startswith("v0=")]
+        sigs = [
+            part.split("=", 1)[1] for part in values[0].split(",") if part.strip().startswith("v0=")
+        ]
         if not ts or not sigs:
-            return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="expected t={unix},v0={hex}")
+            return VerifyResult(
+                outcome=VerifyOutcome.MALFORMED, detail="expected t={unix},v0={hex}"
+            )
         window = enforce_window(float(ts), tolerance_seconds=30 * 60, unit="s", one_sided=False)
         if window is not None:
             return window
@@ -160,7 +176,9 @@ class ElevenLabsPlugin:
         if not conv:
             return
         meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
-        call_started = parse_datetime(meta.get("start_time_unix_secs") or data.get("start_time_unix_secs"))
+        call_started = parse_datetime(
+            meta.get("start_time_unix_secs") or data.get("start_time_unix_secs")
+        )
         yield CallObserved(
             source_call_id=conv,
             agent_id=as_str(data.get("agent_id")) or "unknown",
@@ -211,7 +229,9 @@ class ElevenLabsPlugin:
                 provenance=Provenance.PROVIDER_REPORTED,
                 source_path="data.transcript[role=user].message",
             )
-        reason = as_str(data.get("termination_reason") or meta.get("termination_reason") or data.get("status"))
+        reason = as_str(
+            data.get("termination_reason") or meta.get("termination_reason") or data.get("status")
+        )
         if reason:
             yield OutcomeObserved(provider_code=reason)
             yield CallFinalized(reason="provider")

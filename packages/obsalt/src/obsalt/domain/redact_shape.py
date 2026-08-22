@@ -39,7 +39,9 @@ def json_type_name(value: Any) -> str:
 
 def payload_shape(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(k): payload_shape(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
+        return {
+            str(k): payload_shape(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
+        }
     if isinstance(value, list):
         if not value:
             return []

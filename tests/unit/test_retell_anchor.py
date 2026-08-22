@@ -9,7 +9,6 @@ from obsalt.domain.events import ToolObserved
 from obsalt.plugin.types import RawEnvelope
 from obsalt.util import new_id, utcnow
 from obsalt_retell.plugin import RetellPlugin
-
 from tests.helpers import RETELL_FIXTURES
 
 
@@ -27,7 +26,11 @@ def test_retell_tool_uses_coarse_utterance_anchor() -> None:
         received_at=utcnow(),
     )
     events = list(plugin.decode(envelope))
-    tool = next(event for event in events if isinstance(event, ToolObserved) and event.name == "lookup_invoice")
+    tool = next(
+        event
+        for event in events
+        if isinstance(event, ToolObserved) and event.name == "lookup_invoice"
+    )
     assert tool.started_at == datetime(2025, 8, 21, 12, 0, 2, 300000, tzinfo=UTC)
     assert tool.ended_at is None
     stamp = tool.provenance_by_field["started_at"]

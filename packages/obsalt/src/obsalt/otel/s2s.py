@@ -184,7 +184,9 @@ class InstrumentedVoiceClient:
         *,
         attributes: dict[str, object] | None = None,
     ) -> ReadableSpan:
-        return self._emit(SPAN_USER_INPUT, conversation_id, start_unix_nano, end_unix_nano, attributes)
+        return self._emit(
+            SPAN_USER_INPUT, conversation_id, start_unix_nano, end_unix_nano, attributes
+        )
 
     def record_generation(
         self,
@@ -194,7 +196,9 @@ class InstrumentedVoiceClient:
         *,
         attributes: dict[str, object] | None = None,
     ) -> ReadableSpan:
-        return self._emit(SPAN_GENERATION, conversation_id, start_unix_nano, end_unix_nano, attributes)
+        return self._emit(
+            SPAN_GENERATION, conversation_id, start_unix_nano, end_unix_nano, attributes
+        )
 
     def record_playout(
         self,
@@ -257,6 +261,8 @@ class InstrumentedVoiceClient:
         return span
 
 
-def instrument_s2s(client: object, cfg: SdkConfig, *, provider: str, notes: str) -> InstrumentedClient:
+def instrument_s2s(
+    client: object, cfg: SdkConfig, *, provider: str, notes: str
+) -> InstrumentedClient:
     wrapper = InstrumentedVoiceClient(client, provider=provider, service_name=cfg.service_name)
     return InstrumentedClient(client=wrapper, notes=notes)

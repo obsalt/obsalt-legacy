@@ -20,7 +20,9 @@ class Ts:
 
 
 class FieldMap:
-    def __init__(self, mapping: dict[str, str | Sequence[str] | Ts | Callable[[dict[str, Any]], Any]]) -> None:
+    def __init__(
+        self, mapping: dict[str, str | Sequence[str] | Ts | Callable[[dict[str, Any]], Any]]
+    ) -> None:
         self.mapping = mapping
 
     def apply(self, payload: dict[str, Any]) -> dict[str, Any]:

@@ -80,7 +80,9 @@ def forward_otlp_batch(
     try:
         validate_destination(destination_url, allow_http_localhost=allow_http_localhost)
     except EgressDenied as exc:
-        return ForwardResult(outcome=ForwardOutcome.PERMANENT, detail=str(exc), identity_preserved=True)
+        return ForwardResult(
+            outcome=ForwardOutcome.PERMANENT, detail=str(exc), identity_preserved=True
+        )
 
     headers = {"Content-Type": content_type}
     if content_encoding:
@@ -97,9 +99,13 @@ def forward_otlp_batch(
     try:
         response = http.post(destination_url, content=payload, headers=headers, timeout=timeout)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
-        return ForwardResult(outcome=ForwardOutcome.RETRYABLE, detail=str(exc), identity_preserved=True)
+        return ForwardResult(
+            outcome=ForwardOutcome.RETRYABLE, detail=str(exc), identity_preserved=True
+        )
     except httpx.HTTPError as exc:
-        return ForwardResult(outcome=ForwardOutcome.RETRYABLE, detail=str(exc), identity_preserved=True)
+        return ForwardResult(
+            outcome=ForwardOutcome.RETRYABLE, detail=str(exc), identity_preserved=True
+        )
     finally:
         if own_client:
             http.close()

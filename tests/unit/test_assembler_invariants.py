@@ -18,7 +18,6 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.worker.process import MemoryRevisionSink, process_normalized_events
-
 from tests.helpers import fidelity_declaration
 
 
@@ -34,7 +33,9 @@ def test_fold_is_permutation_and_duplicate_idempotent() -> None:
         accepted, more_conflicts, _ = fold_facts([*perm, *perm])
         assert more_conflicts == []
         assert set(accepted) == set(baseline)
-        assert {r.content_hash for r in accepted.values()} == {r.content_hash for r in baseline.values()}
+        assert {r.content_hash for r in accepted.values()} == {
+            r.content_hash for r in baseline.values()
+        }
 
 
 def test_conflicting_content_is_commutative() -> None:

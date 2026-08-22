@@ -43,7 +43,7 @@ class VoiceCall:
         cls,
         *,
         call_id: str,
-        workspace_id: str,
+        org_id: str,
         agent_id: str,
         provider_call_id: str | None = None,
         conversation_id: str | None = None,
@@ -52,7 +52,7 @@ class VoiceCall:
         attrs: dict[str, Any] = {
             CALL_ID: call_id,
             AGENT_ID: agent_id,
-            "obsalt.org": workspace_id,
+            "obsalt.org": org_id,
             PROVIDER_CALL_ID: provider_call_id or call_id,
         }
         if conversation_id:

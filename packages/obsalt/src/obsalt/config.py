@@ -1,3 +1,9 @@
+"""Process settings. Every field is `OBSALT_<NAME>` in the environment.
+
+Postgres uses a libpq DSN. ClickHouse, Redis, and S3 use HTTP/URL endpoints.
+That suffix difference is intentional, not drift.
+"""
+
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict

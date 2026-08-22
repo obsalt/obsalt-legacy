@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from obsalt_testkit.schema import FixtureSuite, blocking_errors, validate_raw_fixtures
 from tests.helpers import (
     CARTESIA_FIXTURES,
     ELEVEN_FIXTURES,
@@ -11,6 +10,8 @@ from tests.helpers import (
     RETELL_FIXTURES,
     VAPI_FIXTURES,
 )
+
+from obsalt_testkit.schema import FixtureSuite, blocking_errors, validate_raw_fixtures
 
 
 @pytest.mark.parametrize(

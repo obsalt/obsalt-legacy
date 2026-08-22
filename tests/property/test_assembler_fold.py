@@ -83,7 +83,9 @@ def test_four_event_permutations_agree_including_tool() -> None:
     from obsalt.domain.events import ToolObserved
 
     catalog = _catalog()
-    catalog["tool"] = ToolObserved(tool_id="t1", name="lookup", status=ToolStatus.SUCCESS, result="ok")
+    catalog["tool"] = ToolObserved(
+        tool_id="t1", name="lookup", status=ToolStatus.SUCCESS, result="ok"
+    )
     names = ["call", "turn", "stt", "tool"]
     hashes = set()
     for order in itertools.permutations(names):
@@ -121,7 +123,9 @@ def test_conflicting_agent_ids_block_promotion() -> None:
     pointers = MemoryPointerStore()
     sink = MemoryRevisionSink()
     sink.write(candidate)
-    result = promote(pointers, candidate, expected=None, fact_frontier=frozenset(candidate.accepted_fact_ids))
+    result = promote(
+        pointers, candidate, expected=None, fact_frontier=frozenset(candidate.accepted_fact_ids)
+    )
     assert result.promoted is False
     assert result.conflict is True
     assert pointers.get("o", "cid") is None

@@ -79,7 +79,11 @@ class TurnObserved(EventBase):
     def identity_parts(self) -> dict[str, Any]:
         # turn_index alone is not a source identity: incremental transcripts
         # restart at 0. Prefer the provider timestamp when present.
-        parts: dict[str, Any] = {"type": self.type, "turn_index": self.turn_index, "speaker": self.speaker.value}
+        parts: dict[str, Any] = {
+            "type": self.type,
+            "turn_index": self.turn_index,
+            "speaker": self.speaker.value,
+        }
         if self.started_at is not None:
             parts["started_at"] = self.started_at.isoformat()
         return parts
@@ -221,7 +225,18 @@ class CallFinalized(EventBase):
 
 
 NormalizedEvent = Annotated[
-    CallObserved | TurnObserved | StageObserved | AggregateObserved | ToolObserved | OutcomeObserved | GroundingObserved | EvidenceObserved | InterruptionObserved | SnapshotBoundaryObserved | FactRetracted | CallFinalized,
+    CallObserved
+    | TurnObserved
+    | StageObserved
+    | AggregateObserved
+    | ToolObserved
+    | OutcomeObserved
+    | GroundingObserved
+    | EvidenceObserved
+    | InterruptionObserved
+    | SnapshotBoundaryObserved
+    | FactRetracted
+    | CallFinalized,
     Field(discriminator="type"),
 ]
 

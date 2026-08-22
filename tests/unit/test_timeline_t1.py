@@ -21,7 +21,6 @@ from obsalt.otel.s2s import decode_s2s_spans
 from obsalt.plugin.types import ReadableSpan
 from obsalt_livekit.plugin import LiveKitPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
-
 from tests.helpers import fidelity_declaration
 
 
@@ -108,7 +107,9 @@ def test_pipecat_ttfb_is_anchored_not_full_span_interval() -> None:
     )
     events = list(plugin.decode([span]))
     ttfb = next(e for e in events if isinstance(e, StageObserved) and e.metric is Metric.TTFB)
-    duration = next(e for e in events if isinstance(e, StageObserved) and e.metric is Metric.DURATION)
+    duration = next(
+        e for e in events if isinstance(e, StageObserved) and e.metric is Metric.DURATION
+    )
     assert ttfb.placement is MeasurementPlacement.ANCHORED_DURATION
     assert ttfb.ended_at is None
     assert ttfb.value_ms == 42.0

@@ -251,7 +251,9 @@ def drain_outbound(state: Any) -> int:
             if durable:
                 store.mark_failed(item["event_id"], detail, item["attempts"])
         else:
-            log.warning("outbound dlq %s to %s: %s", item["payload"]["type"], dest.get("url"), detail)
+            log.warning(
+                "outbound dlq %s to %s: %s", item["payload"]["type"], dest.get("url"), detail
+            )
             from obsalt.metrics import dlq_inserts_total
 
             dlq_inserts_total.inc()

@@ -18,7 +18,7 @@ from obsalt.analysis.rollups import _percentile_stats, build_latency_rollup
 from obsalt.domain.models import CallRevision
 from obsalt.util import new_id
 
-log = logging.getLogger("obsalt.rollups")
+log = logging.getLogger("obsalt.analysis.contributions")
 
 
 class MemoryRollupStore:
@@ -60,8 +60,16 @@ class MemoryRollupStore:
         return self.generation
 
     def delete_call(self, org_id: str, call_id: str) -> str:
-        self.samples = [row for row in self.samples if not (row["org_id"] == org_id and row["call_id"] == call_id)]
-        self.aggregates = [row for row in self.aggregates if not (row["org_id"] == org_id and row["call_id"] == call_id)]
+        self.samples = [
+            row
+            for row in self.samples
+            if not (row["org_id"] == org_id and row["call_id"] == call_id)
+        ]
+        self.aggregates = [
+            row
+            for row in self.aggregates
+            if not (row["org_id"] == org_id and row["call_id"] == call_id)
+        ]
         self.generation = new_id()
         return self.generation
 

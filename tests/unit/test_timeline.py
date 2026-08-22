@@ -71,7 +71,9 @@ def test_anchored_duration_is_not_a_waterfall_interval() -> None:
     assert view["draw_stage_waterfall"] is False
     assert view["stage_intervals"] == []
     assert view["anchored_stage_chips"]
-    assert view["anchored_stage_chips"][0]["placement"] == MeasurementPlacement.ANCHORED_DURATION.value
+    assert (
+        view["anchored_stage_chips"][0]["placement"] == MeasurementPlacement.ANCHORED_DURATION.value
+    )
 
 
 def test_interval_without_timestamps_is_downgraded_and_not_drawn() -> None:

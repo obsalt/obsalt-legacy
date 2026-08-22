@@ -8,6 +8,7 @@ from typing import Any
 
 import jsonschema
 import pytest
+
 from obsalt.assemble.facts import fact_id_for
 from obsalt.crypto.primitives import require_singleton
 from obsalt.domain.enums import (
@@ -61,7 +62,9 @@ def load_ignore_fields(fixtures_dir: Path) -> frozenset[str]:
     return frozenset(fields) if fields else DEFAULT_IGNORE_FIELDS
 
 
-def stable_event_dump(event: NormalizedEvent, ignore: frozenset[str] | None = None) -> dict[str, Any]:
+def stable_event_dump(
+    event: NormalizedEvent, ignore: frozenset[str] | None = None
+) -> dict[str, Any]:
     """JSON-mode dump with volatile core-stamped fields removed."""
 
     skip = ignore if ignore is not None else DEFAULT_IGNORE_FIELDS
@@ -71,7 +74,9 @@ def stable_event_dump(event: NormalizedEvent, ignore: frozenset[str] | None = No
     return data
 
 
-def decode_raw_fixture(plugin: Any, path: Path, *, org_id: str = "test-org") -> list[NormalizedEvent]:
+def decode_raw_fixture(
+    plugin: Any, path: Path, *, org_id: str = "test-org"
+) -> list[NormalizedEvent]:
     body = path.read_bytes()
     envelope = RawEnvelope(
         envelope_id=new_id(),
@@ -214,7 +219,10 @@ class OtlpMapperConformanceTests:
 
     def test_mapper_interval_has_real_timestamps(self) -> None:
         for event in self._decode():
-            if isinstance(event, StageObserved) and event.placement is MeasurementPlacement.INTERVAL:
+            if (
+                isinstance(event, StageObserved)
+                and event.placement is MeasurementPlacement.INTERVAL
+            ):
                 assert event.started_at is not None and event.ended_at is not None
 
     def test_mapper_span_names_stay_off_the_event(self) -> None:
@@ -230,9 +238,11 @@ class OtlpMapperConformanceTests:
 class SecondsVsMillisecondsTests:
     """Dedicated class: unit mistakes here produced the 290ms-vs-740ms error."""
 
-    def assert_seconds_field_converted(self, raw_seconds: float, decoded_ms: float, *, places: int = 0) -> None:
+    def assert_seconds_field_converted(
+        self, raw_seconds: float, decoded_ms: float, *, places: int = 0
+    ) -> None:
         expected = raw_seconds * 1000.0
-        assert decoded_ms == pytest.approx(expected, rel=0, abs=10 ** -places or 0.5)
+        assert decoded_ms == pytest.approx(expected, rel=0, abs=10**-places or 0.5)
 
     def assert_millisecond_field_unchanged(self, raw_ms: float, decoded_ms: float) -> None:
         assert decoded_ms == pytest.approx(raw_ms, rel=0, abs=0.5)
@@ -251,7 +261,9 @@ class AuthenticationConformanceTests:
 
     def test_missing_credential_fail_closed(self) -> None:
         cfg = self.connection.model_copy(update={"secrets": {}})
-        result = self.plugin.authenticate(self.valid_raw, RawHeaders.from_mapping(self.valid_headers).as_list(), cfg)
+        result = self.plugin.authenticate(
+            self.valid_raw, RawHeaders.from_mapping(self.valid_headers).as_list(), cfg
+        )
         assert result.outcome is VerifyOutcome.MISSING_CREDENTIAL
         assert not result.ok
 
@@ -324,7 +336,9 @@ class SchemaFixtureTests:
                 meta = json.loads(overlay.read_text())
                 for required in ("original_failure", "owner", "review_date", "expiry"):
                     assert required in meta, f"overlay {overlay.name} missing {required}"
-        validators = {p: jsonschema.Draft202012Validator(json.loads(p.read_text())) for p in schemas}
+        validators = {
+            p: jsonschema.Draft202012Validator(json.loads(p.read_text())) for p in schemas
+        }
         for raw in sorted(raw_dir.glob("*.json")):
             payload = json.loads(raw.read_text())
             validators[self._schema_for(raw, schemas)].validate(payload)
@@ -364,7 +378,9 @@ class SchemaFixtureTests:
             assert key in reasons or alt in reasons or alt.upper() in reasons, (
                 f"{key} is structurally_absent but missing from fixtures/bypass_reasons"
             )
-            assert (reasons.get(key) or reasons.get(alt) or reasons.get(alt.upper()) or reason).strip()
+            assert (
+                reasons.get(key) or reasons.get(alt) or reasons.get(alt.upper()) or reason
+            ).strip()
 
     def test_structurally_absent_not_emitted_as_interval(self) -> None:
         if self.plugin is None:
@@ -475,7 +491,9 @@ def _payload_has_prompt(payload: Any) -> bool:
 
 def _payload_has_tool_result(payload: Any) -> bool:
     blob = json.dumps(payload).lower()
-    return any(token in blob for token in ("tool_call_result", "toolresult", "tool_result", '"result":'))
+    return any(
+        token in blob for token in ("tool_call_result", "toolresult", "tool_result", '"result":')
+    )
 
 
 class WebhookConformanceTests:
@@ -517,7 +535,11 @@ class SdkInstrumentationConformanceTests:
 
         for name in (SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT):
             assert "{" not in name
-            assert name == name.split(".")[0] or name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}
+            assert name == name.split(".")[0] or name in {
+                SPAN_USER_INPUT,
+                SPAN_GENERATION,
+                SPAN_PLAYOUT,
+            }
 
 
 def spans_from_fixture(path: Path) -> list[ReadableSpan]:

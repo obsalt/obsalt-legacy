@@ -47,7 +47,9 @@ def test_late_spans_after_finalize_rebuild() -> None:
         parent_span_id="",
         attributes={"obsalt.as_root": True},
     )
-    again = assembler.ingest("acme", [late], [TurnObserved(turn_index=0, speaker=Speaker.USER, text="late")])
+    again = assembler.ingest(
+        "acme", [late], [TurnObserved(turn_index=0, speaker=Speaker.USER, text="late")]
+    )
     assert again.late_after_finalize is True
     assert again.finalized is False
     assert assembler.ready(again) is True

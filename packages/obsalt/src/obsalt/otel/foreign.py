@@ -91,7 +91,8 @@ class ForeignConventionMapper:
                 architecture=PipelineArchitecture.CASCADE,
                 provenance_by_field={
                     "source_call_id": ProvenanceStamp(
-                        provenance=Provenance.PROVIDER_REPORTED, source_path="openinference/openllmetry"
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="openinference/openllmetry",
                     )
                 },
             )
@@ -104,11 +105,20 @@ class ForeignConventionMapper:
             ended = datetime.fromtimestamp((span.end_unix_nano or 0) / 1e9, tz=UTC)
             ms = (span.end_unix_nano - span.start_unix_nano) / 1e6
             kind = str(attrs.get("openinference.span.kind") or "")
-            stage = _OPENINFERENCE_KINDS.get(kind.upper()) or _stage_from_llm_attrs(attrs, span.name)
+            stage = _OPENINFERENCE_KINDS.get(kind.upper()) or _stage_from_llm_attrs(
+                attrs, span.name
+            )
             if kind.upper() == "TOOL" or stage is Stage.TOOL:
                 yield ToolObserved(
-                    tool_id=str(attrs.get("gen_ai.tool.call.id") or attrs.get("tool.id") or span.span_id),
-                    name=str(attrs.get("gen_ai.tool.name") or attrs.get("tool.name") or span.name or "tool"),
+                    tool_id=str(
+                        attrs.get("gen_ai.tool.call.id") or attrs.get("tool.id") or span.span_id
+                    ),
+                    name=str(
+                        attrs.get("gen_ai.tool.name")
+                        or attrs.get("tool.name")
+                        or span.name
+                        or "tool"
+                    ),
                     started_at=started,
                     ended_at=ended,
                     status=ToolStatus.SUCCESS,

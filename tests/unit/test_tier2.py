@@ -55,7 +55,9 @@ def test_manual_trigger_runs_and_cache_is_free() -> None:
     cache: dict = {}
     first = asyncio.run(run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge()))
     assert first.execution.state is AnalysisState.COMPLETED
-    second = asyncio.run(run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge(), cost_usd=0.5))
+    second = asyncio.run(
+        run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge(), cost_usd=0.5)
+    )
     assert second is first
     assert "cost_usd" not in (second.payload or {})
 
@@ -64,7 +66,9 @@ def test_ungrounded_price_claim_is_not_a_pass() -> None:
     call = _call(
         turns=[Turn(index=0, speaker=Speaker.AGENT, text="I refunded $48.50 for order ORD-99999.")],
         grounding=[],
-        tools=[ToolInvocation(id="t1", name="lookup_order", status=ToolStatus.ERROR, error="not_found")],
+        tools=[
+            ToolInvocation(id="t1", name="lookup_order", status=ToolStatus.ERROR, error="not_found")
+        ],
     )
     claims = extract_candidate_claims(call)
     assert claims
@@ -74,7 +78,9 @@ def test_ungrounded_price_claim_is_not_a_pass() -> None:
     assert all(item["verdict"] != "grounded" for item in entailed)
     assert any(item["verdict"] == "contradicted" for item in entailed)
     assert any(item.get("quotes") for item in entailed)
-    assert any("lookup_order" in " ".join(item.get("grounding_considered") or []) for item in entailed)
+    assert any(
+        "lookup_order" in " ".join(item.get("grounding_considered") or []) for item in entailed
+    )
 
 
 def test_grounded_identifier_passes() -> None:

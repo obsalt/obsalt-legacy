@@ -93,7 +93,9 @@ def build_latency_rollup(calls: Sequence[CallRevision], as_of_generation: str) -
 def build_tools_rollup(calls: Sequence[CallRevision], as_of_generation: str) -> dict[str, Any]:
     """Success/retry/duration/shape telemetry per tool. Missing duration stays missing."""
     grouped: dict[str, list[tuple[CallRevision, ToolInvocation]]] = defaultdict(list)
-    grouped_agent: dict[tuple[str, str], list[tuple[CallRevision, ToolInvocation]]] = defaultdict(list)
+    grouped_agent: dict[tuple[str, str], list[tuple[CallRevision, ToolInvocation]]] = defaultdict(
+        list
+    )
     for call in calls:
         for tool in call.tools:
             grouped[tool.name].append((call, tool))
@@ -138,7 +140,9 @@ def build_quality_rollup(
         key = (result.execution.call_id, result.execution.revision)
         if active and key not in active:
             continue
-        state_counts[result.execution.state.value] = state_counts.get(result.execution.state.value, 0) + 1
+        state_counts[result.execution.state.value] = (
+            state_counts.get(result.execution.state.value, 0) + 1
+        )
         payload = result.payload
         selection = str(payload.get("selection") or payload.get("trigger") or "")
         rubric_key = result.execution.rubric_version or result.execution.analyzer_id
@@ -259,7 +263,9 @@ def _aggregate_row(call: CallRevision, item: AggregateMeasurement) -> dict[str, 
 def _tool_stats(rows: Sequence[tuple[CallRevision, ToolInvocation]]) -> dict[str, Any]:
     count = len(rows)
     successes = sum(1 for _call, tool in rows if tool.status is ToolStatus.SUCCESS)
-    failures = sum(1 for _call, tool in rows if tool.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT})
+    failures = sum(
+        1 for _call, tool in rows if tool.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}
+    )
     retries = sum(tool.retry_count for _call, tool in rows)
     durations = [tool.duration_ms for _call, tool in rows if tool.duration_ms is not None]
     ttt: list[float] = []
@@ -293,9 +299,7 @@ def _shape_key(shape: Any) -> str:
     return canonical_json(shape)
 
 
-_NON_EVAL_ANALYZERS = frozenset(
-    {"hallucination", "flags", "hangup", "tools", "coverage", "tier1"}
-)
+_NON_EVAL_ANALYZERS = frozenset({"hallucination", "flags", "hangup", "tools", "coverage", "tier1"})
 
 
 def _is_eval(result: AnalysisResult) -> bool:
@@ -314,7 +318,11 @@ def _hallucination_kinds(result: AnalysisResult) -> list[str]:
     payload = result.payload
     kinds: list[str] = []
     for claim in payload.get("claims") or []:
-        if isinstance(claim, dict) and claim.get("kind") and claim.get("verdict") in {"contradicted", "unsupported"}:
+        if (
+            isinstance(claim, dict)
+            and claim.get("kind")
+            and claim.get("verdict") in {"contradicted", "unsupported"}
+        ):
             kinds.append(str(claim["kind"]))
     return kinds
 

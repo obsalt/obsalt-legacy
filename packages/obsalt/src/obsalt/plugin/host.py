@@ -55,6 +55,7 @@ class LoadedPlugin:
         self.capabilities = plugin.capabilities
         self.manifest: PluginManifest = plugin.manifest
         self.fidelity: FidelityDeclaration = plugin.fidelity
+        self.decoder_version = getattr(plugin, "decoder_version", f"{plugin.name}/1")
 
     def has(self, capability: Capability) -> bool:
         return capability in self.capabilities

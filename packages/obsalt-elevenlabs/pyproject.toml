@@ -7,6 +7,7 @@ name = "obsalt-elevenlabs"
 version = "2.0.0"
 description = "ElevenLabs hosted source plugin for obsalt"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
 dependencies = ["obsalt==2.0.0"]
 
 [project.entry-points."obsalt.plugins"]
@@ -16,4 +17,4 @@ elevenlabs = "obsalt_elevenlabs.plugin:ElevenLabsPlugin"
 where = ["src"]
 
 [tool.setuptools.package-data]
-obsalt_elevenlabs = ["fixtures/**/*"]
+obsalt_elevenlabs = ["py.typed", "fixtures/**/*"]

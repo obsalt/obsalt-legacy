@@ -85,7 +85,11 @@ class PostgresSpanIdentityIndex(SpanIdentityIndex):
             ).fetchone()
         except Exception:
             return cached
-        existing = None if row is None else (row["content_fingerprint"] if isinstance(row, dict) else row[0])
+        existing = (
+            None
+            if row is None
+            else (row["content_fingerprint"] if isinstance(row, dict) else row[0])
+        )
         if existing is None:
             try:
                 with self._conn.transaction():

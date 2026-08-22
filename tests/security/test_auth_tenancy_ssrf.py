@@ -6,6 +6,7 @@ import json
 
 import httpx
 import pytest
+
 from obsalt.domain.enums import VerifyOutcome
 from obsalt.egress import EgressDenied, validate_destination
 from obsalt.ingest.headers import RawHeaders
@@ -14,7 +15,6 @@ from obsalt.plugin.types import BackfillCursor, ConnectionConfig
 from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import (
     ELEVEN_FIXTURES,
     RETELL_FIXTURES,
@@ -79,7 +79,9 @@ def test_bad_signature_is_rejected_on_the_receive_path() -> None:
         provider="vapi",
         ingest_key="ik",
         raw=raw,
-        headers=RawHeaders.from_mapping({"x-vapi-secret": "wrong", "content-type": "application/json"}),
+        headers=RawHeaders.from_mapping(
+            {"x-vapi-secret": "wrong", "content-type": "application/json"}
+        ),
         resolver=state.resolver,
         plugin=VapiPlugin(),
         objects=state.objects,
@@ -103,7 +105,9 @@ def test_elevenlabs_stale_signature_is_rejected_on_the_receive_path() -> None:
         provider="elevenlabs",
         ingest_key="ik",
         raw=raw,
-        headers=RawHeaders.from_mapping({"elevenlabs-signature": f"t={ts},v0={sig}", "content-type": "application/json"}),
+        headers=RawHeaders.from_mapping(
+            {"elevenlabs-signature": f"t={ts},v0={sig}", "content-type": "application/json"}
+        ),
         resolver=state.resolver,
         plugin=ElevenLabsPlugin(),
         objects=state.objects,
@@ -175,7 +179,6 @@ def test_vapi_backfill_does_not_follow_redirects(monkeypatch: pytest.MonkeyPatch
 def test_mixed_org_otlp_resource_is_rejected() -> None:
     from obsalt.otel.tenancy import reject_tenant_assertions
     from obsalt.plugin.types import ReadableSpan
-
     from tests.helpers import api_client, example_state
 
     spans = [
@@ -196,7 +199,9 @@ def test_mixed_org_otlp_resource_is_rejected() -> None:
             {
                 "resourceSpans": [
                     {
-                        "resource": {"attributes": [{"key": "obsalt.org", "value": {"stringValue": "other"}}]},
+                        "resource": {
+                            "attributes": [{"key": "obsalt.org", "value": {"stringValue": "other"}}]
+                        },
                         "scopeSpans": [
                             {
                                 "spans": [

@@ -7,6 +7,7 @@ name = "obsalt-providers-all"
 version = "2.0.0"
 description = "Meta-package installing all first-party obsalt source plugins"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
 dependencies = [
   "obsalt-vapi==2.0.0",
   "obsalt-retell==2.0.0",

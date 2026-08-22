@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import UTC, date, datetime
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
     GroundingKind,
@@ -37,6 +36,7 @@ from obsalt.otel.conventions import (
     genai_provider_name_key,
 )
 from obsalt.otel.span_time import valid_span_interval
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 
@@ -49,8 +49,12 @@ class PipecatPlugin:
     manifest = PluginManifest()
     fidelity = FidelityDeclaration(
         source_format="pipecat.otlp",
-        possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
-        possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.ANCHORED_DURATION}),
+        possible_architectures=frozenset(
+            {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
+        ),
+        possible_placements=frozenset(
+            {MeasurementPlacement.INTERVAL, MeasurementPlacement.ANCHORED_DURATION}
+        ),
         provides=frozenset(
             {Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.TTFA, Signal.GROUNDING_USER}
         ),
@@ -64,7 +68,14 @@ class PipecatPlugin:
         attrs = span.attributes or {}
         if "metrics.ttfb" in attrs or str(attrs.get("turn.index", "")).isdigit():
             return 70
-        if span.name in {SPAN_TURN, SPAN_STT, SPAN_STT_PROVIDER_ATTEMPT, SPAN_LLM, SPAN_TTS, SPAN_TOOL}:
+        if span.name in {
+            SPAN_TURN,
+            SPAN_STT,
+            SPAN_STT_PROVIDER_ATTEMPT,
+            SPAN_LLM,
+            SPAN_TTS,
+            SPAN_TOOL,
+        }:
             return 30
         if genai_provider_name(attrs):
             return 25
@@ -125,12 +136,16 @@ class PipecatPlugin:
                 result = attrs.get("obsalt.pii.tool.result") or attrs.get("output.value")
                 args = attrs.get("obsalt.pii.tool.arguments") or attrs.get("input.value")
                 yield ToolObserved(
-                    tool_id=str(attrs.get("tool.id") or attrs.get("gen_ai.tool.call.id") or span.span_id),
+                    tool_id=str(
+                        attrs.get("tool.id") or attrs.get("gen_ai.tool.call.id") or span.span_id
+                    ),
                     name=str(attrs.get("tool.name") or attrs.get("gen_ai.tool.name") or "tool"),
                     turn_index=turn_i,
                     started_at=started,
                     ended_at=ended,
-                    args=args if isinstance(args, dict) else ({"value": args} if args is not None else None),
+                    args=args
+                    if isinstance(args, dict)
+                    else ({"value": args} if args is not None else None),
                     result=result,
                 )
                 if result not in (None, ""):

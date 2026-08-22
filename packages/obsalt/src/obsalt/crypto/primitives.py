@@ -73,7 +73,9 @@ def enforce_window(
     delta = ts - current_s
     if one_sided:
         if delta < -tolerance_seconds:
-            return VerifyResult(outcome=VerifyOutcome.STALE, detail="timestamp older than tolerance")
+            return VerifyResult(
+                outcome=VerifyOutcome.STALE, detail="timestamp older than tolerance"
+            )
         if delta > tolerance_seconds:
             return VerifyResult(outcome=VerifyOutcome.STALE, detail="timestamp in the future")
         return None
@@ -96,7 +98,9 @@ def jwt_hs256_sign(payload: Mapping[str, object], secret: str) -> str:
     return f"{header}.{body}.{sig}"
 
 
-def jwt_hs256_verify(token: str, secret: str, *, now: float | None = None) -> dict[str, object] | None:
+def jwt_hs256_verify(
+    token: str, secret: str, *, now: float | None = None
+) -> dict[str, object] | None:
     """Minimal HS256 JWT validation for plugin composition. Fail closed on expiry."""
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
@@ -153,7 +157,9 @@ def header_values(headers: list[tuple[bytes, bytes]] | Mapping[str, str], name: 
     return values
 
 
-def require_singleton(headers: list[tuple[bytes, bytes]], singleton: frozenset[bytes]) -> VerifyResult | None:
+def require_singleton(
+    headers: list[tuple[bytes, bytes]], singleton: frozenset[bytes]
+) -> VerifyResult | None:
     counts: dict[bytes, int] = {}
     for key, _value in headers:
         lowered = key.lower()

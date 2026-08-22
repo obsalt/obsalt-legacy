@@ -7,6 +7,7 @@ name = "obsalt-vapi"
 version = "2.0.0"
 description = "Vapi hosted source plugin for obsalt"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
 dependencies = ["obsalt==2.0.0"]
 
 [project.entry-points."obsalt.plugins"]
@@ -16,4 +17,4 @@ vapi = "obsalt_vapi.plugin:VapiPlugin"
 where = ["src"]
 
 [tool.setuptools.package-data]
-obsalt_vapi = ["fixtures/**/*", "data/**/*"]
+obsalt_vapi = ["py.typed", "fixtures/**/*", "data/**/*"]

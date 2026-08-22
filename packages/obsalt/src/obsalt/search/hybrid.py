@@ -43,7 +43,11 @@ STOP_WORDS = frozenset(
 
 
 def content_tokens(text: str) -> set[str]:
-    return {token for token in TOKEN_RE.findall(text.lower()) if token not in STOP_WORDS and len(token) > 2}
+    return {
+        token
+        for token in TOKEN_RE.findall(text.lower())
+        if token not in STOP_WORDS and len(token) > 2
+    }
 
 
 class LocalEmbedder:
@@ -118,7 +122,9 @@ class OnnxEmbedder:
         return [v / norm for v in rotated]
 
     async def embed(self, documents: Sequence[RedactedDocument]) -> Sequence[Vector]:
-        return [Vector(id=doc.id, values=self._project(self._bag.bag(doc.text))) for doc in documents]
+        return [
+            Vector(id=doc.id, values=self._project(self._bag.bag(doc.text))) for doc in documents
+        ]
 
 
 def rrf(vector_ids: Sequence[str], lexical_ids: Sequence[str], *, k: int = 60) -> list[str]:

@@ -44,7 +44,6 @@ class AppState:
     destinations: list[dict[str, str]] = field(default_factory=list)
     webhook_destinations: list[dict[str, Any]] = field(default_factory=list)
     org_spend: dict[str, float] = field(default_factory=dict)
-    spend_by_org: dict[str, float] = field(default_factory=dict)
     rollup_generation: str = "gen-0"
     connections_plaintext: dict[str, str] = field(default_factory=dict)
     leases: Any = None
@@ -153,7 +152,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
     from obsalt.search.hybrid import OnnxEmbedder
     from obsalt.store.clickhouse import ClickHouseSink
     from obsalt.store.clickhouse import apply_schema as apply_clickhouse
-    from obsalt.store.forward_pg import PostgresForwardQueue
+    from obsalt.store.forward import PostgresForwardQueue
     from obsalt.store.leases import RedisLeaseAccelerator
     from obsalt.store.objects import S3ObjectStore
     from obsalt.store.postgres import (
@@ -173,7 +172,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         connect,
         ping,
     )
-    from obsalt.store.trace_pg import PostgresTraceAssembler
+    from obsalt.store.trace import PostgresTraceAssembler
 
     conn = connect(settings.postgres_dsn)
     ping(conn)
@@ -396,13 +395,3 @@ def _load_rubrics(store: Any, org_id: str) -> dict[str, Any]:
     if not callable(lister):
         return {}
     return {item.id: item for item in lister(org_id)}
-
-
-def spend_for(state: AppState, org_id: str) -> float:
-    """Alias for org_spend_usd. Prefer org_spend_usd in new code."""
-    return org_spend_usd(state, org_id)
-
-
-def add_spend(state: AppState, org_id: str, cost: float) -> float:
-    """Alias for add_org_spend. Prefer add_org_spend in new code."""
-    return add_org_spend(state, org_id, cost)

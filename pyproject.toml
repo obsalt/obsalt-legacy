@@ -28,12 +28,13 @@ pythonpath = [
 ]
 addopts = "-q --strict-markers"
 markers = [
+  "unit: isolated function tests",
   "integration: cross-component tests that stay on memory doubles",
-  "conformance: plugin conformance kit",
   "blackbox: HTTP API observed only through status codes and JSON",
   "contract: OTLP, SSRF, and storage SQL contracts",
-  "unit: isolated function tests",
+  "conformance: plugin conformance kit",
   "property: assembler permutation and fold properties",
+  "security: auth, tenancy, and SSRF",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 
@@ -46,8 +47,28 @@ src = ["packages", "tests"]
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+known-first-party = [
+  "obsalt",
+  "obsalt_testkit",
+  "obsalt_example",
+  "obsalt_vapi",
+  "obsalt_retell",
+  "obsalt_elevenlabs",
+  "obsalt_cartesia",
+  "obsalt_openai_realtime",
+  "obsalt_gemini_live",
+  "obsalt_pipecat",
+  "obsalt_livekit",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 packages = ["obsalt", "obsalt_testkit", "obsalt_example", "obsalt_vapi", "obsalt_retell"]
 mypy_path = "packages/obsalt/src:packages/obsalt-testkit/src:packages/obsalt-example/src:packages/obsalt-vapi/src:packages/obsalt-retell/src"

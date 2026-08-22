@@ -116,7 +116,10 @@ class OpenAICompatibleJudge:
             response = await client.post(
                 url,
                 json=body,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
             )
             response.raise_for_status()
             payload = response.json()
@@ -170,7 +173,9 @@ def _entail_claim(request: JudgeRequest) -> JudgeResult:
     identifiers = [match.group(0).lower() for match in _ID_RE.finditer(request.transcript)]
     claims_success = any(token in transcript for token in _SUCCESS_CLAIMS)
     tool_failed = any(token in grounding for token in _FAILURE_MARKERS)
-    missing_price = bool(prices) and not any(price in _normalize_money(grounding) for price in prices)
+    missing_price = bool(prices) and not any(
+        price in _normalize_money(grounding) for price in prices
+    )
     missing_id = bool(identifiers) and not any(item in grounding for item in identifiers)
     checkable = bool(prices or identifiers or claims_success)
 
@@ -188,7 +193,9 @@ def _entail_claim(request: JudgeRequest) -> JudgeResult:
             score=0.25 if (missing_price or missing_id) else 0.4,
             passed=False,
             rationale="unsupported",
-            quotes=["ungrounded identifier or price"] if (prices or identifiers) else ["claim has no supporting span"],
+            quotes=["ungrounded identifier or price"]
+            if (prices or identifiers)
+            else ["claim has no supporting span"],
             model=HEURISTIC_VERSION,
             prompt_version="entailment/1",
         )

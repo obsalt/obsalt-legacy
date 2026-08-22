@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Iterable, Sequence
 from typing import ClassVar, Protocol, runtime_checkable
 
 from obsalt._version import PLUGIN_API_VERSION
-from obsalt.domain.enums import Capability
+from obsalt.domain.enums import Capability, ObservationalEventKind
 from obsalt.domain.events import NormalizedEvent
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.plugin.types import (
@@ -37,15 +37,17 @@ RawHeaderList = list[tuple[bytes, bytes]]
 class WebhookSource(Protocol):
     singleton_headers: ClassVar[frozenset[bytes]]
 
-    def authenticate(self, raw: bytes, headers: RawHeaderList, cfg: ConnectionConfig) -> VerifyResult: ...
+    def authenticate(
+        self, raw: bytes, headers: RawHeaderList, cfg: ConnectionConfig
+    ) -> VerifyResult: ...
 
-    def classify(self, raw: bytes) -> ObservationalKindLike: ...
+    def classify(self, raw: bytes) -> ObservationalEventKind: ...
 
     def delivery_key(self, raw: bytes, headers: RawHeaderList) -> str | None: ...
 
     def tombstone_hints(self, raw: bytes) -> TombstoneHints: ...
 
-    def acknowledgement(self, kind: ObservationalKindLike) -> WebhookResponse: ...
+    def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse: ...
 
     def decode(self, envelope: RawEnvelope) -> Iterable[NormalizedEvent]: ...
 
@@ -86,7 +88,9 @@ class Embedder(Protocol):
 
 @runtime_checkable
 class Redactor(Protocol):
-    def redact(self, events: Sequence[NormalizedEvent], policy: RedactionPolicy) -> RedactionResult: ...
+    def redact(
+        self, events: Sequence[NormalizedEvent], policy: RedactionPolicy
+    ) -> RedactionResult: ...
 
 
 @runtime_checkable
@@ -94,12 +98,11 @@ class ObsaltPlugin(Protocol):
     API_VERSION: ClassVar[int]
     name: ClassVar[str]
     display_name: ClassVar[str]
+    decoder_version: ClassVar[str]
     capabilities: ClassVar[frozenset[Capability]]
     manifest: ClassVar[PluginManifest]
     fidelity: ClassVar[FidelityDeclaration]
 
-
-ObservationalKindLike = object  # classified by plugins; core maps to ObservationalEventKind
 
 __all__ = [
     "PLUGIN_API_VERSION",

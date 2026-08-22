@@ -81,14 +81,20 @@ class MemoryTraceAssembler:
         from obsalt.redact.choke import redact_events
 
         for event in events:
-            if isinstance(event, CallObserved) and event.from_number and event.from_number != "<phone>":
+            if (
+                isinstance(event, CallObserved)
+                and event.from_number
+                and event.from_number != "<phone>"
+            ):
                 record.caller_token = caller_token(org_id, event.from_number, DEFAULT_PEPPER)
         record.events.extend(redact_events(events).events)
         for span in spans:
             if is_root_span(span):
                 record.rooted = True
                 ended = _from_nano(span.end_unix_nano) if span.end_unix_nano else None
-                if ended is not None and (record.root_ended_at is None or ended > record.root_ended_at):
+                if ended is not None and (
+                    record.root_ended_at is None or ended > record.root_ended_at
+                ):
                     record.root_ended_at = ended
         return record
 

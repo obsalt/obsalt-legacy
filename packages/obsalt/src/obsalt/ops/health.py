@@ -27,7 +27,10 @@ def collect_health(state: Any) -> dict[str, Any]:
         envelopes = list(getattr(inbox, "by_id", {}).values())
         ages = []
         for envelope in envelopes:
-            if getattr(envelope, "state", None) and envelope.state.value in {"assembled", "tombstoned"}:
+            if getattr(envelope, "state", None) and envelope.state.value in {
+                "assembled",
+                "tombstoned",
+            }:
                 continue
             received = getattr(envelope, "received_at", None)
             if received is not None:
@@ -42,7 +45,10 @@ def collect_health(state: Any) -> dict[str, Any]:
                 pass
         by_org: dict[str, int] = {}
         for envelope in envelopes:
-            if getattr(envelope, "state", None) and envelope.state.value in {"assembled", "tombstoned"}:
+            if getattr(envelope, "state", None) and envelope.state.value in {
+                "assembled",
+                "tombstoned",
+            }:
                 continue
             org = getattr(envelope, "org_id", "") or ""
             by_org[org] = by_org.get(org, 0) + 1

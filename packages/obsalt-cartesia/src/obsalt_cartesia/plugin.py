@@ -4,7 +4,6 @@ import json
 from collections.abc import Iterable
 from datetime import date
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import constant_time_eq, header_values
 from obsalt.domain.enums import (
     Capability,
@@ -29,6 +28,7 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import (
     ConnectionConfig,
     PluginManifest,
@@ -53,20 +53,34 @@ class CartesiaPlugin:
     fidelity = FidelityDeclaration(
         source_format="cartesia.line.webhook",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.UNPLACED}),
-        provides=frozenset(
-            {Signal.TURN_INTERVAL, Signal.STT_DURATION, Signal.TTS_TTFB, Signal.TRANSCRIPT, Signal.GROUNDING_USER}
+        possible_placements=frozenset(
+            {MeasurementPlacement.INTERVAL, MeasurementPlacement.UNPLACED}
         ),
-        structurally_absent={Signal.STAGE_INTERVAL: "Cartesia Line reports unplaced STT/TTS TTFBs, not stage intervals"},
+        provides=frozenset(
+            {
+                Signal.TURN_INTERVAL,
+                Signal.STT_DURATION,
+                Signal.TTS_TTFB,
+                Signal.TRANSCRIPT,
+                Signal.GROUNDING_USER,
+            }
+        ),
+        structurally_absent={
+            Signal.STAGE_INTERVAL: "Cartesia Line reports unplaced STT/TTS TTFBs, not stage intervals"
+        },
         schema_source="https://docs.cartesia.ai (Line webhooks, x-webhook-secret)",
         schema_revision="2026-08-22",
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         secret = cfg.secrets.get("webhook_secret")
         if not secret:
-            return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="webhook_secret required")
+            return VerifyResult(
+                outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="webhook_secret required"
+            )
         values = header_values(headers, "x-webhook-secret")
         if not values:
             return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing x-webhook-secret")
@@ -98,7 +112,11 @@ class CartesiaPlugin:
             agent_id=as_str(payload.get("agent_id")) or "unknown",
             started_at=parse_datetime(payload.get("started_at")),
             ended_at=parse_datetime(payload.get("ended_at")),
-            provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call_id")},
+            provenance_by_field={
+                "source_call_id": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="call_id"
+                )
+            },
         )
         yield SnapshotBoundaryObserved(
             authoritative_domains=[
@@ -123,15 +141,25 @@ class CartesiaPlugin:
                 ended_at=ended,
                 provenance_by_field={
                     "started_at": ProvenanceStamp(
-                        provenance=Provenance.PROVIDER_REPORTED, source_path=f"turns[{index}].started_at"
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path=f"turns[{index}].started_at",
                     ),
                     "ended_at": ProvenanceStamp(
-                        provenance=Provenance.PROVIDER_REPORTED, source_path=f"turns[{index}].ended_at"
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path=f"turns[{index}].ended_at",
                     ),
                 },
             )
-            stt_field = "stt_ttfb_ms" if turn.get("stt_ttfb_ms") is not None else ("stt_ms" if turn.get("stt_ms") is not None else None)
-            tts_field = "tts_ttfb_ms" if turn.get("tts_ttfb_ms") is not None else ("tts_ms" if turn.get("tts_ms") is not None else None)
+            stt_field = (
+                "stt_ttfb_ms"
+                if turn.get("stt_ttfb_ms") is not None
+                else ("stt_ms" if turn.get("stt_ms") is not None else None)
+            )
+            tts_field = (
+                "tts_ttfb_ms"
+                if turn.get("tts_ttfb_ms") is not None
+                else ("tts_ms" if turn.get("tts_ms") is not None else None)
+            )
             if stt_field is not None:
                 stt = as_float(turn.get(stt_field))
                 if stt is not None:

@@ -118,7 +118,11 @@ def sweep_raw(
     raw_retention_days: int | None = None,
 ) -> dict[str, Any]:
     now = now or utcnow()
-    days = raw_retention_days if raw_retention_days is not None else int(state.settings.raw_retention_days)
+    days = (
+        raw_retention_days
+        if raw_retention_days is not None
+        else int(state.settings.raw_retention_days)
+    )
     cutoff = now - timedelta(days=days)
     inbox = state.inbox
     objects = state.objects
@@ -160,7 +164,9 @@ def sweep_orphan_blobs(objects: Any, inbox: Any, *, older_than_seconds: int = 30
 
     if objects is None or not hasattr(objects, "list_keys"):
         return 0
-    known = {getattr(envelope, "object_key", "") for envelope in getattr(inbox, "by_id", {}).values()}
+    known = {
+        getattr(envelope, "object_key", "") for envelope in getattr(inbox, "by_id", {}).values()
+    }
     if hasattr(inbox, "list_envelopes") and not known:
         return 0
     purged = 0

@@ -11,13 +11,17 @@ def test_redaction_choke_strips_phone_email_and_tool_secrets() -> None:
     result = redact_events(
         [
             CallObserved(source_call_id="c1", from_number="+15551234567", to_number="+15557654321"),
-            TurnObserved(turn_index=0, speaker=Speaker.USER, text="Call me at +1 555-111-2222 or a@b.co"),
+            TurnObserved(
+                turn_index=0, speaker=Speaker.USER, text="Call me at +1 555-111-2222 or a@b.co"
+            ),
             GroundingObserved(
                 kind=GroundingKind.USER_TEXT,
                 content="email me at user@example.com",
                 provenance=Provenance.PROVIDER_REPORTED,
             ),
-            ToolObserved(tool_id="t1", name="lookup", args={"phone": "+15550001111", "order_id": 9}),
+            ToolObserved(
+                tool_id="t1", name="lookup", args={"phone": "+15550001111", "order_id": 9}
+            ),
         ]
     )
     call = next(e for e in result.events if isinstance(e, CallObserved))

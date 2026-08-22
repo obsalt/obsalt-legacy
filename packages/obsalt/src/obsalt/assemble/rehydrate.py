@@ -170,7 +170,9 @@ def events_from_revision(revision: CallRevision) -> list[NormalizedEvent]:
         events.append(evidence_event)
 
     if revision.status in {CallStatus.ENDED, CallStatus.ERROR} or revision.hangup is not None:
-        finalized = CallFinalized(reason="provider", org_id=revision.org_id, call_key=revision.call_id)
+        finalized = CallFinalized(
+            reason="provider", org_id=revision.org_id, call_key=revision.call_id
+        )
         finalized.fact_id = fact_id_for(finalized)
         events.append(finalized)
 
