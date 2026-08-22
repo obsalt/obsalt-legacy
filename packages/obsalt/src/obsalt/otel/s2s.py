@@ -33,6 +33,7 @@ from obsalt.otel.conventions import (
     SPAN_USER_INPUT,
     TURN_INDEX,
 )
+from obsalt.otel.span_time import valid_span_interval
 from obsalt.plugin.types import InstrumentedClient, ReadableSpan, SdkConfig
 
 S2S_SPAN_TO_STAGE = {
@@ -147,6 +148,8 @@ def decode_s2s_spans(
             yield InterruptionObserved(turn_index=_turn_index(span), count=1, kind="barge_in")
         stage = S2S_SPAN_TO_STAGE.get(span.name)
         if stage is None:
+            continue
+        if not valid_span_interval(span):
             continue
         yield StageObserved(
             stage=stage,

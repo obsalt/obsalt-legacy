@@ -29,6 +29,7 @@ from obsalt.domain.events import (
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import CONVERSATION_ID, PROVIDER_CALL_ID
+from obsalt.otel.span_time import valid_span_interval
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 _OPENINFERENCE_KINDS = {
@@ -97,10 +98,10 @@ class ForeignConventionMapper:
         turn_index = 0
         for span in spans:
             attrs = span.attributes or {}
+            if not valid_span_interval(span):
+                continue
             started = datetime.fromtimestamp((span.start_unix_nano or 0) / 1e9, tz=UTC)
             ended = datetime.fromtimestamp((span.end_unix_nano or 0) / 1e9, tz=UTC)
-            if not span.start_unix_nano or not span.end_unix_nano or span.end_unix_nano <= span.start_unix_nano:
-                continue
             ms = (span.end_unix_nano - span.start_unix_nano) / 1e6
             kind = str(attrs.get("openinference.span.kind") or "")
             stage = _OPENINFERENCE_KINDS.get(kind.upper()) or _stage_from_llm_attrs(attrs, span.name)

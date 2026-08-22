@@ -80,7 +80,8 @@ def derive_coverage(
         elif isinstance(event, EvidenceObserved) and event.kind.value == "recording":
             present[Signal.RECORDING] = event.source_path
         elif isinstance(event, OutcomeObserved):
-            present[Signal.HANGUP] = event.provenance_by_field.get("provider_code").source_path if event.provenance_by_field.get("provider_code") else None
+            stamp = event.provenance_by_field.get("provider_code")
+            present[Signal.HANGUP] = stamp.source_path if stamp is not None else None
         elif isinstance(event, InterruptionObserved):
             present[Signal.INTERRUPTION_COUNT] = "interruption"
             present[Signal.BARGE_IN] = "interruption"

@@ -11,12 +11,15 @@ from obsalt.egress import EgressDenied, validate_destination
 from obsalt.ingest.headers import RawHeaders
 from obsalt.ingest.receive import receive_webhook
 from obsalt.plugin.types import BackfillCursor, ConnectionConfig
+from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
 
 from tests.helpers import (
+    ELEVEN_FIXTURES,
     RETELL_FIXTURES,
     VAPI_FIXTURES,
+    elevenlabs_state,
     retell_headers,
     vapi_headers,
     vapi_state,
@@ -84,6 +87,30 @@ def test_bad_signature_is_rejected_on_the_receive_path() -> None:
     )
     assert result.created is False
     assert result.rejected in {"bad_signature", VerifyOutcome.BAD_SIGNATURE.value}
+    assert result.response.status_code == 401
+
+
+def test_elevenlabs_stale_signature_is_rejected_on_the_receive_path() -> None:
+    import time
+
+    from obsalt.crypto.primitives import hmac_hex
+
+    state = elevenlabs_state()
+    raw = (ELEVEN_FIXTURES / "raw" / "post_call_transcription.json").read_bytes()
+    ts = str(int(time.time()) - 40 * 60)
+    sig = hmac_hex("eleven-secret", f"{ts}.".encode() + raw)
+    result = receive_webhook(
+        provider="elevenlabs",
+        ingest_key="ik",
+        raw=raw,
+        headers=RawHeaders.from_mapping({"elevenlabs-signature": f"t={ts},v0={sig}", "content-type": "application/json"}),
+        resolver=state.resolver,
+        plugin=ElevenLabsPlugin(),
+        objects=state.objects,
+        inbox=state.inbox,
+    )
+    assert result.created is False
+    assert result.rejected == VerifyOutcome.STALE.value
     assert result.response.status_code == 401
 
 

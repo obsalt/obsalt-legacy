@@ -3,8 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from obsalt.crypto.primitives import hmac_hex
-from obsalt.domain.enums import Capability, ObservationalEventKind, VerifyOutcome
-from obsalt.domain.events import CallObserved, GroundingObserved, StageObserved, TurnObserved
+from obsalt.domain.enums import (
+    Capability,
+    GroundingKind,
+    MeasurementPlacement,
+    ObservationalEventKind,
+    VerifyOutcome,
+)
+from obsalt.domain.events import (
+    CallObserved,
+    GroundingObserved,
+    SnapshotBoundaryObserved,
+    StageObserved,
+    TurnObserved,
+)
 from obsalt.ingest.headers import RawHeaders
 from obsalt.ingest.receive import receive_webhook
 from obsalt.plugin.host import discover_plugins
@@ -83,14 +95,17 @@ def test_example_plugin_discovered_via_entry_points() -> None:
     assert loaded.api_version == 1
 
 
-def test_example_decode_has_interval_stt_and_grounding() -> None:
+def test_example_decode_keeps_stt_unplaced_and_populates_grounding() -> None:
     plugin = ExamplePlugin()
     events = list(plugin.decode(_envelope(FIXTURES / "raw" / "call_ended.json")))
     assert any(isinstance(e, CallObserved) and e.source_call_id == "ex-1" for e in events)
-    assert any(isinstance(e, GroundingObserved) for e in events)
+    assert any(isinstance(e, SnapshotBoundaryObserved) for e in events)
+    assert any(isinstance(e, GroundingObserved) and e.kind is GroundingKind.SYSTEM_PROMPT for e in events)
+    assert any(isinstance(e, GroundingObserved) and e.kind is GroundingKind.USER_TEXT for e in events)
     assert any(isinstance(e, TurnObserved) for e in events)
     stt = next(e for e in events if isinstance(e, StageObserved))
-    assert stt.started_at is not None and stt.ended_at is not None
+    assert stt.placement is MeasurementPlacement.UNPLACED
+    assert stt.started_at is None and stt.ended_at is None
     assert stt.value_ms == 180
 
 

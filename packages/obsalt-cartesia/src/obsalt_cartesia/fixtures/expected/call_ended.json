@@ -31,6 +31,19 @@
     "decoder_version": null,
     "envelope_sequence": null,
     "source_revision": null,
+    "type": "snapshot_boundary",
+    "authoritative_domains": [
+      "turn_observed",
+      "stage_observed",
+      "grounding_observed"
+    ]
+  },
+  {
+    "org_id": null,
+    "call_key": null,
+    "decoder_version": null,
+    "envelope_sequence": null,
+    "source_revision": null,
     "type": "turn_observed",
     "turn_index": 0,
     "speaker": "user",

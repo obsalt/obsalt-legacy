@@ -94,10 +94,15 @@ class ElevenLabsPlugin:
         return ObservationalEventKind.UNKNOWN_OBSERVATIONAL
 
     def delivery_key(self, raw: bytes, headers: list[tuple[bytes, bytes]]) -> str | None:
+        # Event identity ≠ call identity: post_call_transcription and
+        # post_call_audio share a conversation_id and must not dedupe.
         payload = _json(raw)
+        typ = as_str(payload.get("type")) or "unknown"
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        conv = as_str(data.get("conversation_id") or data.get("agent_id"))
-        return conv
+        conv = as_str(data.get("conversation_id"))
+        if conv:
+            return f"{typ}:{conv}"
+        return None
 
     def tombstone_hints(self, raw: bytes) -> TombstoneHints:
         payload = _json(raw)
@@ -114,30 +119,36 @@ class ElevenLabsPlugin:
         return 0
 
     def decode_spans(self, spans):
-        """OTLP-shaped ElevenLabs webhook: interval only when start/end pass the contract."""
+        """OTLP-shaped ElevenLabs webhook: interval only when clocks *and* semantics pass."""
         from datetime import UTC, datetime
 
-        from obsalt.domain.enums import MeasurementPlacement, Metric, Stage
+        from obsalt.domain.enums import MeasurementPlacement, Metric
         from obsalt.domain.events import StageObserved
+        from obsalt.otel.span_time import stage_from_span_semantics, valid_span_interval
 
         events: list[NormalizedEvent] = []
         for span in spans:
-            start_ns = getattr(span, "start_unix_nano", 0) or 0
-            end_ns = getattr(span, "end_unix_nano", 0) or 0
-            if start_ns <= 0 or end_ns <= start_ns:
+            if not valid_span_interval(span):
                 continue
+            name = getattr(span, "name", "") or ""
+            attrs = getattr(span, "attributes", {}) or {}
+            stage = stage_from_span_semantics(name, attrs)
+            if stage is None:
+                continue
+            start_ns = int(span.start_unix_nano)
+            end_ns = int(span.end_unix_nano)
             started = datetime.fromtimestamp(start_ns / 1e9, tz=UTC)
             ended = datetime.fromtimestamp(end_ns / 1e9, tz=UTC)
             events.append(
                 StageObserved(
-                    stage=Stage.E2E,
+                    stage=stage,
                     metric=Metric.DURATION,
                     value_ms=(end_ns - start_ns) / 1e6,
                     placement=MeasurementPlacement.INTERVAL,
                     started_at=started,
                     ended_at=ended,
                     provenance=Provenance.PROVIDER_REPORTED,
-                    source_path=f"span:{getattr(span, 'name', 'elevenlabs')}",
+                    source_path=f"span:{name or 'elevenlabs'}",
                 )
             )
         return events

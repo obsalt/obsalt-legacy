@@ -1,3 +1,3 @@
 # Signals not asserted against this fixture corpus, with justification.
-STAGE_INTERVAL	Example plugin is a contract reference and does not emit stage intervals.
-VAD	Not present in the example payload.
+STAGE_INTERVAL	example payloads publish stt_ms durations without stage clocks
+VAD	example payloads have no VAD clock
