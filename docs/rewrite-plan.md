@@ -94,8 +94,8 @@ from the adapters themselves. All 62 tests pass. On real payloads:
 | Provider | Real state |
 | --- | --- |
 | **Vapi** | The schema-conformant latency path is dead. It reads `turnLatencies[].stt/llm/tts/e2e`; the published keys are `transcriberLatency`/`modelLatency`/`voiceLatency`/`turnLatency`. It reads `artifact.messages[].metadata.llmLatency`, although published `BotMessage` does not define that metadata. Fixtures contain the invented fields, so tests pass while real provider stage measurements are discarded. Reason-code coverage is incomplete and must be measured against a pinned schema revision rather than a hard-coded enum count. |
-| **Retell** | Worse, because it is silent. `words[].start/end` are **seconds**, read as milliseconds. Correct provider values (580ms, 900ms) get averaged with 1000×-low derived values (0.2ms, 0.6ms), yielding a P50 of 290ms where the truth is ~740ms. Tool timing is structurally unobtainable on this path. |
-| **Bland** | Actually the most faithful adapter in the repo (89%). The log-line regex I assumed was fabricated is documented verbatim. Its one real defect: the `category == "tool"` branch is unreachable because Bland sends `category: "call"`. |
+| **Retell** | Worse, because it is silent. `words[].start/end` are **seconds**, read as milliseconds. Correct provider values (580ms, 900ms) get averaged with 1000×-low derived values (0.2ms, 0.6ms), yielding a P50 of 290ms where the truth is ~740ms. Direct tool duration is unavailable, although `transcript_with_tool_calls` can provide coarse utterance/word association. |
+| **Bland** | The prior adapter audit found it the most faithful implementation in the repo. The log-line regex initially assumed fabricated is documented. Its one real defect: the `category == "tool"` branch is unreachable because Bland sends `category: "call"`. |
 | **OpenAI Realtime** | Barge-in detection is a 100% false positive — every agent turn followed by any user speech is flagged as an interruption. One measured interval is written into three different fields (`llm_ttft_ms`, `llm_ms`, `tts_ttfb_ms`) and then rendered as three sequential spans. |
 
 ### 2.2 Webhook security is non-functional for Retell and Bland
@@ -141,8 +141,9 @@ drawn from summary statistics is not observability; it is a chart that causes wr
 `assess_coverage` reports VAD/endpointing timing and STT confidence as **structural** gaps —
 "hosted platforms do not send this." Vapi sends `endpointingLatency` per turn,
 `numAssistantInterrupted`, `numUserInterrupted`, and word-level confidence, in the payload we
-already receive and throw away. Retell publishes `llm_websocket_network_rtt`. Bland publishes
-`corrected_transcript[]` with real second-precision timings and per-utterance confidence.
+already receive and throw away. Retell publishes `llm_websocket_network_rtt`. Bland can publish
+`corrected_transcript[]` with real second-precision timings and per-utterance confidence when
+delayed post-call enrichment is enabled.
 
 This is the finding that determines the architecture. Our own honesty mechanism could not
 distinguish "the provider did not send it" from "we failed to parse it," so it confidently
@@ -215,8 +216,9 @@ These are the claims the plan rests on. Each one is a direct response to evidenc
 > invariants cover what schemas cannot express.
 
 > **T5. One choke point per cross-cutting concern.**
-> All sources funnel through one normalization path, one redaction point, one assembly path.
-> Per-transport hooks grow holes the moment a transport is added.
+> All sources funnel through one normalization and assembly path. Queryable normalized content
+> crosses one core-owned redaction boundary before persistence; forwarded telemetry crosses one
+> core-owned export-policy boundary before egress. Plugins cannot bypass either boundary.
 
 > **T6. Decode, assemble, and analyze are separate stages with separate versions.**
 > Adapters emit small normalized events; core owns assembly; analysis runs async on the
@@ -286,7 +288,9 @@ flowchart TB
   subgraph out ["Outputs"]
     API["HTTP API"]
     UI["Web UI"]
-    EXP["OTLP export"]
+    FWD["Identity-preserving<br/>OTLP forwarder"]
+    MET["Derived metrics<br/>exporter"]
+    EXP["OTLP destinations"]
     HOOK["Outbound webhooks"]
   end
 
@@ -310,7 +314,8 @@ flowchart TB
   PG --> API
   CH --> API
   API --> UI
-  CH --> EXP
+  INBOX --> FWD --> EXP
+  CH --> MET --> EXP
   T1 --> HOOK
   T2 --> HOOK
 ```
@@ -328,14 +333,32 @@ flowchart TB
 | Analyze T2 | active call revision | analysis rows keyed by call revision | yes, cached by content hash | `judge_version` + `prompt_version` |
 
 Every stage records its version and `processing_run_id` on its output. Reprocessing builds a
-complete candidate revision for all matching envelopes, validates it, and atomically updates
-the active-revision pointer. Rollups, search, exports, and outbound events consume only active
-revisions. The UI can show that a call's latency was decoded by `vapi/3` while another was
-decoded by `vapi/2`.
+complete candidate revision for all matching envelopes, validates it, and promotes it through
+the serving protocol below. The UI can show that a call's latency was decoded by `vapi/3` while
+another was decoded by `vapi/2`.
 
 Late events create a new call revision. They invalidate revision-keyed analysis and search
 documents without mutating historical results. Outbound events include both a stable event id
 and the call revision that caused them.
+
+### 4.2 Promotion and serving consistency
+
+There is no cross-database transaction between ClickHouse and Postgres, so the design does not
+pretend there is one:
+
+1. Write a complete immutable candidate revision to ClickHouse and verify it is query-visible.
+2. Compare-and-swap the Postgres active-revision pointer from the expected old revision to the
+   candidate. A failed CAS means the candidate is historical, not active.
+3. Call-detail reads fetch the pointer first and query the exact ClickHouse revision; they never
+   ask ClickHouse to guess "latest."
+4. Analysis and search build revision-keyed outputs after promotion. Their execution state is
+   explicit: `pending`, `sampled_out`, `budget_blocked`, `running`, `failed`, or `completed`.
+5. Fleet rollups are immutable serving generations. A correction rebuilds affected partitions,
+   verifies them, then compare-and-swaps a separate Postgres rollup-generation pointer. APIs
+   expose `as_of_generation` and may lag call detail, but never mix generations in one response.
+
+This provides atomic selection of already-durable immutable data, not impossible atomic writes
+across the two databases.
 
 ---
 
@@ -434,7 +457,8 @@ Per-source fidelity, from the provider survey:
 | Cartesia Line | cascade | `turn_level` | no | real turn intervals + unplaced STT/TTS TTFBs |
 | Vapi | cascade | `turn_level` | no | `secondsFromStart`+`duration` real; stage durations unplaced |
 | Retell | cascade | `turn_level` | no | approximate word intervals in seconds; stage distributions are call-level |
-| ElevenLabs | cascade | `message_level`¹ | no | whole-second message anchors, no documented end timestamps |
+| ElevenLabs post-call JSON | cascade | `message_level`¹ | no | whole-second message anchors, no documented end timestamps |
+| ElevenLabs OTLP-shaped webhook | cascade | derived per span | where interval contract passes | provider spans include start/end; mapper validates each span's semantics |
 | OpenAI Realtime | speech_to_speech | `stage_level`² | partial | S2S shape: no STT/LLM/TTS split exists |
 | Gemini Live | speech_to_speech | `stage_level`² | partial | same |
 
@@ -459,7 +483,6 @@ Call
 │                     payload_shape, argument_hash, result_ref, error
 ├── Grounding     system_prompt_ref, knowledge_refs[], tool_result_refs[], user_text_ref
 ├── Evidence      transcript_ref, recording_ref { uri, channels[], duration_ms }
-├── Analysis[]    versioned results: eval, hallucination, hangup_cluster
 ├── SignalCoverage[]  per-call presence/absence/redaction/decode status
 └── Provenance    map<field_path, Provenance + source_path>
 ```
@@ -472,30 +495,48 @@ Notes:
 - **`Grounding` is populated.** In v0.1 `tool_results` and `user_text` were never set by any
   provider, which silently crippled hallucination detection. Populating grounding is a decoder
   conformance requirement (§13).
-- **`Analysis[]` is versioned and additive.** Re-judging a call appends a result; it does not
-  overwrite. Users can see that a call failed rubric v1 and passed v2.
+- **Analysis is associated, not embedded.** `AnalysisExecution` and additive
+  `AnalysisResult` rows are keyed by call revision, analyzer/rubric version, and prompt/model
+  version. The call revision remains immutable while users can see that it failed rubric v1
+  and passed v2.
 
 ### 5.3 Normalized events
 
 Decoders emit small facts, not whole-call snapshots. This is what removes `merge_calls`.
 
 ```python
-CallObserved(source_call_id, agent_id, direction, started_at, architecture, ...)
-TurnObserved(turn_index, speaker, text, started_at?, ended_at?, confidence?, interrupted?)
-StageObserved(stage, metric, value_ms, turn_index?, started_at?, ended_at?, provenance, source_path)
-ToolObserved(tool_id, name, turn_index?, started_at?, ended_at?, status, args, result)
-OutcomeObserved(provider_code, reason?, party?, ended_at, cost?)
-GroundingObserved(kind, content)
-EvidenceObserved(kind, uri, metadata)
+CallObserved(source_call_id, agent_id, direction, started_at, architecture, provenance_by_field, ...)
+TurnObserved(turn_index, speaker, text, started_at?, ended_at?, confidence?, interrupted?,
+             provenance_by_field)
+StageObserved(stage, metric, value_ms, turn_index?, placement, started_at?, ended_at?,
+              resolution_ms?, provenance, source_path, derivation?)
+AggregateObserved(stage, metric, statistic, value_ms, population?, window?, provenance, source_path)
+ToolObserved(tool_id, name, turn_index?, started_at?, ended_at?, status, args, result,
+             provenance_by_field)
+OutcomeObserved(provider_code, reason?, party?, ended_at, cost?, provenance_by_field)
+GroundingObserved(kind, content, provenance, source_path)
+EvidenceObserved(kind, uri, metadata, provenance, source_path)
 InterruptionObserved(turn_index?, count?, kind)   # Vapi numAssistantInterrupted lands here
+SnapshotBoundaryObserved(authoritative_domains, source_revision)
+FactRetracted(fact_id, source_revision)
 CallFinalized(reason)
 ```
 
-Every event carries `(org_id, call_key, fact_id, envelope_id, source_revision, decoder_version,
-event_occurred_at, envelope_sequence)`. `fact_id` is deterministic for a source fact. Assembly
-uses explicit field precedence (`source_revision`, provider event time, then `envelope_id` as a
-total tie-breaker), not receipt order. The merge operation is associative, commutative, and
-idempotent; any delivery order produces the same candidate revision.
+Core, not plugin code, stamps every event with `(org_id, call_key, fact_id, envelope_id,
+decoder_version, processing_run_id, event_occurred_at, envelope_sequence)`. `fact_id` is
+deterministic for a source fact.
+
+`source_revision` is present only when the provider supplies an ordered sequence, revision, or
+documented update timestamp. A content hash identifies content but does not establish which
+content is newer. For the same `fact_id`, identical content dedupes; a greater ordered source
+revision wins; differing content without a comparable revision becomes a visible conflict
+instead of an arbitrary overwrite. Snapshot decoders emit `SnapshotBoundaryObserved` and may
+retract omitted facts only for domains the provider documents as authoritative. Delta events
+never imply retraction by omission.
+
+With those rules, merging independent facts is associative, commutative, and idempotent; any
+delivery order produces the same candidate revision. Conflicts block automatic promotion until
+the plugin's documented resolution policy or an operator resolves them.
 
 ---
 
@@ -514,23 +555,33 @@ Ordered pipeline, non-negotiable order:
 1. Read **raw bytes** (never a parsed model — parsing changes the byte sequence and breaks
    authentication). Enforce compressed and expanded body limits.
 2. Resolve `ingest_key` → `(org_id, provider, connection, encrypted credentials, plugin)`.
-3. `plugin.authenticate(raw_bytes, headers, connection_config)`. Fail closed when required
-   credentials are absent. Strictly parse duplicate/malformed headers and enforce any replay
-   window.
-4. Derive a transport delivery key: native delivery id where documented, otherwise a
+3. Core retains raw multi-valued headers, rejects duplicates for headers the plugin declares
+   singleton, and passes the remaining values to
+   `plugin.authenticate(raw_bytes, raw_headers, connection_config)`. Fail closed when required
+   credentials are absent and enforce any replay window.
+4. Classify the event using the authenticated body. This endpoint accepts observational
+   delivery events only. Vapi `assistant-request`, tool execution, transfer, knowledge-base,
+   and other synchronous request/response events must be routed to the user's application;
+   connection validation prevents configuring obsalt as their handler.
+5. Derive a transport delivery key: native delivery id where documented, otherwise a
    plugin-defined semantic composite or deterministic raw-body digest. Event identity and call
-   identity are different concepts.
-5. Check durable deletion tombstones before acceptance.
+   identity are different concepts. Extract authenticated tombstone hints such as provider call
+   id and event time where available.
 6. Write the raw body to an org-namespaced deterministic object key. Persist only an allowlist
    of diagnostic headers; never archive authorization or cookie headers.
 7. In one Postgres transaction, insert or resume the `RawEnvelope` index, delivery-key dedupe
-   row, and transactional outbox record. An object without a committed index is a sweepable
-   orphan; a committed envelope can never exist without queued work.
-8. Return the plugin-declared success status and body. ElevenLabs requires `200`; providers
-   that accept any `2xx` may use `202`.
+   row, and transactional outbox record, while rechecking all known tombstones under the same
+   transaction. An object without a committed index is a sweepable orphan; a committed envelope
+   can never exist without queued work. A tombstoned orphan is purged before acknowledgement.
+8. Generate the provider/event/format-specific acknowledgement from the classified
+   observational event. Some ElevenLabs webhook guides require `200`, while its OTLP-shaped
+   endpoint accepts any `2xx`; the plugin contract pins the applicable response.
 
-Decode happens in a worker. A dispatcher leases outbox work through Redis, but Postgres remains
-the source of truth. Nothing provider-facing waits on decode or analysis.
+Decode happens in a worker. The worker rechecks call, caller, and range tombstones after full
+identity extraction and before normalized persistence. Deletion jobs also suppress matching
+inbox/outbox work, closing the race where deletion begins after receive commits. A dispatcher
+leases outbox work through Redis, but Postgres remains the source of truth. Nothing
+provider-facing waits on decode or analysis.
 
 Dedupe retention is provider- and connection-specific. Automatic retry horizons may be unknown,
 and manual resends can occur much later. This is a persisted Postgres table, not a short Redis
@@ -540,14 +591,14 @@ blindly returning "already processed."
 Provider authentication is a **plugin capability**, because the schemes are genuinely
 incompatible and some are operator-configurable:
 
-| Provider | Header | Scheme |
-| --- | --- | --- |
-| Vapi | configurable | Distinct static Bearer, OAuth2, and HMAC validation paths. HMAC configuration includes algorithm, signature header, optional timestamp header, and payload canonicalization. Legacy `X-Vapi-Secret` shared secret. |
-| Retell | `X-Retell-Signature` | `v={unix_ms},d={hex}`; `HMAC-SHA256(raw_body + timestamp)` keyed by the **API key**; ±5 min |
-| ElevenLabs | `ElevenLabs-Signature` | `t={unix},v0={hex}`; `HMAC-SHA256("{t}.{body}")`; 30-min tolerance (one-sided upstream — we enforce both sides) |
-| Cartesia Line | `x-webhook-secret` | plain shared secret (weakest; documented as such) |
-| Bland | `X-Webhook-Signature` | `HMAC-SHA256(body)` hex, no timestamp → no replay protection |
-| Telnyx | `telnyx-signature-ed25519` + `telnyx-timestamp` | Ed25519 over `"{timestamp}|{raw_body}"`; enforce timestamp freshness |
+| Provider | v2 status | Header | Scheme |
+| --- | --- | --- | --- |
+| Vapi | committed | configurable | Distinct static Bearer, OAuth2, and HMAC validation paths. HMAC configuration includes algorithm, signature header, optional timestamp header, and payload canonicalization. Legacy `X-Vapi-Secret` shared secret. |
+| Retell | committed | `X-Retell-Signature` | `v={unix_ms},d={hex}`; `HMAC-SHA256(raw_body + timestamp)` keyed by the **API key**; ±5 min |
+| ElevenLabs | committed | `ElevenLabs-Signature` | `t={unix},v0={hex}`; `HMAC-SHA256("{t}.{body}")`; 30-min tolerance (one-sided upstream — we enforce both sides) |
+| Cartesia Line | committed | `x-webhook-secret` | plain shared secret (weakest; documented as such) |
+| Bland | surveyed future | `X-Webhook-Signature` | `HMAC-SHA256(body)` hex, no timestamp → no replay protection |
+| Telnyx | surveyed future | `telnyx-signature-ed25519` + `telnyx-timestamp` | Ed25519 over `"{timestamp}|{raw_body}"`; enforce timestamp freshness |
 
 Core provides tested primitives (`hmac_hex`, `hmac_base64`, `parse_kv_header`, `ed25519_verify`,
 `enforce_window`, `constant_time_eq`, JWT validation) so plugins compose rather than
@@ -565,17 +616,20 @@ Implementation notes drawn from Phoenix's receiver:
 - `Content-Type` must be `application/x-protobuf` or `application/json`; 415 otherwise.
   Handle `gzip` and `deflate`, with compressed and expanded size, span-count, attribute-count,
   nesting, and string-length limits.
-- Respond with a serialized `ExportTraceServiceResponse`, not an empty 200. Partial success is
-  only for permanently invalid records: OTLP clients **must not retry** a populated partial
-  success response. For transient capacity pressure, reject the entire unaccepted batch with
-  HTTP 503 or gRPC `RESOURCE_EXHAUSTED` plus retry guidance.
+- Respond with a serialized `ExportTraceServiceResponse`, not an empty 200. A populated partial
+  success response is for permanently invalid records or a warning with zero rejections; OTLP
+  clients **must not retry** it. For transient capacity pressure, reject the entire unaccepted
+  batch with HTTP 503 or gRPC `UNAVAILABLE`. If `RESOURCE_EXHAUSTED` is used for recoverable
+  throttling, it must include `google.rpc.RetryInfo`; without that detail clients treat it as
+  non-retryable.
 - Decode in a threadpool so protobuf work never blocks the event loop.
 - Malformed protobuf is 400, not 500.
 - Tenancy comes from an ingest-scoped API key, connection token, or mTLS identity bound to one
   org. `obsalt.org` and `service.namespace` may corroborate or route within that org, never
   establish it. Reject mixed-org assertions in one batch.
-- Delivery identity is `(org_id, trace_id, span_id, content_fingerprint)`, so exporter retries
-  dedupe while legitimate span corrections remain possible.
+- Delivery identity is `(org_id, trace_id, span_id, content_fingerprint)`, so identical exporter
+  retries dedupe. Different content for the same trace/span identity is a conflict unless a
+  mapper supplies a comparable source revision; a hash alone cannot identify the newer span.
 
 Accepted batches use the same object-store + inbox/outbox durability path as webhooks. Spans
 are decoded into `NormalizedEvent`s by a **convention mapper** and then take the same path as
@@ -594,8 +648,9 @@ Waiting for trace completion is unsolvable in general. The industry answer, and 
    frameworks that emit orphan roots), mark the candidate rooted.
 4. Finalize at `min(root_ended_at + grace, first_seen_at + max_call_duration)`. **Voice calls
    have a natural upper bound that generic tracing lacks** — use the configured platform bound.
-5. Validate and atomically promote the complete revision. Late spans build and promote a newer
-   revision and increment `obsalt_late_spans_after_finalize_total`.
+5. Validate and promote the complete revision through §4.2. Late spans build a candidate newer
+   revision and increment `obsalt_late_spans_after_finalize_total`; conflicting replacements
+   require a comparable source revision or explicit resolution.
 
 ### 6.4 Provider REST backfill (Q6 — including it)
 
@@ -603,7 +658,9 @@ Webhooks are lossy: providers disable endpoints after consecutive failures and r
 Backfill is provider-specific scanning plus optional detail hydration: some APIs have time
 filters, some require an agent id, some use cursors, and some list endpoints omit transcripts
 or recordings. `RestBackfill` emits `RawEnvelope`s with identity
-`(connection, upstream_entity_id, upstream_revision_or_content_hash)`.
+`(connection, upstream_entity_id, content_hash)` and a separate comparable upstream revision or
+update timestamp when one exists. Different snapshots without an ordered revision become a
+conflict rather than silently treating the latest arrival as authoritative.
 
 Backfill runs on a schedule and on demand, but it is bounded by provider retention, zero-data
 retention settings, deletion, pagination, and field availability. Replay re-decodes retained
@@ -621,7 +678,7 @@ The only place their telemetry exists is your process. So they are served by the
 
 Deepgram Voice Agent has the richest per-turn latency data of anything surveyed (a seven-field
 `LatencyReport` per turn) and no webhooks at all. Its integration shape is "tap the WebSocket,
-persist every non-audio frame." That is a third plugin capability, `StreamSource`, declared in
+persist every non-audio frame." That is an additional capability, `StreamSource`, declared in
 the plugin API in v2 with no first-party implementation. Adding Deepgram later must not require
 a core change.
 
@@ -632,10 +689,9 @@ their only observability provider. Exposing a Langfuse-shaped ingest endpoint wo
 user point at obsalt with zero webhook configuration. It is genuinely tempting.
 
 **Deferred, not rejected.** It is a compatibility surface for a proprietary, undocumented,
-moving API, owned by a company that was acquired in January 2026. Given the answer to Q5
-prioritized breadth of first-class provider support, the effort is better spent on the six
-committed source plugins and two convention mappers. Revisit if Vapi's webhook path proves
-insufficient.
+moving API. Given the answer to Q5 prioritized breadth of first-class provider support, the
+effort is better spent on four committed hosted source plugins and four SDK/convention
+integrations. Revisit if Vapi's webhook path proves insufficient.
 
 ---
 
@@ -650,10 +706,10 @@ obsalt                      core: domain, assembly, analysis, API, UI, plugin ho
 obsalt-testkit              conformance test base classes (dev dependency for plugin authors)
 obsalt-vapi                 ┐
 obsalt-retell               │
-obsalt-elevenlabs           ├ first-party source plugins, released independently
-obsalt-cartesia             │
-obsalt-openai-realtime      │
-obsalt-gemini-live          ┘
+obsalt-elevenlabs           ├ first-party hosted source plugins, released independently
+obsalt-cartesia             ┘
+obsalt-openai-realtime      SDK instrumentation + matching OTLP mapper
+obsalt-gemini-live          SDK instrumentation + matching OTLP mapper
 obsalt-pipecat              first-party convention mapper + optional Pipecat observer
 obsalt-livekit              first-party convention mapper
 ```
@@ -681,6 +737,7 @@ class Capability(StrEnum):
     OTLP_MAPPER        = "otlp_mapper"
     REST_BACKFILL      = "rest_backfill"
     STREAM_SOURCE      = "stream_source"     # declared in v2, unimplemented
+    SDK_INSTRUMENTATION = "sdk_instrumentation"
     AUTHENTICATION     = "authentication"
     JUDGE              = "judge"
     EMBEDDER           = "embedder"
@@ -691,9 +748,12 @@ Capability protocols:
 
 ```python
 class WebhookSource(Protocol):
-    success_response: ClassVar[WebhookResponse]
-    def authenticate(self, raw: bytes, headers: Mapping[str, str], cfg: ConnectionConfig) -> VerifyResult: ...
-    def delivery_key(self, raw: bytes, headers: Mapping[str, str]) -> str | None: ...
+    singleton_headers: ClassVar[frozenset[bytes]]
+    def authenticate(self, raw: bytes, headers: RawHeaderList, cfg: ConnectionConfig) -> VerifyResult: ...
+    def classify(self, raw: bytes) -> ObservationalEventKind: ...
+    def delivery_key(self, raw: bytes, headers: RawHeaderList) -> str | None: ...
+    def tombstone_hints(self, raw: bytes) -> TombstoneHints: ...
+    def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse: ...
     def decode(self, envelope: RawEnvelope) -> Iterable[NormalizedEvent]: ...
 
 class OtlpMapper(Protocol):
@@ -706,6 +766,9 @@ class RestBackfill(Protocol):
 
 class StreamSource(Protocol):
     async def frames(self, cfg: ConnectionConfig) -> AsyncIterator[RawEnvelope]: ...
+
+class SdkInstrumentation(Protocol):
+    def instrument(self, client: object, cfg: SdkConfig) -> InstrumentedClient: ...
 
 class Judge(Protocol):
     async def judge(self, request: JudgeRequest) -> JudgeResult: ...
@@ -722,6 +785,7 @@ hardcoding prose (this replaces v0.1's hand-written `assess_coverage` if/else bl
 
 ```python
 class FidelityDeclaration(BaseModel):
+    source_format: str
     possible_architectures: frozenset[PipelineArchitecture]
     possible_placements: frozenset[MeasurementPlacement]
     provides: frozenset[Signal]      # stt_duration, llm_ttft, tool_timing, barge_in, ...
@@ -888,16 +952,25 @@ prompt_version)` so re-runs are free unless something actually changed. A per-or
 spend cap with a visible burn-down, because silent cost overruns are how self-hosted tools get
 uninstalled.
 
+Every eligible `(call_revision, analyzer_or_rubric_version)` has an `AnalysisExecution` state:
+`pending`, `sampled_out`, `budget_blocked`, `running`, `failed`, or `completed`. Missing output
+is never interpreted as a passing call. Fleet quality views select an explicit published
+analyzer/rubric version, show completed and eligible denominators, and separate unbiased
+baseline-sample statistics from trigger-biased review queues.
+
 ### 9.2 Latency breakdown
 
 Stage measurements land from decoders as immutable facts with provenance and call revision.
-Rollups by `(org, agent, stage, metric, time bucket)` consume only promoted revisions and are
-not computed by scanning every call per request as v0.1 does. Incremental materialized views
-are used only where their source facts can never be replaced; replay or late-data corrections
-rebuild and atomically swap affected rollup partitions.
+Candidate facts never feed fleet rollups directly. After a successful first promotion, a
+worker writes immutable contribution facts for `(org, agent, stage, metric, time bucket)`.
+Replay and late-data corrections rebuild affected rollup partitions from the exact active
+revisions, verify them, and publish a new serving generation. Rollups are not computed by
+scanning every call per request as v0.1 does. Incremental materialized views are used only for
+immutable contribution facts that will never need in-place replacement.
 
-Percentiles come from ClickHouse `quantileTDigestState` aggregate states, so a P95 over 12
-months is a merge of pre-aggregated states rather than a full scan.
+Approximate percentiles come from ClickHouse `quantileTDigestState` aggregate states, so an
+estimated P95 over 12 months is a merge of pre-aggregated states rather than a full scan. The
+API labels the approximation and does not promise bit-for-bit deterministic results.
 
 Provider-published percentiles (Retell's `p50/p90/p95/p99`) are
 `AggregateMeasurement`s stored **separately** from samples and never entered into
@@ -917,8 +990,9 @@ tables, generated from the provider's published enum and CI-checked for drift:
   `call.ringing.*`, `call.ending.*` families, plus reordering the token match so `*-voice-failed`
   resolves to TTS before the provider-name token resolves it to STT/LLM. CI reports
   `(mapped_count / current_enum_count)` and targets >95%.
-- A CI job diffs the published enum against our table and fails on unmapped values. Provider
-  taxonomy drift becomes a visible test failure instead of a silent `unknown`.
+- A CI job diffs the published enum against our table, reports unmapped values, and fails below
+  the configured coverage threshold. Provider taxonomy drift becomes a visible test failure
+  instead of a silent `unknown`.
 - Bland's `disposition_tag` is **user-definable** and LLM-assigned, so it is unsound as a
   primary key; `call_ended_by` is the reliable signal. Noted for whoever adds Bland back.
 
@@ -955,12 +1029,12 @@ Mostly a data-completeness problem, not an algorithm problem.
 Success rate, retry rate, duration percentiles, payload-shape drift, and time-to-tool, per tool
 per agent. Retries detected by consecutive same-name failures with matching argument hashes.
 
-Where the provider cannot supply tool timing (Retell has no timestamp on either tool utterance
-type), the UI shows the invocation with `duration: not reported by Retell` and a
-`SignalCoverage(status=UNSUPPORTED, reason=...)` fact rather than an empty bar. And Bland's
-`agent-action` rows
-("Ended call", "Transferred call") must not be counted as tools; that polluted v0.1's rollup
-with fake 0ms 100%-success entries.
+Retell does not provide direct invocation/result timestamps, so exact duration is unsupported;
+`transcript_with_tool_calls` can still associate a call with a corresponding utterance/word for
+coarse placement. The UI labels that placement and shows `duration: not reported by Retell`
+rather than an empty bar. If Bland is restored, its `agent-action` rows ("Ended call",
+"Transferred call") must not be counted as tools; that polluted v0.1's rollup with fake 0ms
+100%-success entries.
 
 ### 9.6 Custom evals
 
@@ -1026,7 +1100,7 @@ Langfuse explicitly rejected as maintenance overhead, and I am not building it.
 | Store | Holds | Why |
 | --- | --- | --- |
 | **ClickHouse** | immutable call revisions, turns, stage measurements, aggregate measurements, tool invocations, analysis results, immutable-fact rollups | Append-mostly, billions of rows, percentile and group-by-agent-over-time queries. `quantileTDigestState` makes long-window sample percentiles cheap. |
-| **Postgres** | raw-envelope inbox, delivery dedupe, transactional outbox, processing runs, active-revision pointers, orgs, users, hashed API/ingest keys, encrypted provider credentials, agents, rubrics, plugin config, retention/deletion/audit, **search documents + pgvector** | Transactional acceptance, constraints, revision promotion, authorization, search filtering, and synchronous privacy-control state. |
+| **Postgres** | raw-envelope inbox, delivery dedupe, transactional outbox, processing runs, active-call revision/query index, rollup-generation pointers, orgs, users, hashed API/ingest keys, encrypted provider credentials, agents, rubrics, plugin config, retention/deletion/audit, **search documents + pgvector** | Transactional acceptance, constraints, revision promotion, current-call listing, authorization, search filtering, and synchronous privacy-control state. |
 | **Object storage** (S3/MinIO/GCS) | org-namespaced raw payload blobs, redacted transcripts, tool payloads, recordings, OTLP forwarding payloads | Lifecycle-managed and encrypted at rest. Raw blobs are unredacted by definition and have a shorter access and retention boundary. |
 
 Redis accelerates leased work delivery and may cache dedupe hits, but Postgres is authoritative.
@@ -1052,8 +1126,10 @@ Billions of rows within a year. This is the number that decides the engine, and 
 
 - **Append-only facts and complete revisions.** No shallow ClickHouse call rows and no
   `ReplacingMergeTree` claim of per-column last-write-wins. Candidate revisions are complete;
-  Postgres atomically chooses the active revision. Queries join or filter against a compact
-  active-revision projection.
+  Postgres atomically chooses the active revision. Call-list queries use the Postgres
+  active-call index and hydrate exact immutable ClickHouse revisions. Fleet endpoints use one
+  published rollup serving generation from §4.2. No query depends on an asynchronously
+  synchronized ClickHouse "latest" projection.
 - **Attribute promotion is automated schema evolution.** Unmapped attributes go to a
   `Map(String, String)` catch-all; a config list can request typed columns and indexes. That
   still requires `ALTER`, historical materialization, and monitored backfill — configuration
@@ -1098,7 +1174,7 @@ POST   /v1/ingest/{provider}/{ingest_key}   webhook
 POST   /v1/traces                           OTLP HTTP (proto + JSON)
 GET    /v1/calls                            cursor paginated, filtered, time-bounded
 GET    /v1/calls/{id}                       aggregate + provenance
-GET    /v1/calls/{id}/timeline              timeline w/ declared fidelity
+GET    /v1/calls/{id}/timeline              timeline w/ per-call derived fidelity
 GET    /v1/calls/{id}/evidence/{ref}        transcript / tool payload / recording (authz'd)
 POST   /v1/search                           hybrid semantic + filter
 GET    /v1/latency                          precomputed rollups
@@ -1114,6 +1190,9 @@ POST   /v1/privacy/deletion-requests        delete by caller / call / range
 GET    /v1/plugins                          installed plugins + fidelity declarations
 GET    /health  /ready  /metrics
 ```
+
+Call-list cursors include the active revision. Fleet responses include `as_of_generation`.
+Neither endpoint mixes serving generations inside one page or response.
 
 Authentication distinguishes human and service principals:
 
@@ -1198,9 +1277,10 @@ and tier-2 spend burn-down.
 
 `call.finalized`, `eval.failed`, `flag.raised`, `slo.breached`, emitted per the
 [Standard Webhooks](https://www.standardwebhooks.com/) spec (`webhook-id`, `webhook-timestamp`,
-`webhook-signature`, symmetric `whsec_` profile). We configure a two-sided five-minute
-tolerance to match common reference libraries; it is a product setting, not a normative
-requirement of the spec.
+`webhook-signature`, symmetric profile). The stored secret uses the `whsec_` prefix plus
+base64-serialized key material; the signature header contains one or more space-delimited
+`v1,<base64-HMAC>` values. We configure a two-sided five-minute tolerance to match common
+reference libraries; it is a product setting, not a normative requirement of the spec.
 
 Signing is only one part of delivery. Events use an org-scoped transactional outbox, stable id,
 schema version, call revision, bounded exponential retries, and a DLQ. Payloads are PII-minimal.
@@ -1232,6 +1312,7 @@ Every provider plugin ships:
 ```
 fixtures/
   schema/            vendored provider OpenAPI/JSON Schema + the commit/revision + date fetched
+  schema_overlays/   reviewed additive patches for observed upstream behavior missing from schema
   raw/               real-shaped payloads, one per event type
   expected/          the NormalizedEvent[] each raw payload must produce
   ignore_fields      volatile values excluded from comparison
@@ -1240,9 +1321,13 @@ fixtures/
 
 CI does three things v0.1 never did:
 
-1. **Validates every `raw/` fixture against the vendored provider schema.** A fixture that
-   does not validate fails the build. This catches structural fiction; golden outputs and
-   semantic assertions catch unit and interpretation errors.
+1. **Validates every `raw/` fixture against the vendored provider schema.** When a captured
+   deployed payload is ahead of vendor documentation, a narrowly additive overlay may admit it
+   only with the original validation failure, redacted capture evidence, owner, review date,
+   and expiry condition recorded. CI validates the base-plus-overlay and continues reporting
+   divergence from the untouched vendor schema. This catches structural fiction without making
+   documented upstream lag impossible to represent; golden outputs and semantic assertions
+   catch unit and interpretation errors.
 2. **Drift check** — a scheduled job refetches the provider's published schema and reports when
    it diverges from the vendored copy. Normal CI remains reproducible and offline. Updating the
    pin requires a reviewed schema, fixture, and expected-output diff.
@@ -1265,7 +1350,7 @@ stage placement, tool pairing, and interruption signals.
 missing-credential fail-closed behavior, duplicate/malformed headers, and replay windows;
 webhooks test delivery-key fallback and provider-specific success responses; backfill tests
 pagination, hydration, corrections, tombstones, and retention truncation; judges, embedders,
-redactors, and stream sources each have their own contract suite.
+redactors, stream sources, and SDK instrumentation each have their own contract suite.
 
 **Optional signals** (declared and covered): recordings, per-turn stage timing, tool timing,
 cost, interruption counts, and backfill fields.
@@ -1287,7 +1372,7 @@ Property tests on the assembler (any permutation and duplicate delivery of an ev
 folds to the same candidate revision — the direct antidote to `merge_calls`). Crash-point tests
 cover every receive step. Contract tests cover OTLP retry/partial-success semantics and real
 Pipecat/LiveKit output. Replay tests prove atomic revision promotion and correction-aware
-rollups. Load tests target §10.3. Cross-tenant read/write assertions, deletion-tombstone tests,
+rollup serving generations. Load tests target §10.3. Cross-tenant read/write assertions, deletion-tombstone tests,
 SSRF tests, secret-redaction tests, and ClickHouse migration/physical-deletion tests are gates.
 
 ---
@@ -1322,21 +1407,23 @@ delete-by-call cannot be undone by replay.
 ### Phase 2 — Decode and assemble
 `obsalt-vapi` decode and `obsalt-retell` rebuilt from pinned published schemas, captured
 payloads, and semantic assertions. Deterministic fact identities, complete candidate
-revisions, atomic active-revision promotion, finalization, provenance, and per-call coverage.
+revisions, the §4.2 promotion protocol, finalization, provenance, and per-call coverage.
 **Exit:** a real Vapi payload yields correct `transcriberLatency`/`modelLatency`/`voiceLatency`
 measurements with `provider_reported` provenance; a real Retell payload yields correct
 sample and aggregate measurements with no unit error. Backend timeline view-model tests produce
 turn bars and no invented stage intervals. Replaying either decoder creates one promoted
-revision, retracts obsolete rollup contributions, and keeps historical analysis addressable.
+revision while retaining the prior revision for later revision-keyed consumers.
 
 ### Phase 3 — OTLP in and out
 OTLP receiver (HTTP proto + JSON; gRPC opt-in). Mapper registry. `obsalt-pipecat` and
 `obsalt-livekit`. Foreign convention support (OpenInference, OpenLLMetry, `lk.*`). Durable,
-identity-preserving OTLP forwarding with per-destination redaction and queues.
+identity-preserving OTLP forwarding with per-destination redaction and queues. Implement the
+shared egress/credential boundary from §12.5 before enabling any configurable destination.
 **Exit:** a stock Pipecat app with `enable_tracing=True` and no obsalt-specific code produces a
 complete call with a true `stage_level` waterfall. Its original trace/span identity reaches a
 test OTLP destination unchanged, while transient overload produces a retryable whole-batch
 failure and an unauthenticated resource attribute cannot choose an organization.
+SSRF, DNS-rebinding, redirect, credential-isolation, and destination-timeout tests are green.
 
 ### Phase 4 — Analysis
 Tier 1 analyzers and correction-aware rollups. All-call eligible indexing lane. Tier 2
@@ -1349,19 +1436,21 @@ rollups remain correct after replay and late data; filtered-search recall meets 
 target; tier-2 spend is enforced by a hard cap.
 
 ### Phase 5 — API and UI
-API per §11.1. UI per §1.4, provenance panel included.
+API per §11.1. UI per §1.4, provenance panel included. Implement caller/range deletion through
+all live stores and queues; backup-expiry verification remains the production-readiness drill.
 **Exit:** a user can go from "which agent regressed this week" to the specific call and the
 specific turn, and can see whether every signal was provider-reported, derived, unsupported,
 redacted, absent, or failed to decode. All six product capabilities now work end to end. This
-is the v2 product milestone.
+is the v2 functional product milestone; Phase 7 remains the production-release gate.
 
 ### Phase 6 — Provider breadth
 `obsalt-elevenlabs` (webhook + its OTel-shaped format), `obsalt-cartesia` (true turn intervals
 with unplaced stage TTFBs), `obsalt-openai-realtime`, and `obsalt-gemini-live` (SDK sources with
 a correct S2S shape and barge-in from real signals). Outbound webhooks.
-**Exit:** six source plugins (Vapi, Retell, ElevenLabs, Cartesia, OpenAI Realtime, Gemini Live)
-and two convention mappers (Pipecat, LiveKit) pass their capability-specific conformance suites.
-`StreamSource` is declared and tested with an example implementation so Deepgram is additive.
+**Exit:** four hosted source plugins (Vapi, Retell, ElevenLabs, Cartesia), two SDK
+instrumentation-plus-mapper packages (OpenAI Realtime, Gemini Live), and two convention mappers
+(Pipecat, LiveKit) pass their capability-specific conformance suites. `StreamSource` is declared
+and tested with an example implementation so Deepgram is additive.
 
 ### Phase 7 — Target-scale operations
 Full retention and physical-deletion jobs, backup-expiry handling, key rotation, restore and
@@ -1393,7 +1482,7 @@ channels. A hosted control plane. Deepgram. Bland (see §15).
 3. **Bland was dropped from the provider list (Q19)** — worth noting it is the *most* faithful
    adapter in the current repo by the prior audit and can publish `corrected_transcript[]` with
    second-precision timings and per-utterance confidence when delayed enrichment is enabled.
-   Keep as a community plugin, or restore it after the six committed sources?
+   Keep as a community plugin, or restore it after the committed integration set?
 
 4. **Cartesia Line's priority (Q27).** It has real turn intervals but only unplaced stage TTFBs,
    so it does not prove a stage waterfall. Pull it into Phase 2 to test stronger `turn_level`
@@ -1420,8 +1509,8 @@ channels. A hosted control plane. Deepgram. Bland (see §15).
 | --- | --- |
 | Provider schemas omit units or drift | Vendored schemas + captured payloads + semantic assertions + scheduled drift and enum checks (§13.1); replay is bounded by the displayed retention horizon |
 | Receive spans object storage, Postgres, and Redis | Deterministic blob keys + transactional inbox/dedupe/outbox + Redis as a lease accelerator + crash-point tests and sweepers |
-| Replay or late data double-counts facts | Stable fact ids, complete call revisions, atomic promotion, revision-keyed consumers, partition rebuild-and-swap tests |
-| ClickHouse operational burden or incorrect revision queries | Full-stack demo, tuned defaults, immutable facts, explicit active-revision projection, representative benchmarks, no manual sharding at target scale |
+| Replay or late data double-counts facts | Stable fact ids, complete call revisions, the §4.2 serving protocol, revision-keyed consumers, partition rebuild-and-swap tests |
+| ClickHouse operational burden or incorrect revision queries | Full-stack demo, tuned defaults, immutable facts, Postgres active-call index, rollup serving generations, representative benchmarks, no manual sharding at target scale |
 | Tier-2 LLM cost surprises a user | Hard per-org cap, burn-down UI, 0% default baseline sampling, content-hash caching |
 | Scope is large | Phases 0–5 are the product. Two providers end-to-end before breadth; Phase 6 adds sources and Phase 7 proves scale |
 | OTel voice conventions land differently than proposed | Version-flagged tier-2 attributes; `obsalt.*` is authoritative internally; mapper registry absorbs renames |
