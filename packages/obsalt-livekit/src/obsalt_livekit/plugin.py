@@ -24,6 +24,7 @@ from obsalt.domain.events import (
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
+from obsalt.otel.span_time import stage_from_span_semantics, valid_span_interval
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 
@@ -74,27 +75,25 @@ class LiveKitPlugin:
         for span in spans:
             if not span.name:
                 continue
-            if not span.start_unix_nano or span.end_unix_nano <= span.start_unix_nano:
+            if not valid_span_interval(span):
                 continue
             attrs = span.attributes or {}
-            stage = _stage_for_span(span.name, attrs)
-            if stage is Stage.E2E and not _looks_like_call_span(span.name, attrs):
-                continue
+            stage = stage_from_span_semantics(span.name, attrs)
             _count, key = genai_audio_input_tokens(attrs)
             source_path = f"span:{span.name}"
             if key:
                 source_path = f"span:{span.name}/{key}"
-            stage = _stage_for_span(span.name, attrs)
-            yield StageObserved(
-                stage=stage,
-                metric=Metric.DURATION,
-                value_ms=(span.end_unix_nano - span.start_unix_nano) / 1e6,
-                placement=MeasurementPlacement.INTERVAL,
-                started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
-                ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
-                provenance=Provenance.PROVIDER_REPORTED,
-                source_path=source_path,
-            )
+            if stage is not None:
+                yield StageObserved(
+                    stage=stage,
+                    metric=Metric.DURATION,
+                    value_ms=(span.end_unix_nano - span.start_unix_nano) / 1e6,
+                    placement=MeasurementPlacement.INTERVAL,
+                    started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
+                    ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path=source_path,
+                )
             result = attrs.get("obsalt.pii.tool.result") or attrs.get("output.value")
             if stage is Stage.TOOL or result not in (None, ""):
                 yield ToolObserved(
@@ -120,23 +119,3 @@ class LiveKitPlugin:
                     provenance=Provenance.PROVIDER_REPORTED,
                     source_path="span.attributes.gen_ai.system_instructions",
                 )
-
-
-def _stage_for_span(name: str, attrs: dict[str, object]) -> Stage:
-    blob = f"{name} {' '.join(str(k) for k in attrs)}".lower()
-    if any(token in blob for token in ("stt", "transcri", "asr", "speech_to_text")):
-        return Stage.STT
-    if any(token in blob for token in ("tts", "synthe", "voice")):
-        return Stage.TTS
-    if any(token in blob for token in ("llm", "inference", "chat", "generate")):
-        return Stage.LLM
-    if any(token in blob for token in ("tool", "function")):
-        return Stage.TOOL
-    if any(token in blob for token in ("vad", "endpoint", "eou")):
-        return Stage.ENDPOINTING
-    return Stage.E2E
-
-
-def _looks_like_call_span(name: str, attrs: dict[str, object]) -> bool:
-    blob = f"{name} {' '.join(str(k) for k in attrs)}".lower()
-    return any(token in blob for token in ("conversation", "call", "session", "room.duration"))

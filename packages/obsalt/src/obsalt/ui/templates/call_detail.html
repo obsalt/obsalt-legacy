@@ -12,9 +12,11 @@
     <section class="panel">
       <h2>Timeline</h2>
       <p>{{ timeline.reason }}</p>
-      {% if call.timeline_fidelity.value == "turn_level" and call.source == "vapi" %}
-        <p>Vapi reports stage durations without timestamps, so no stage waterfall is drawn.</p>
-      {% endif %}
+      {% for row in coverage|default(call.coverage) %}
+        {% if row.signal.value == "stage_interval" and row.status.value == "unsupported" and row.reason %}
+          <p class="muted">{{ row.reason }}</p>
+        {% endif %}
+      {% endfor %}
       {% if timeline.draw_stage_waterfall %}
         <p>Stage waterfall (INTERVAL measurements only).</p>
         {% for item in timeline.stage_intervals %}

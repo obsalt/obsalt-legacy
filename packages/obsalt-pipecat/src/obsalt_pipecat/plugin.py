@@ -36,6 +36,7 @@ from obsalt.otel.conventions import (
     genai_provider_name,
     genai_provider_name_key,
 )
+from obsalt.otel.span_time import valid_span_interval
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 
@@ -89,9 +90,12 @@ class PipecatPlugin:
             )
         for span in spans:
             attrs = span.attributes or {}
-            started = datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC)
-            ended = datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC)
-            ms = (span.end_unix_nano - span.start_unix_nano) / 1e6
+            start_ns = span.start_unix_nano or 0
+            end_ns = span.end_unix_nano or 0
+            interval_ok = valid_span_interval(span)
+            started = datetime.fromtimestamp(start_ns / 1e9, tz=UTC) if start_ns > 0 else None
+            ended = datetime.fromtimestamp(end_ns / 1e9, tz=UTC) if interval_ok else None
+            ms = (end_ns - start_ns) / 1e6 if interval_ok else None
             turn_index = attrs.get("turn.index")
             turn_i = int(turn_index) if turn_index is not None else None
             if span.name == SPAN_TURN:
@@ -136,17 +140,18 @@ class PipecatPlugin:
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path="span.attributes.output.value",
                     )
-                yield StageObserved(
-                    stage=Stage.TOOL,
-                    metric=Metric.DURATION,
-                    value_ms=ms,
-                    turn_index=turn_i,
-                    placement=MeasurementPlacement.INTERVAL,
-                    started_at=started,
-                    ended_at=ended,
-                    provenance=Provenance.PROVIDER_REPORTED,
-                    source_path=f"span:{span.name}",
-                )
+                if interval_ok and ms is not None:
+                    yield StageObserved(
+                        stage=Stage.TOOL,
+                        metric=Metric.DURATION,
+                        value_ms=ms,
+                        turn_index=turn_i,
+                        placement=MeasurementPlacement.INTERVAL,
+                        started_at=started,
+                        ended_at=ended,
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path=f"span:{span.name}",
+                    )
                 continue
             stage = {
                 SPAN_STT: Stage.STT,
@@ -177,6 +182,8 @@ class PipecatPlugin:
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path="span.attributes.metrics.ttfb",
                     )
+            if not interval_ok or ms is None:
+                continue
             yield StageObserved(
                 stage=stage,
                 metric=Metric.DURATION,

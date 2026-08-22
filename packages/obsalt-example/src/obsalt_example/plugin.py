@@ -26,6 +26,7 @@ from obsalt.domain.events import (
     GroundingObserved,
     NormalizedEvent,
     OutcomeObserved,
+    SnapshotBoundaryObserved,
     StageObserved,
     TurnObserved,
 )
@@ -62,17 +63,21 @@ class ExamplePlugin:
     fidelity = FidelityDeclaration(
         source_format="example.v1",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.UNPLACED}),
+        possible_placements=frozenset({MeasurementPlacement.UNPLACED}),
         provides=frozenset(
             {
                 Signal.TRANSCRIPT,
                 Signal.TURN_INTERVAL,
                 Signal.STT_DURATION,
                 Signal.GROUNDING_PROMPT,
+                Signal.GROUNDING_USER,
                 Signal.HANGUP,
             }
         ),
-        structurally_absent={Signal.VAD: "example payloads have no VAD clock"},
+        structurally_absent={
+            Signal.VAD: "example payloads have no VAD clock",
+            Signal.STAGE_INTERVAL: "example payloads publish stt_ms durations without stage clocks",
+        },
         schema_source="obsalt-example/fixtures/schema/example.schema.json",
         schema_revision="1",
         verified_at=date(2026, 8, 22),
@@ -128,6 +133,17 @@ class ExamplePlugin:
             architecture=PipelineArchitecture.CASCADE,
             provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call_id")},
         )
+        # Full-call snapshots may retract omitted facts in the declared domains.
+        # stt_ms is a duration without a stage clock — never an INTERVAL (T1).
+        if payload.get("type") != "assistant-request":
+            yield SnapshotBoundaryObserved(
+                authoritative_domains=[
+                    "turn_observed",
+                    "stage_observed",
+                    "outcome_observed",
+                    "grounding_observed",
+                ]
+            )
         prompt = payload.get("system_prompt")
         if prompt:
             yield GroundingObserved(
@@ -136,34 +152,37 @@ class ExamplePlugin:
                 provenance=Provenance.PROVIDER_REPORTED,
                 source_path="system_prompt",
             )
+        user_texts: list[str] = []
         for index, turn in enumerate(payload.get("turns") or []):
+            speaker = Speaker(turn.get("speaker") or "user") if turn.get("speaker") in {"user", "agent"} else Speaker.USER
+            text = turn.get("text") or ""
             yield TurnObserved(
                 turn_index=index,
-                speaker=Speaker(turn.get("speaker") or "user") if turn.get("speaker") in {"user", "agent"} else Speaker.USER,
-                text=turn.get("text") or "",
+                speaker=speaker,
+                text=text,
                 started_at=_ts(turn.get("started_at")),
                 ended_at=_ts(turn.get("ended_at")),
             )
+            if speaker is Speaker.USER and text:
+                user_texts.append(str(text))
             stt = turn.get("stt_ms")
             if stt is not None:
-                started = _ts(turn.get("started_at"))
-                ended = _ts(turn.get("ended_at"))
-                placement = (
-                    MeasurementPlacement.INTERVAL
-                    if started and ended
-                    else MeasurementPlacement.UNPLACED
-                )
                 yield StageObserved(
                     stage=Stage.STT,
                     metric=Metric.DURATION,
                     value_ms=float(stt),
                     turn_index=index,
-                    placement=placement,
-                    started_at=started,
-                    ended_at=ended,
+                    placement=MeasurementPlacement.UNPLACED,
                     provenance=Provenance.PROVIDER_REPORTED,
                     source_path=f"turns[{index}].stt_ms",
                 )
+        if user_texts:
+            yield GroundingObserved(
+                kind=GroundingKind.USER_TEXT,
+                content="\n".join(user_texts),
+                provenance=Provenance.PROVIDER_REPORTED,
+                source_path="turns[speaker=user].text",
+            )
         if payload.get("ended_reason"):
             yield OutcomeObserved(provider_code=str(payload["ended_reason"]))
         if payload.get("final") is True:

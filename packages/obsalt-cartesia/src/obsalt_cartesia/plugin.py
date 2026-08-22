@@ -24,6 +24,7 @@ from obsalt.domain.events import (
     CallObserved,
     GroundingObserved,
     NormalizedEvent,
+    SnapshotBoundaryObserved,
     StageObserved,
     TurnObserved,
 )
@@ -98,6 +99,13 @@ class CartesiaPlugin:
             started_at=parse_datetime(payload.get("started_at")),
             ended_at=parse_datetime(payload.get("ended_at")),
             provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call_id")},
+        )
+        yield SnapshotBoundaryObserved(
+            authoritative_domains=[
+                "turn_observed",
+                "stage_observed",
+                "grounding_observed",
+            ]
         )
         user_texts: list[str] = []
         for index, turn in enumerate(payload.get("turns") or []):

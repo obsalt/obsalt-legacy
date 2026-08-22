@@ -335,11 +335,20 @@ def test_elevenlabs_otlp_spans_require_real_interval() -> None:
         end_unix_nano=1_000_000_000,
         attributes={"elevenlabs.conversation_id": "c1"},
     )
+    leftover = ReadableSpan(
+        name="http.request",
+        trace_id="aa" * 16,
+        span_id="dd" * 8,
+        start_unix_nano=1_000_000_000,
+        end_unix_nano=2_000_000_000,
+        attributes={"elevenlabs.conversation_id": "c1"},
+    )
     assert plugin.claims(good) > 0
-    events = list(plugin.decode_spans([good, bad]))
+    events = list(plugin.decode_spans([good, bad, leftover]))
     assert len(events) == 1
     assert events[0].placement is MeasurementPlacement.INTERVAL
     assert events[0].started_at is not None and events[0].ended_at is not None
+    assert events[0].stage is Stage.E2E
 
 
 def test_elevenlabs_coarse_message_anchors() -> None:

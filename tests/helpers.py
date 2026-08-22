@@ -20,6 +20,8 @@ from obsalt.runtime import AppState, MemoryOrgSpend
 from obsalt.search.index import MemorySearchIndex
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
+from obsalt_cartesia.plugin import CartesiaPlugin
+from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
@@ -161,3 +163,23 @@ def retell_headers(raw: bytes, api_key: str = "retell-key") -> dict[str, str]:
 
 def example_headers(raw: bytes, secret: str = "s") -> dict[str, str]:
     return signed_example_headers(raw, secret)
+
+
+def elevenlabs_state(**kwargs: Any) -> AppState:
+    return provider_state(ElevenLabsPlugin(), secrets={"webhook_secret": "eleven-secret"}, **kwargs)
+
+
+def cartesia_state(**kwargs: Any) -> AppState:
+    return provider_state(CartesiaPlugin(), secrets={"webhook_secret": "line-secret"}, **kwargs)
+
+
+def elevenlabs_headers(raw: bytes, secret: str = "eleven-secret") -> dict[str, str]:
+    import time
+
+    ts = str(int(time.time()))
+    digest = hmac_hex(secret, f"{ts}.".encode() + raw)
+    return {"elevenlabs-signature": f"t={ts},v0={digest}", "content-type": "application/json"}
+
+
+def cartesia_headers(secret: str = "line-secret") -> dict[str, str]:
+    return {"x-webhook-secret": secret, "content-type": "application/json"}
