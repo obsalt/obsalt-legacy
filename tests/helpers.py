@@ -1,4 +1,8 @@
-"""Shared test helpers. Not a product storage backend."""
+"""SET harness: fixtures, signed headers, fakes, and independent oracles.
+
+Memory stores are test doubles, not a product backend. Oracles here are
+independent of the code under test — they state what the product promised.
+"""
 
 from __future__ import annotations
 
@@ -50,6 +54,22 @@ OPENAI_OTLP = (
 GEMINI_OTLP = (
     ROOT / "packages" / "obsalt-gemini-live" / "src" / "obsalt_gemini_live" / "fixtures" / "otlp"
 )
+
+# Wide window used when a test is not itself about the time filter.
+RANGE_START = "2020-01-01T00:00:00Z"
+RANGE_END = "2030-01-01T00:00:00Z"
+RANGE_QS = f"start={RANGE_START}&end={RANGE_END}"
+
+# Independent oracles from the committed example fixture (not from running decode).
+EXAMPLE_SOURCE_CALL_ID = "ex-1"
+EXAMPLE_AGENT_ID = "support"
+EXAMPLE_USER_TEXT = "I want a refund."
+EXAMPLE_STARTED_AT = "2026-08-22T12:00:01"
+EXAMPLE_STT_MS = 180.0
+
+
+def auth(key: str = "k") -> dict[str, str]:
+    return {"X-API-Key": key}
 
 
 def signed_example_headers(raw: bytes, secret: str = "s") -> dict[str, str]:
@@ -198,3 +218,33 @@ def elevenlabs_headers(raw: bytes, secret: str = "eleven-secret") -> dict[str, s
 
 def cartesia_headers(secret: str = "line-secret") -> dict[str, str]:
     return {"x-webhook-secret": secret, "content-type": "application/json"}
+
+
+def ingest_example(client: TestClient, raw: bytes | None = None, ingest_key: str = "ik") -> None:
+    payload = raw if raw is not None else example_raw()
+    posted = client.post(
+        f"/v1/ingest/example/{ingest_key}", content=payload, headers=example_headers(payload)
+    )
+    assert posted.status_code == 200, posted.text
+
+
+def list_calls(client: TestClient, key: str = "k", qs: str = RANGE_QS) -> dict[str, Any]:
+    res = client.get(f"/v1/calls?{qs}", headers=auth(key))
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def first_call_id(client: TestClient, key: str = "k") -> str:
+    items = list_calls(client, key)["items"]
+    assert items, "expected at least one call in range"
+    return items[0]["id"]
+
+
+def assert_no_stage_waterfall(body: dict[str, Any]) -> None:
+    """Independent of provider: a waterfall requires real stage intervals."""
+    assert body["draw_stage_waterfall"] is False
+    assert body["stage_intervals"] == []
+
+
+def assert_generation_labelled(body: dict[str, Any]) -> None:
+    assert body.get("as_of_generation"), "fleet responses must carry one serving generation"

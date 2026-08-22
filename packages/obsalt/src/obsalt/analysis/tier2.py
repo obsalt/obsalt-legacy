@@ -19,6 +19,24 @@ from obsalt.util import canonical_json, sha256_text
 
 DEFAULT_BASELINE_SAMPLE_RATE = 0.0
 DEFAULT_LATENCY_TRIGGER_MS = 2000.0
+HEURISTIC_JUDGE_NAMES = frozenset({"", "heuristic"})
+
+
+def is_paid_judge(judge: Any | None) -> bool:
+    """HeuristicJudge is free. Anything else (OpenAI-compatible, custom) can bill."""
+    if judge is None:
+        return False
+    name = str(getattr(judge, "name", "") or "")
+    return name not in HEURISTIC_JUDGE_NAMES
+
+
+def budget_for_judge(budget_usd: float, judge: Any | None) -> float:
+    """$0 blocks paid judges. Free heuristic may still run (evaluate-on-click)."""
+    if is_paid_judge(judge):
+        return max(0.0, float(budget_usd))
+    return float("inf")
+
+
 WATCHED_HANGUPS = frozenset(
     {
         HangupReason.USER_HANGUP,

@@ -147,6 +147,11 @@ curl -sS -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 Webhook URL: `$BASE/v1/ingest/vapi/<ingest_key>`.
 Provider-specific secrets: [connect-hosted](connect-hosted.md).
 
+`POST /v1/calls/{id}/analyze` evaluates **every** rubric in the org
+(or hallucination entailment if none exist) and returns
+`{"items": [AnalysisResult, …]}`. A `$0` monthly budget blocks paid
+judges; the free heuristic may still run.
+
 ### Rubrics and evals
 
 ```bash

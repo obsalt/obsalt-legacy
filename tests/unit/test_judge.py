@@ -74,6 +74,38 @@ def test_politeness_rubric_does_not_fail_on_price() -> None:
     assert judged.passed is True
 
 
+def test_entailment_and_calibration_disagree_on_ungrounded_price() -> None:
+    from obsalt.analysis.calibration import calibrate_rubric
+    from obsalt.analysis.entailment import entail_claims
+    from obsalt.domain.events import CallObserved, TurnObserved
+    from obsalt.domain.models import Rubric
+    from obsalt.worker.process import process_normalized_events
+    from tests.helpers import example_state, fidelity_declaration
+
+    state = example_state()
+    rev = process_normalized_events(
+        [
+            CallObserved(source_call_id="c1"),
+            TurnObserved(turn_index=0, speaker=Speaker.AGENT, text="Your order ORD-99 is $12"),
+        ],
+        org_id="acme",
+        source="example",
+        source_call_id="c1",
+        envelope_id="e1",
+        declaration=fidelity_declaration(),
+        pointers=state.pointers,
+        sink=state.sink,
+        decoder_version="t/1",
+    )
+    claims = asyncio.run(entail_claims(rev, judge=HeuristicJudge()))
+    assert claims
+    assert any(item["verdict"] != "grounded" for item in claims)
+    rubric = Rubric(id="r1", org_id="acme", name="hallucination", description="Flag invented facts")
+    result = asyncio.run(calibrate_rubric(rubric, [(rev, False)], judge=HeuristicJudge()))
+    assert result["n"] == 1
+    assert "agreement" in result
+
+
 def test_grounding_corpus_includes_tool_errors() -> None:
     call = CallRevision(
         org_id="acme",

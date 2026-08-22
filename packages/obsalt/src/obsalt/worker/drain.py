@@ -491,7 +491,7 @@ def drain_tier2(state: Any) -> int:
 
 def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
     from obsalt.analysis.hallucination import extract_candidate_claims
-    from obsalt.analysis.tier2 import decide_tier2
+    from obsalt.analysis.tier2 import budget_for_judge, decide_tier2
     from obsalt.domain.enums import AnalysisState
     from obsalt.runtime import add_org_spend, org_spend_usd
 
@@ -499,7 +499,8 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
     rate = float(getattr(settings, "baseline_sample_rate", 0.0) or 0.0)
     budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
     spend = org_spend_usd(state, revision.org_id)
-    budget_usd = budget if budget > 0 else float("inf")
+    judge = getattr(state, "judge", None)
+    budget_usd = budget_for_judge(budget, judge)
     rubrics = [
         r
         for r in getattr(state, "rubrics", {}).values()
@@ -566,7 +567,7 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
             if cost:
                 spend = add_org_spend(state, revision.org_id, cost)
             results.append(result)
-            if not result.payload.get("passed", True):
+            if result.payload.get("passed") is not True:
                 from obsalt.webhooks.outbound import emit_standard_event
 
                 emit_standard_event(

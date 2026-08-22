@@ -64,6 +64,8 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
                     flags.append(
                         _flag(HallucinationKind.PHANTOM_TOOL_SUCCESS, sentence, turn.index, verb)
                     )
+                elif not related_success:
+                    flags.append(_flag(HallucinationKind.COMMITMENT, sentence, turn.index, verb))
     return flags
 
 

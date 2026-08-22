@@ -368,13 +368,15 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         )
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end
         filters = {k: body.get(k) for k in ("agent_id", "source", "hangup_reason") if body.get(k)}
+        filters["start"] = start_dt
+        filters["end"] = end_dt
         calls = [c for c in active_calls(state, org) if in_range(c, start_dt, end_dt)]
         items = search_calls(
             calls,
             query,
             index=state.search,
             org_id=org,
-            filters=filters or None,
+            filters=filters,
         )
         return {"items": items}
 
@@ -441,37 +443,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")
     ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
-        rev = _active(state, org, call_id)
-        spend = org_spend_usd(state, org)
-        if spend >= state.settings.llm_monthly_budget_usd > 0:
-            execution = AnalysisExecution(
-                call_id=call_id,
-                revision=rev.revision,
-                analyzer_id="eval",
-                analyzer_version="1",
-                state=AnalysisState.BUDGET_BLOCKED,
-            )
-            return execution.model_dump(mode="json")
-        from obsalt.analysis.tier2 import run_tier2
-
-        rubrics = [r for r in state.rubrics.values() if r.org_id == org]
-        result = await run_tier2(
-            rev,
-            rubric=rubrics[0] if rubrics else None,
-            manual=True,
-            baseline_sample_rate=state.settings.baseline_sample_rate,
-            budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend,
-            judge=state.judge,
-        )
-        cost = float((result.payload or {}).get("cost_usd") or 0.0)
-        if cost:
-            add_org_spend(state, org, cost)
-        writer = getattr(state.sink, "write_analysis", None)
-        existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
-        if writer is not None:
-            writer(org, call_id, rev.revision, list(existing) + [result])
-        return result.model_dump(mode="json")
+        return await _run_manual_analysis(state, org, call_id)
 
     @app.get("/v1/rubrics")
     def list_rubrics(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -1129,29 +1101,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         _require_csrf(
             request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or "")
         )
-        rev = _active(state, org, call_id)
-        spend = org_spend_usd(state, org)
-        if spend >= state.settings.llm_monthly_budget_usd > 0:
-            return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
-        from obsalt.analysis.tier2 import run_tier2
-
-        rubrics = [r for r in state.rubrics.values() if r.org_id == org]
-        result = await run_tier2(
-            rev,
-            rubric=rubrics[0] if rubrics else None,
-            manual=True,
-            baseline_sample_rate=state.settings.baseline_sample_rate,
-            budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=spend,
-            judge=state.judge,
-        )
-        cost = float((result.payload or {}).get("cost_usd") or 0.0)
-        if cost:
-            add_org_spend(state, org, cost)
-        writer = getattr(state.sink, "write_analysis", None)
-        existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
-        if writer is not None:
-            writer(org, call_id, rev.revision, list(existing) + [result])
+        await _run_manual_analysis(state, org, call_id)
         return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
 
     return app
@@ -1293,6 +1243,47 @@ def _require_csrf(request: Request, state: AppState, provided: str | None) -> No
         request.cookies.get("obsalt_session"), provided, state.settings.session_secret
     ):
         raise HTTPException(status_code=403, detail="csrf required")
+
+
+async def _run_manual_analysis(state: AppState, org: str, call_id: str) -> dict:
+    """Evaluate every org rubric (or entailment if none). $0 blocks paid judges."""
+    from obsalt.analysis.tier2 import budget_for_judge, run_tier2
+
+    rev = _active(state, org, call_id)
+    spend = org_spend_usd(state, org)
+    cap = budget_for_judge(state.settings.llm_monthly_budget_usd, state.judge)
+    if spend >= cap:
+        execution = AnalysisExecution(
+            call_id=call_id,
+            revision=rev.revision,
+            analyzer_id="eval",
+            analyzer_version="1",
+            state=AnalysisState.BUDGET_BLOCKED,
+        )
+        return {"items": [execution.model_dump(mode="json")]}
+    rubrics = [r for r in state.rubrics.values() if r.org_id == org]
+    targets = rubrics or [None]
+    results = []
+    writer = getattr(state.sink, "write_analysis", None)
+    existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
+    for rubric in targets:
+        spend = org_spend_usd(state, org)
+        result = await run_tier2(
+            rev,
+            rubric=rubric,
+            manual=True,
+            baseline_sample_rate=state.settings.baseline_sample_rate,
+            budget_usd=cap,
+            spend_usd=spend,
+            judge=state.judge,
+        )
+        cost = float((result.payload or {}).get("cost_usd") or 0.0)
+        if cost:
+            add_org_spend(state, org, cost)
+        results.append(result)
+    if writer is not None:
+        writer(org, call_id, rev.revision, list(existing) + results)
+    return {"items": [item.model_dump(mode="json") for item in results]}
 
 
 def _active(state: AppState, org: str, call_id: str) -> CallRevision:

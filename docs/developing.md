@@ -118,15 +118,15 @@ Read [Write a plugin](plugins.md) before writing code.
 
 Tests live under `tests/` by kind. The directory is the marker.
 
-| Directory | Marker | Meaning |
-| --- | --- | --- |
-| `tests/unit/` | `unit` | Pure functions, no HTTP |
-| `tests/integration/` | `integration` | Multi-component, memory doubles OK |
-| `tests/blackbox/` | `blackbox` | HTTP status codes and JSON only |
-| `tests/contract/` | `contract` | OTLP, SQL, SSRF, schema fixtures |
-| `tests/conformance/` | `conformance` | Plugin testkit subclasses |
-| `tests/property/` | `property` | Assembler fold properties |
-| `tests/security/` | `security` | Auth, tenancy, SSRF |
+| Directory | Size | Marker | Meaning |
+| --- | --- | --- | --- |
+| `tests/unit/` | Small | `unit` | Pure functions, no HTTP |
+| `tests/integration/` | Medium | `integration` | Multi-component, memory doubles OK |
+| `tests/blackbox/` | Large | `blackbox` | HTTP status codes and JSON only |
+| `tests/contract/` | Medium | `contract` | OTLP, SQL, SSRF, schema fixtures |
+| `tests/conformance/` | Medium | `conformance` | Plugin testkit subclasses |
+| `tests/property/` | Small | `property` | Assembler fold properties |
+| `tests/security/` | Medium | `security` | Auth, tenancy, SSRF |
 
 Use `tests.helpers` for fixture paths and signed headers. Use
 `create_test_app()`. Memory stores are doubles, not a backend.

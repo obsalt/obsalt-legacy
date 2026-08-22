@@ -132,25 +132,32 @@ If a change violates one of these, it is the wrong change.
 
 ## Tests
 
-The directory **is** the marker (`tests/conftest.py`).
+The directory **is** the marker (`tests/conftest.py`). Sizes follow
+*How Google Tests Software*: many Small, fewer Medium, few Large.
 
-| Directory | Means |
-| --- | --- |
-| `tests/unit/` | Pure functions. No HTTP unless you are testing a helper. |
-| `tests/integration/` | Several components. Memory doubles are fine. |
-| `tests/blackbox/` | Status codes and JSON only. No poking `app.state`. |
-| `tests/contract/` | OTLP, SQL, SSRF, schema fixtures. |
-| `tests/conformance/` | Plugin testkit subclasses. |
-| `tests/property/` | Assembler fold: permutation + duplicates. |
-| `tests/security/` | Auth, tenancy, SSRF. |
+| Directory | Size | Means |
+| --- | --- | --- |
+| `tests/unit/` | Small | One process. No HTTP. No I/O except committed fixtures. |
+| `tests/integration/` | Medium | Several components. Memory doubles are fine. |
+| `tests/blackbox/` | Large | Status codes and JSON only. No poking `app.state`. |
+| `tests/contract/` | Medium | OTLP, SQL, SSRF, schema fixtures. |
+| `tests/conformance/` | Medium | Plugin testkit subclasses. |
+| `tests/property/` | Small | Assembler fold: permutation + duplicates. |
+| `tests/security/` | Medium | Auth, tenancy, SSRF. |
 
-- Use `tests.helpers` for fixture paths and signed headers.
+- Use `tests.helpers` for fixture paths, signed headers, and oracles.
 - Use `create_test_app()`. `create_app()` without a state must not
   become a memory backend.
-- Do not assert tautologies (HMAC yourself, then “verify” with the
-  same function against the same bytes) unless you are testing the
+- One behavior per test, named after the behavior:
+  `test_retain_fails_when_durable_stack_is_down`.
+- Independent oracles: expected values come from fixtures, vendor
+  schemas, or the product promise — not from running the same function
+  twice. Do not assert tautologies (HMAC yourself, then “verify” with
+  the same function against the same bytes) unless you are testing the
   primitive in isolation.
-- Name tests after the behavior: `test_retain_fails_when_durable_stack_is_down`.
+- Do not duplicate the same assertion across layers. A Large test
+  covers the HTTP contract; the Small test covers the algorithm.
+- If a correct test fails, fix the product. Do not weaken the test.
 
 ---
 
