@@ -1,7 +1,13 @@
 # CLI
 
-The `obsalt` command. Product walkthroughs live in
-[getting started](../getting-started.md); this page is the flag list.
+**Who this is for:** you have `obsalt` on your PATH and want the flag
+list, not a product walkthrough.
+
+**Question this page answers:** which command, which exit code, which
+flag?
+
+Walkthroughs live in [getting started](../getting-started.md). This page
+is the lookup.
 
 ```
 obsalt [-V] <command>
@@ -29,16 +35,21 @@ obsalt [-V] <command>
 prints a warning. `obsalt serve` without the compose stack exits 2 and
 tells you there is no SQLite or Postgres-only mode.
 
-`worker --once` processes one batch and exits. `worker --poll 1.0` is the
-long-running loop.
+`worker --once` processes one batch and exits. `worker --poll 1.0` is
+the long-running loop.
 
-`doctor` does **not** start a memory backend when stores are down. Redis
-is optional: a Redis failure is reported and is not fatal. `/ready` is
-the in-process health surface once `serve` is up.
+`doctor` does **not** start a memory backend when stores are down.
+Redis is optional: a Redis failure is reported and is not fatal.
+`/ready` is the in-process health surface once `serve` is up.
 
 `schema-drift --all` is offline and reproducible. Supply `--remote` only
-when you have a refetched vendor schema to diff. Updating a pin requires a
-reviewed schema, fixture, and expected-output diff.
+when you have a refetched vendor schema to diff. Updating a pin requires
+a reviewed schema, fixture, and expected-output diff.
 
 Makefile wrappers: `make help`, `make up`, `make serve`, `make worker`,
 `make doctor`, `make test-unit`.
+
+## What's next
+
+Every `OBSALT_*` setting: [Configuration](configuration.md).
+Something failed: [Troubleshooting](../troubleshooting.md).

@@ -2,6 +2,8 @@
 
 This file is for humans and coding agents. It is the short form of
 [docs/conventions.md](docs/conventions.md) plus the map of the tree.
+Trailhead: [docs/README.md](docs/README.md). Compact machine map:
+[docs/llms.txt](docs/llms.txt).
 
 obsalt is a **self-hosted call analytics and quality system for live AI
 voice agents**. Core ships **no** providers. Memory stores are **test
@@ -65,4 +67,5 @@ is cleared. Lint and tests are the required gates.
   `org_id`, `ingest_key`, …)
 - Production CLI commands exit 2 when the durable stack is down
 - Docs: update the page a user would actually open (see the table in
-  `docs/conventions.md`)
+  `docs/conventions.md`). Same contract as the product: never invent a
+  waterfall; one page, one job; tables decide.

@@ -1,8 +1,14 @@
 # Getting started
 
-This gets obsalt running on your machine. It does not connect a voice
-platform — that is the next page, once you know which kind of agent you
-have.
+**Who this is for:** you are going to run obsalt on a laptop or a
+dev box today.
+
+**Question this page answers:** how do I get a signed-in console?
+
+This does **not** connect a voice platform. That is the next page, once
+you know which kind of agent you have. An empty call list at the end is
+success. Fixtures in this repo are for tests. The console fills from
+live traffic.
 
 You will end with:
 
@@ -10,6 +16,17 @@ You will end with:
 - the service on http://localhost:8080
 - a worker draining the outbox
 - a browser session in the console
+
+```mermaid
+flowchart LR
+  prereq["Python 3.11 + Docker"] --> compose["docker compose up"]
+  compose --> init["obsalt init --write-env"]
+  init --> doctor["obsalt doctor"]
+  doctor --> serve["obsalt serve"]
+  serve --> worker["obsalt worker"]
+  worker --> ui["/v1/ui · sign in with dev-key"]
+  ui --> next["Connect one live agent"]
+```
 
 ## Prerequisites
 
@@ -38,8 +55,9 @@ obsalt worker                                   # or: make worker
 ```
 
 `serve` is the API and the console. `worker` decodes. Webhook
-acknowledgement never waits on decode. In development, `serve` also drains
-the inbox after ack so a single process can demo; production is both.
+acknowledgement never waits on decode. In development, `serve` also
+drains the inbox after ack so a single process can demo; production is
+both.
 
 `obsalt doctor` probes Postgres, ClickHouse, object storage, and Redis.
 Exit 2 means a required store is down — start compose and wait until
@@ -68,8 +86,8 @@ production, data is not durable.**
 ## Sign in
 
 Local bootstrap uses `OBSALT_BOOTSTRAP_API_KEY` (default `dev-key`) and
-`OBSALT_BOOTSTRAP_ORG_ID` (default `local`). The key is hashed at rest and
-bound to that org. There is no "auth off" switch.
+`OBSALT_BOOTSTRAP_ORG_ID` (default `local`). The key is hashed at rest
+and bound to that org. There is no “auth off” switch.
 
 ```bash
 curl -sS -H "X-API-Key: dev-key" http://localhost:8080/ready
@@ -78,8 +96,8 @@ curl -sS -H "X-API-Key: dev-key" http://localhost:8080/ready
 Open http://localhost:8080/v1/ui, paste the same key, continue.
 
 You should see an empty call list, plus Latency / Hangups / Quality /
-Search / Settings in the header. Settings lists installed plugins. If the
-plugin you need is missing, you installed core without it.
+Search / Settings in the header. Settings lists installed plugins. If
+the plugin you need is missing, you installed core without it.
 
 ## Did it work?
 
@@ -95,10 +113,21 @@ An empty call list is success. obsalt has nothing to show until a
 `/health` fails, or doctor reports `FAIL`, see
 [Troubleshooting](troubleshooting.md).
 
-## What to do next
+## Words you will trip over
 
-obsalt is running. It has nothing to look at until a **live** agent sends
-it a call.
+Worth thirty seconds now. Full list: [Glossary](reference/glossary.md).
+
+| Word | Means |
+| --- | --- |
+| **Chip** | A duration we measured but cannot place on a timeline. Not a waterfall bar. |
+| **Revision** | An immutable snapshot of a call. Late events create a new one. |
+| **Ingest key** | The secret in the webhook URL. Shown once. Per connection, per tenant. |
+| **Provenance** | Where a number came from — or why it is missing. |
+
+## What's next
+
+obsalt is running. It has nothing to look at until a **live** agent
+sends it a call.
 
 | I run… | Next page |
 | --- | --- |

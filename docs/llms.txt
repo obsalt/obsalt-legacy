@@ -1,0 +1,48 @@
+# obsalt
+
+Self-hosted call analytics and quality for live AI voice agents.
+Core ships no providers. Memory stores are test doubles, not a backend.
+There is no SQLite mode. There is no require_auth=false.
+
+## Do not invent
+
+- A waterfall from unplaced durations (Vapi/Retell chips, not bars)
+- Decode on the webhook request path
+- A second storage backend
+- org_id chosen from a payload field or OTLP attribute
+- Missing Tier-2 judge output as a passing eval
+- Provider fields that are not in the vendored schema
+- A private POST-us-a-JSON-snapshot SDK. Custom agents emit OTLP.
+
+## Read first
+
+- docs/product.md — six capabilities, who it is for, comparison tables
+- docs/architecture.md — pipeline + "The rules we will not break"
+- docs/console.md — what each source actually shows
+- docs/conventions.md — vocabulary and the rules that show up in code
+- AGENTS.md — one-screen version for coding agents
+
+## How-tos
+
+- docs/getting-started.md — compose, sign in, empty list is success
+- docs/connect-hosted.md — Vapi, Retell, ElevenLabs, Cartesia webhooks
+- docs/connect-custom.md — Pipecat, LiveKit, Realtime, Gemini Live via OTLP
+- docs/troubleshooting.md — empty console, 401s, missing waterfall
+- docs/ops.md — health, replay, deletion, rotation
+- docs/plugins.md — public plugin contract
+
+## Reference
+
+- docs/api.md — /v1 routes
+- docs/reference/configuration.md — OBSALT_* 
+- docs/reference/cli.md — obsalt command
+- docs/reference/domain.md — CallRevision, measurements, hangup taxonomy
+- docs/reference/otlp.md — span names, attributes, PII
+- docs/reference/security.md — tenancy, redaction, egress
+- docs/reference/glossary.md — chip, revision, provenance
+
+## Vocabulary to keep
+
+CallRevision, NormalizedEvent, StageMeasurement, AggregateMeasurement,
+SignalCoverage, FidelityDeclaration, RawEnvelope, TimelineFidelity,
+MeasurementPlacement, PipelineArchitecture, Provenance, org_id, ingest_key.

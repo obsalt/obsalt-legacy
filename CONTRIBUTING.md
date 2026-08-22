@@ -2,8 +2,9 @@
 
 ## I want to use obsalt
 
-Start at the [README](README.md) and [Getting started](docs/getting-started.md).
-This file is for changing the code.
+Start at the [README](README.md). The trailhead for the rest of the
+docs is [docs/README.md](docs/README.md). This file is for changing the
+code.
 
 ## I want to change the code
 
@@ -29,7 +30,8 @@ Read, in this order:
   golden + schema validation.
 - No invented provider fields.
 - Docs if you change a product surface, a public contract, or how
-  someone connects an agent.
+  someone connects an agent. Update the page a human would actually
+  open — see the table in [Conventions](docs/conventions.md).
 - `make lint` and `make test-unit` green. `make ci` before you call it
   done.
 

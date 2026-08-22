@@ -1,11 +1,16 @@
-# Developing obsalt
+# Developing
+
+**Who this is for:** you are going to change this repo.
+
+**Question this page answers:** where does the code live, what is the
+PR bar, and how do I add a source?
+
+If you are connecting a voice agent, you want
+[Getting started](getting-started.md), not this page.
 
 obsalt is a Python monorepo. Core lives in `packages/obsalt`. Providers
 live in their own packages and must keep working against the public
 plugin contract.
-
-If you are connecting a voice agent, you want [Getting started](getting-started.md),
-not this page.
 
 Coding rules a formatter cannot see: [Conventions](conventions.md).
 One-screen version: [AGENTS.md](../AGENTS.md).
@@ -21,8 +26,8 @@ docker compose up -d
 obsalt doctor
 ```
 
-`make ci` is lint + typecheck + the full suite — the same gates as GitHub
-Actions.
+`make ci` is lint + typecheck + the full suite — the same gates as
+GitHub Actions.
 
 | Command | What it does |
 | --- | --- |
@@ -94,7 +99,8 @@ memory backend. Tenant identity is `org_id` everywhere, including
 - No invented provider fields. If a captured payload is ahead of the
   vendor schema, use a reviewed, expiring schema overlay.
 - Docs if you change a product surface, a public contract, or how
-  someone connects an agent.
+  someone connects an agent. Update the page a user would actually open
+  — see the table in [Conventions](conventions.md).
 - `make ci` green.
 
 ## Adding a provider plugin
@@ -116,7 +122,8 @@ Read [Write a plugin](plugins.md) before writing code.
 
 ## Tests
 
-Tests live under `tests/` by kind. The directory is the marker.
+Tests live under `tests/` by kind. The directory is the marker. Sizes
+follow *How Google Tests Software*: many Small, fewer Medium, few Large.
 
 | Directory | Size | Marker | Meaning |
 | --- | --- | --- | --- |
@@ -132,10 +139,10 @@ Use `tests.helpers` for fixture paths and signed headers. Use
 `create_test_app()`. Memory stores are doubles, not a backend.
 
 Webhook plugins must validate `fixtures/raw/` against a vendored vendor
-schema. Overlays are allowed only as reviewed, additive, expiring patches
-that still report the original vendor mismatch. `obsalt schema-drift`
-compares the pin; updating a pin is a reviewed schema + fixture + golden
-diff.
+schema. Overlays are allowed only as reviewed, additive, expiring
+patches that still report the original vendor mismatch.
+`obsalt schema-drift` compares the pin; updating a pin is a reviewed
+schema + fixture + golden diff.
 
 ## Do not
 
@@ -145,7 +152,7 @@ diff.
 - Let a payload field or OTLP resource attribute choose `org_id`.
 - Treat missing Tier-2 output as a passing eval.
 - Introduce `require_auth=false`.
-- Re-introduce a private "POST us a JSON snapshot" SDK shape. Custom
+- Re-introduce a private “POST us a JSON snapshot” SDK shape. Custom
   agents emit OTLP.
 
 ## Known gaps (useful, not a roadmap ceremony)
@@ -157,4 +164,7 @@ diff.
   session cookies.
 - Langfuse-shaped ingest is intentionally not implemented.
 
-Architecture: [architecture](architecture.md).
+## What's next
+
+The rules a formatter cannot see: [Conventions](conventions.md).
+Why the pipeline looks like this: [Architecture](architecture.md).

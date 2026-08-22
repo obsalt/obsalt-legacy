@@ -1,21 +1,25 @@
 # Connect your own agent
 
-Use this when **your process** owns the pipeline — Pipecat, LiveKit, OpenAI
-Realtime, Gemini Live, or anything you wrap with `VoiceCall`. obsalt
-receives OTLP. It does not invent a private JSON envelope for you to POST.
+**Who this is for:** **your process** owns the pipeline — Pipecat,
+LiveKit, OpenAI Realtime, Gemini Live, or anything you wrap with
+`VoiceCall`.
 
-```
-Your agent process
-    │  OpenTelemetry exporter
-    ▼
-POST /v1/traces          +  X-API-Key: <ingest-scoped key>
-    │  raw archive + inbox
-    ├── durable forward --> your Tempo / Datadog / Grafana
-    └── worker maps spans --> console
+**Question this page answers:** how do I emit OTLP that obsalt will
+recognize, and how do I not invent a private JSON envelope?
+
+obsalt receives OTLP. It does not invent a private “POST us a snapshot”
+SDK. That path is gone on purpose.
+
+```mermaid
+flowchart TB
+  agent["Your agent process<br/>OpenTelemetry exporter"] --> traces["POST /v1/traces<br/>X-API-Key: ingest-scoped key"]
+  traces --> raw["Raw archive + inbox"]
+  raw --> fwd["Durable forward → Tempo / Datadog / Grafana"]
+  raw --> worker["Worker maps spans → console"]
 ```
 
-Do not also fire a hosted-platform webhook for the same call. You will get
-two records that do not join, and you will not know which clock won.
+Do not also fire a hosted-platform webhook for the same call. You will
+get two records that do not join, and you will not know which clock won.
 
 ## 1. Install the mapper
 
@@ -26,13 +30,13 @@ pip install obsalt-gemini-live
 obsalt doctor
 ```
 
-The mapper package is how obsalt **recognizes** your spans. The tracer in
-your process is how those spans **exist**.
+The mapper package is how obsalt **recognizes** your spans. The tracer
+in your process is how those spans **exist**.
 
 ## 2. Point the exporter at obsalt
 
-Tenancy comes from the API key, not from a span attribute. `obsalt.org` may
-corroborate. It cannot choose an organization.
+Tenancy comes from the API key, not from a span attribute. `obsalt.org`
+may corroborate. It cannot choose an organization.
 
 ```bash
 export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8080/v1/traces
@@ -40,9 +44,10 @@ export OTEL_EXPORTER_OTLP_HEADERS="X-API-Key=${OBSALT_BOOTSTRAP_API_KEY:-dev-key
 ```
 
 obsalt accepts `application/x-protobuf` and `application/json`. Gzip and
-deflate are fine, within size limits. Malformed protobuf is 400. Capacity
-pressure is 503 — retry the whole batch. A partial-success body means
-"these records are permanently invalid"; clients must not retry that.
+deflate are fine, within size limits. Malformed protobuf is 400.
+Capacity pressure is 503 — retry the whole batch. A partial-success body
+means “these records are permanently invalid”; clients must not retry
+that.
 
 If you prefer the helper:
 
@@ -56,14 +61,14 @@ setup_tracing(
 ```
 
 Pass the service origin. The helper appends `/v1/traces` and sets
-`X-API-Key`. Pass `emit_pii=True` only if you really want transcripts on
-exported spans; the default strips `obsalt.pii.*`.
+`X-API-Key`. Pass `emit_pii=True` only if you really want transcripts
+on exported spans; the default strips `obsalt.pii.*`.
 
 ## 3. Emit low-cardinality spans
 
-`VoiceCall` is a thin OpenTelemetry wrapper. Names stay stable. Variables
-go on attributes. A 200-turn call must not mint 200 unique span names —
-backends group by name.
+`VoiceCall` is a thin OpenTelemetry wrapper. Names stay stable.
+Variables go on attributes. A 200-turn call must not mint 200 unique
+span names — backends group by name.
 
 ```python
 from obsalt import VoiceCall, setup_tracing
@@ -87,8 +92,8 @@ with VoiceCall.start(
             pass
 ```
 
-Speech-to-speech (Realtime, Gemini Live) has no STT / LLM / TTS split. Do
-not emit empty cascade stages. Use the stages that exist:
+Speech-to-speech (Realtime, Gemini Live) has no STT / LLM / TTS split.
+Do not emit empty cascade stages. Use the stages that exist:
 
 ```python
 with call.user_input():
@@ -100,7 +105,7 @@ with call.playout():
 ```
 
 Barge-in is taken only from an explicit interruption signal, never from
-"the user spoke after the agent."
+“the user spoke after the agent.”
 
 | Do not emit | Emit | Variable lives on |
 | --- | --- | --- |
@@ -114,11 +119,11 @@ Transcript text goes on `obsalt.pii.user_transcript` /
 
 ## Pipecat
 
-A stock Pipecat app with tracing on and **no** obsalt-specific code should
-produce a complete call with a real stage waterfall when the spans carry
-real intervals. Install `obsalt-pipecat`. The mapper reads `metrics.ttfb`,
-`turn.*`, and `gen_ai.provider.name` (some Pipecat docs say
-`gen_ai.system`; instrument against the code).
+A stock Pipecat app with tracing on and **no** obsalt-specific code
+should produce a complete call with a real stage waterfall when the
+spans carry real intervals. Install `obsalt-pipecat`. The mapper reads
+`metrics.ttfb`, `turn.*`, and `gen_ai.provider.name` (some Pipecat docs
+say `gen_ai.system`; instrument against the code).
 
 Point the exporter as in step 2. Place a live call. Open `/v1/ui`.
 
@@ -126,14 +131,15 @@ Point the exporter as in step 2. Place a live call. Open `/v1/ui`.
 
 Install `obsalt-livekit`. We accept both
 `gen_ai.usage.audio.input_tokens` (merged spec) and
-`gen_ai.usage.input_audio_tokens` (what LiveKit ships). Room / conversation
-id becomes the call join key.
+`gen_ai.usage.input_audio_tokens` (what LiveKit ships). Room /
+conversation id becomes the call join key.
 
 ## OpenAI Realtime and Gemini Live
 
 These APIs have no post-call webhook. Telemetry exists only in your
-process. Install the matching package and emit `user_input` / `generation`
-/ `playout`. The console will not invent a cascade you do not have.
+process. Install the matching package and emit `user_input` /
+`generation` / `playout`. The console will not invent a cascade you do
+not have.
 
 ```python
 # optional: wrap the vendor client
@@ -146,10 +152,13 @@ wrapped = plugin.instrument(my_realtime_client, SdkConfig(otlp_endpoint="http://
 
 ## Forwarding
 
-Received OTLP is forwarded from the durable raw spine, identity preserved
-(trace id, span id, parent, timestamps). Destination failures do not fail
-the ingest ack. Provider aggregate latency is exported as **metrics**, not
-as span widths.
+Received OTLP is forwarded from the durable raw spine, identity
+preserved (trace id, span id, parent, timestamps). Destination failures
+do not fail the ingest ack. Provider aggregate latency is exported as
+**metrics**, not as span widths.
 
-Next: [The console](console.md). If traces never appear:
-[Troubleshooting](troubleshooting.md).
+## What's next
+
+[The console](console.md). If traces never appear:
+[Troubleshooting](troubleshooting.md). Span names and PII attributes:
+[OTLP](reference/otlp.md).

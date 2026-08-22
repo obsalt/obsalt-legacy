@@ -1,7 +1,13 @@
 # HTTP API
 
-The console is HTML over these routes. Scripts use `X-API-Key`. Interactive
-OpenAPI (same service): http://localhost:8080/docs.
+**Who this is for:** you want the same data as the console, without the
+HTML — scripts, exporters, the occasional 2 a.m. curl.
+
+**Question this page answers:** which `/v1` route, which header, which
+body field?
+
+The console is HTML over these routes. Scripts use `X-API-Key`.
+Interactive OpenAPI (same service): http://localhost:8080/docs.
 
 Paths live under `/v1` because HTTP APIs need a prefix, not because the
 product has a public release number.
@@ -20,7 +26,7 @@ Cross-org identifiers return **404**, not 403.
 Scopes on the key: `ingest`, `read`, `analyze`, `admin`.
 Roles on the session / key: `owner`, `admin`, `analyst`, `reviewer`.
 
-There is no "auth off." An empty secret is `missing_credential`.
+There is no “auth off.” An empty secret is `missing_credential`.
 
 | Action | Minimum role | Typical scope |
 | --- | --- | --- |
@@ -163,8 +169,8 @@ curl -sS -X POST -H "X-API-Key: $KEY" \
   "$BASE/v1/calls/$CALL_ID/analyze"
 ```
 
-`PUT /v1/rubrics/{id}` creates a new version. Historical results keep the
-version they were judged under.
+`PUT /v1/rubrics/{id}` creates a new version. Historical results keep
+the version they were judged under.
 
 Analyze may return `state: "budget_blocked"` when
 `OBSALT_LLM_MONTHLY_BUDGET_USD` is exhausted (or still `0`). Missing
@@ -239,5 +245,7 @@ Call detail includes provenance and coverage. Timeline includes
 `timeline_fidelity` derived from the measurements that are actually
 there.
 
-Product context for these payloads: [Product](product.md) and
-[the console](console.md).
+## What's next
+
+What those payloads mean in product language: [Product](product.md) and
+[the console](console.md). Operating the box: [Operate](ops.md).

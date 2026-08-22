@@ -1,10 +1,16 @@
-# Coding conventions
+# Conventions
+
+**Who this is for:** anyone changing code — humans and coding agents.
+
+**Question this page answers:** which names, rules, and test habits are
+not optional?
 
 These are the rules we write code against. Style that Ruff can enforce
 lives in `pyproject.toml`. Everything here is the part a formatter
 cannot see.
 
-New contributors: [Developing](developing.md). AI agents: [AGENTS.md](../AGENTS.md).
+New contributors: [Developing](developing.md). AI agents:
+[AGENTS.md](../AGENTS.md).
 
 ---
 
@@ -79,8 +85,8 @@ If a change violates one of these, it is the wrong change.
    function of `RawEnvelope`. Decode does **not** run on the webhook
    request path (the TestClient drain-after-ack is a test convenience).
 4. **Vendor schema, not our own reflection.** Fixtures validate against
-   a vendored provider schema. No invented fields. Overlays are reviewed,
-   additive, and expiring.
+   a vendored provider schema. No invented fields. Overlays are
+   reviewed, additive, and expiring.
 5. **One choke point.** Redaction happens once, on the normalized
    stream, before durable write of queryable data. Export policy is one
    place. Plugins cannot skip either.
@@ -174,6 +180,11 @@ The directory **is** the marker (`tests/conftest.py`). Sizes follow
 ---
 
 ## Docs
+
+These pages follow the same contract as the product: never invent a
+waterfall. One page, one job. Tables decide; prose explains the table.
+Every how-to ends with what to do next. Informal language is fine.
+Sloppy units are not.
 
 If you change a product surface, a public contract, or how someone
 connects an agent, update the matching page:

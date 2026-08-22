@@ -1,22 +1,24 @@
-# Product guide
+# Product
 
-This page is for **product managers, founders, and anyone deciding whether
-obsalt is the right tool** — and for engineers who need to explain it without
+For founders, PMs, and the engineer who has to explain this without
 opening the architecture doc.
 
-If you already know you want it: [Getting started](getting-started.md).
+**Question this page answers:** is obsalt the thing we should run next
+to our voice agents — and what will we actually get?
+
+If you already know: [Getting started](getting-started.md).
 
 ---
 
-## What obsalt is
+## What it is
 
-obsalt is a **self-hosted call record and quality system for live AI voice
-agents**. You run it next to your voice stack. Live calls flow in. You open a
-console when a call went wrong, or when you want to know which agent is losing
-customers.
+obsalt is a **self-hosted call record and quality system for live AI
+voice agents**. You run it next to the stack you already have. Live
+calls flow in. You open a console when a call went wrong, or when you
+want to know which agent is losing customers.
 
-It is the thing an engineer opens at 2 a.m. *and* the thing a product owner
-opens on Monday morning.
+It is the thing an engineer opens at 2 a.m. *and* the thing a product
+owner opens on Monday morning.
 
 It is **not**:
 
@@ -28,21 +30,32 @@ It is **not**:
 | A testing / simulation platform | Hamming, Coval, Cekura generate callers. obsalt observes **production**. |
 | A dashboard builder | Seven screens. No query builder. No custom charts. |
 
-Three pieces ship together: the **service** (API + worker), the **console**
-(`/v1/ui`), and a thin **`VoiceCall` tracer** you import only if *you* own the
-agent process.
+Three pieces ship together: the **service** (API + worker), the
+**console** (`/v1/ui`), and a thin **`VoiceCall` tracer** you import
+only if *you* own the agent process.
 
 ---
 
 ## The six capabilities
 
-Everything in obsalt exists to make these true. If a feature does not serve
-one of them, it does not ship.
+Everything in obsalt exists to make these true. If a feature does not
+serve one of them, it does not ship.
+
+```mermaid
+flowchart TB
+  call["A live call lands"]
+  call --> lat["Latency — where did time go?"]
+  call --> hang["Hangups — why did we lose them?"]
+  call --> hall["Hallucination — did we invent a fact?"]
+  call --> tools["Tools — what failed or stalled?"]
+  call --> evals["Evals — did we meet our bar?"]
+  call --> search["Search — show me the refund calls"]
+```
 
 ### 1. Latency breakdown
 
-**Question:** Where did time go on this call — and is this agent slower than
-last week?
+**Question:** Where did time go on this call — and is this agent slower
+than last week?
 
 **What you get**
 
@@ -52,12 +65,13 @@ last week?
 
 **What you will not get**
 
-- A pretty waterfall invented from Vapi or Retell summary statistics. Those
-  platforms send durations without stage clocks. The console shows them as
-  **chips**, and says so. That is the product working, not a bug.
+- A pretty waterfall invented from Vapi or Retell summary statistics.
+  Those platforms send durations without stage clocks. The console shows
+  them as **chips**, and says so. That is the product working, not a
+  bug.
 
-**Who uses it:** voice engineers chasing “the bot feels slow”; PMs comparing
-agents after a model swap.
+**Who uses it:** voice engineers chasing “the bot feels slow”; PMs
+comparing agents after a model swap.
 
 ### 2. Hangup analyzer
 
@@ -67,29 +81,30 @@ agents after a model swap.
 
 - Every call classified into a stable, provider-agnostic hangup taxonomy
   (`user_hangup`, `silence_timeout`, `error_llm`, `voicemail`, …).
-- Clusters with drill-through to the ugly calls — last speaker, last user
-  text, last agent text, a loss score.
+- Clusters with drill-through to the ugly calls — last speaker, last
+  user text, last agent text, a loss score.
 - The original provider code is preserved, so you can audit the mapping.
 
-**Who uses it:** PMs looking at “customers hang up after the hold music”;
-support leads hunting error-class outages.
+**Who uses it:** PMs looking at “customers hang up after the hold
+music”; support leads hunting error-class outages.
 
 ### 3. Hallucination detection
 
-**Question:** Did the agent invent a price, an order id, or a “I’ve booked
-that” when the tool failed?
+**Question:** Did the agent invent a price, an order id, or a “I’ve
+booked that” when the tool failed?
 
 **What you get**
 
-- Deterministic flags on **every** call: ungrounded prices, fabricated ids,
-  commitments, phantom tool success.
-- Optional LLM entailment (Tier 2) against prompt, knowledge, tool results,
-  and what the caller said — only if you set a budget and a judge.
+- Deterministic flags on **every** call: ungrounded prices, fabricated
+  ids, commitments, phantom tool success.
+- Optional LLM entailment (Tier 2) against prompt, knowledge, tool
+  results, and what the caller said — only if you set a budget and a
+  judge.
 - Fail-closed evals. Missing judge output is **never** a pass.
 
-**What you need:** grounding. Hosted plugins populate it when the payload has
-it. Custom agents populate it when you emit it. Empty grounding → flags that
-need it do not silently succeed.
+**What you need:** grounding. Hosted plugins populate it when the
+payload has it. Custom agents populate it when you emit it. Empty
+grounding → flags that need it do not silently succeed.
 
 **Who uses it:** quality and compliance; anyone who has been burned by a
 confident wrong refund amount.
@@ -118,15 +133,16 @@ over-promise — in plain English?
 
 **What you get**
 
-- Rubrics you write in English. Editing a rubric creates a **new version**;
-  historical scores stay attached to the version they were judged under.
-- On-demand “evaluate this call” in the console, plus an optional unbiased
-  fleet sample behind a hard monthly USD cap.
+- Rubrics you write in English. Editing a rubric creates a **new
+  version**; historical scores stay attached to the version they were
+  judged under.
+- On-demand “evaluate this call” in the console, plus an optional
+  unbiased fleet sample behind a hard monthly USD cap.
 - A review queue: humans can agree or disagree with the judge.
 
-**What you need:** `OBSALT_JUDGE_*` pointed at an OpenAI-compatible endpoint,
-and `OBSALT_LLM_MONTHLY_BUDGET_USD` > 0 if you want paid spend. Default
-budget is **$0** — no surprise bill.
+**What you need:** `OBSALT_JUDGE_*` pointed at an OpenAI-compatible
+endpoint, and `OBSALT_LLM_MONTHLY_BUDGET_USD` > 0 if you want paid
+spend. Default budget is **$0** — no surprise bill.
 
 **Who uses it:** product and QA defining “good”; ops watching spend.
 
@@ -139,10 +155,11 @@ budget is **$0** — no surprise bill.
 - Hybrid search (lexical + vector) over **redacted** content.
 - Filters: agent, source, hangup reason, time range (required).
 
-Default embedder is a local ONNX model. You do not have to send transcripts
-to a third-party embedding API.
+Default embedder is a local ONNX model. You do not have to send
+transcripts to a third-party embedding API.
 
-**Who uses it:** anyone who has grepped a CSV of transcripts and given up.
+**Who uses it:** anyone who has grepped a CSV of transcripts and given
+up.
 
 ---
 
@@ -156,17 +173,25 @@ to a third-party embedding API.
 | A **platform / voice engineer** | Debug one call with transcript + timing + provenance in one page. |
 | A **quality / compliance lead** | Rubrics, hallucination flags, deletion that actually completes. |
 
-Multi-workspace is a **constraint** (tenancy and per-tenant credentials are
-correct from day one). Agency / reseller features are not a v2 goal.
+Multi-workspace is a **constraint** (tenancy and per-tenant credentials
+are correct from day one). Agency / reseller features are not a v2 goal.
 
 ---
 
 ## What a week of adoption looks like
 
+```mermaid
+flowchart LR
+  d0["Day 0<br/>compose + sign in"] --> d1["Day 1<br/>one live agent"]
+  d1 --> d2["Day 2–3<br/>one rubric"]
+  d2 --> d4["Day 4<br/>second agent"]
+  d4 --> d5["Day 5<br/>real secrets"]
+```
+
 1. **Day 0.** Clone, `docker compose up`, sign in with `dev-key`. Empty
    console. Confirm `/ready`.
-2. **Day 1.** Connect **one** live agent — [hosted](connect-hosted.md) or
-   [your own](connect-custom.md). Place three real calls. Open them.
+2. **Day 1.** Connect **one** live agent — [hosted](connect-hosted.md)
+   or [your own](connect-custom.md). Place three real calls. Open them.
 3. **Day 1, continued.** Read the provenance panel. If Vapi latency is a
    chip, you are looking at the truth. Brief the team with
    [the console](console.md) table so nobody files “waterfall missing.”
@@ -175,8 +200,8 @@ correct from day one). Agency / reseller features are not a v2 goal.
    still run.
 5. **Day 4.** Point a second agent or a staging cohort. Compare hangup
    clusters.
-6. **Day 5.** If this is going near production: rotate the bootstrap key,
-   set real `OBSALT_MASTER_KEY` / `OBSALT_SESSION_SECRET`, read
+6. **Day 5.** If this is going near production: rotate the bootstrap
+   key, set real `OBSALT_MASTER_KEY` / `OBSALT_SESSION_SECRET`, read
    [Operate](ops.md) and [Security](reference/security.md).
 
 Mixing a hosted webhook and OTLP on the **same** call is almost always a
@@ -223,11 +248,12 @@ This is the table that prevents a wasted quarter. Full notes:
 
 - **Tenant boundary is `org_id`.** It comes from the API key or the
   ingest URL, never from a field the provider sent.
-- **Raw webhooks are stored unredacted** for ~30 days so a decoder bug is
-  a replay, not a hole. Queryable transcripts are redacted first. That
-  tradeoff is explicit.
-- **Deletion completes.** A request that never sets `completed_at` is not
-  a deletion. External warehouse copies cannot be revoked; the API says so.
+- **Raw webhooks are stored unredacted** for ~30 days so a decoder bug
+  is a replay, not a hole. Queryable transcripts are redacted first.
+  That tradeoff is explicit.
+- **Deletion completes.** A request that never sets `completed_at` is
+  not a deletion. External warehouse copies cannot be revoked; the API
+  says so.
 - **LLM spend is capped.** Default monthly budget is $0. Cheap
   deterministic analysis always runs.
 - **No “auth off.”** Local bootstrap is `dev-key` bound to org `local`.
@@ -244,11 +270,12 @@ Useful, not a roadmap ceremony:
   cookies.
 - OTLP gRPC is opt-in (`obsalt[grpc]`). HTTP `/v1/traces` is the path.
 - Parquet export exists; warehouse-native sync does not.
-- The UI is functional, not a design system. The join view is the product.
+- The UI is functional, not a design system. The join view is the
+  product.
 
 ---
 
-## Where to go next
+## What's next
 
 | I am… | Next |
 | --- | --- |

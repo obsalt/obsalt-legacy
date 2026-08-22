@@ -1,23 +1,23 @@
 # Connect a hosted platform
 
-Use this when **Vapi, Retell, ElevenLabs, or Cartesia** owns STT / LLM / TTS.
-obsalt receives a signed webhook after (or during) the call. You do **not**
-import `VoiceCall` for these calls.
+**Who this is for:** Vapi, Retell, ElevenLabs, or Cartesia owns STT /
+LLM / TTS. You do **not** import `VoiceCall` for these calls.
 
-```
-Provider dashboard
-    │  "server URL" / "webhook URL"
-    ▼
-POST /v1/ingest/{provider}/{ingest_key}     ← you create this URL
-    │  ack immediately
-    ▼
-worker decodes → console shows the call
+**Question this page answers:** how do I get a signed webhook into
+obsalt, and what will I see when a live call lands?
+
+```mermaid
+flowchart TB
+  dash["Provider dashboard<br/>server URL / webhook URL"] --> post["POST /v1/ingest/{provider}/{ingest_key}"]
+  post --> ack["Ack immediately<br/>raw bytes already stored"]
+  ack --> worker["Worker decodes → redacts → assembles"]
+  worker --> ui["Console shows the call"]
 ```
 
-If you cannot answer "what is the start timestamp of the LLM stage on turn
-3?", you will not get a stage waterfall. You will still get a transcript,
-hangup, tools, evals, and honest latency chips. That is the hosted-platform
-product.
+If you cannot answer “what is the start timestamp of the LLM stage on
+turn 3?”, you will not get a stage waterfall. You will still get a
+transcript, hangup, tools, evals, and honest latency chips. That is the
+hosted-platform product.
 
 ## 1. Install the plugin
 
@@ -52,26 +52,27 @@ https://<your-host>:8080/v1/ingest/vapi/<ingest_key>
 
 Swap `vapi` for `retell`, `elevenlabs`, or `cartesia`.
 
-Empty secrets fail closed. They do not mean "skip verification."
+Empty secrets fail closed. They do not mean “skip verification.”
 
 ## 3. Point the provider — then place a real call
 
-Only **observational** events belong here. obsalt is not your application's
-webhook. If the platform asks your server for the next tool result or the
-next assistant, that request must still hit **your** app.
+Only **observational** events belong here. obsalt is not your
+application’s webhook. If the platform asks your server for the next
+tool result or the next assistant, that request must still hit **your**
+app.
 
 Then place a live call on that agent. Wait a few seconds. Refresh
 `/v1/ui`. Open the row. Read the provenance panel.
 
-Replay later with `POST /v1/replay` if a decoder bug ate a payload that is
-still inside the raw-retention window (default 30 days).
+Replay later with `POST /v1/replay` if a decoder bug ate a payload that
+is still inside the raw-retention window (default 30 days).
 
 ---
 
 ## Vapi
 
-**Paste this into Vapi** as a Server URL for observational messages, not as
-the handler for assistant or tool requests.
+**Paste this into Vapi** as a Server URL for observational messages, not
+as the handler for assistant or tool requests.
 
 | Secret / setting | What to send |
 | --- | --- |
@@ -88,12 +89,13 @@ the handler for assistant or tool requests.
 validation rejects those. They have to reach your application.
 
 **You will see:** transcript, hangup (`endedReason` mapped), tools (no
-measured duration), cost, recording ref when present, interruption counts,
-word-level confidence, per-turn stage durations as **chips**.
+measured duration), cost, recording ref when present, interruption
+counts, word-level confidence, per-turn stage durations as **chips**.
 
 **You will not see:** a stage waterfall. `transcriberLatency` /
-`modelLatency` / `voiceLatency` / `turnLatency` / `endpointingLatency` are
-milliseconds **without stage timestamps**. The console will say that.
+`modelLatency` / `voiceLatency` / `turnLatency` / `endpointingLatency`
+are milliseconds **without stage timestamps**. The console will say
+that.
 
 ## Retell
 
@@ -107,14 +109,15 @@ curl -sS -X POST http://localhost:8080/v1/connections \
   -d '{"provider":"retell","secrets":{"api_key":"<retell-api-key>"}}'
 ```
 
-Point Retell's webhook at `/v1/ingest/retell/<ingest_key>`.
+Point Retell’s webhook at `/v1/ingest/retell/<ingest_key>`.
 
 **You will see:** transcript, word timings (Retell sends **seconds**; we
-convert), hangup, tools without a duration, recording, cost, knowledge and
-user grounding, call-level p50/p95 as **aggregates**.
+convert), hangup, tools without a duration, recording, cost, knowledge
+and user grounding, call-level p50/p95 as **aggregates**.
 
-**You will not see:** those p50/p95 values drawn as span widths, or mixed
-into sample percentiles. Tool bars with a real duration. A stage waterfall.
+**You will not see:** those p50/p95 values drawn as span widths, or
+mixed into sample percentiles. Tool bars with a real duration. A stage
+waterfall.
 
 ## ElevenLabs
 
@@ -127,20 +130,20 @@ curl -sS -X POST http://localhost:8080/v1/connections \
   -d '{"provider":"elevenlabs","secrets":{"webhook_secret":"..."}}'
 ```
 
-Subscribe to `post_call_transcription` (and `post_call_audio` if you want
-the recording). Those two share a conversation id and must not dedupe as
-one delivery — they do not.
+Subscribe to `post_call_transcription` (and `post_call_audio` if you
+want the recording). Those two share a conversation id and must not
+dedupe as one delivery — they do not.
 
-**You will see:** transcript at whole-second message anchors, hangup, user
-grounding. If they send the OTLP-shaped webhook, a waterfall **only** on
-spans that have real clocks.
+**You will see:** transcript at whole-second message anchors, hangup,
+user grounding. If they send the OTLP-shaped webhook, a waterfall
+**only** on spans that have real clocks.
 
 **You will not see:** millisecond stage bars from the post-call JSON.
 
 ## Cartesia Line
 
-**Auth.** Header `x-webhook-secret`, a plain shared secret. Weakest of the
-committed schemes; said here so you treat it that way.
+**Auth.** Header `x-webhook-secret`, a plain shared secret. Weakest of
+the committed schemes; said here so you treat it that way.
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/connections \
@@ -163,8 +166,8 @@ unplaced STT/TTS TTFB chips, transcript, user grounding.
 4. Cheap analysis (latency, hangup, tools, coverage) runs on every call.
 5. LLM evals run only if you asked, or if a sample/budget allows it.
 
-Duplicates resume incomplete work. They do not blindly return "already
-processed."
+Duplicates resume incomplete work. They do not blindly return “already
+processed.”
 
 ```bash
 # Re-decode a retained envelope after a plugin fix
@@ -178,5 +181,8 @@ Replay cannot invent data past the raw or provider horizon.
 Webhooks are lossy. `POST /v1/backfill` pulls from the provider if that
 plugin implements `RestBackfill` (Vapi does).
 
-Next: [The console](console.md). If the list stays empty or the webhook
-fails: [Troubleshooting](troubleshooting.md).
+## What's next
+
+[The console](console.md) is the page that tells you what you are
+looking at. If the list stays empty or the webhook fails:
+[Troubleshooting](troubleshooting.md).
