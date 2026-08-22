@@ -31,6 +31,9 @@ from obsalt.domain.events import (
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.plugin.types import (
+    BackfillCursor,
+    BackfillItem,
+    BackfillPage,
     ConnectionConfig,
     PluginManifest,
     RawEnvelope,
@@ -46,7 +49,14 @@ class ExamplePlugin:
     API_VERSION = PLUGIN_API_VERSION
     name = "example"
     display_name = "Example"
-    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.STREAM_SOURCE})
+    capabilities = frozenset(
+        {
+            Capability.WEBHOOK_SOURCE,
+            Capability.AUTHENTICATION,
+            Capability.STREAM_SOURCE,
+            Capability.REST_BACKFILL,
+        }
+    )
     singleton_headers = frozenset({b"x-obsalt-example-signature"})
     manifest = PluginManifest(secret_fields=frozenset({"hmac_secret"}))
     fidelity = FidelityDeclaration(
@@ -153,6 +163,26 @@ class ExamplePlugin:
             yield OutcomeObserved(provider_code=str(payload["ended_reason"]))
         if payload.get("final") is True:
             yield CallFinalized(reason="provider")
+
+    def scan(self, cfg: ConnectionConfig, cursor: BackfillCursor) -> BackfillPage:
+        """Example RestBackfill. Identity is (connection, upstream_entity_id, content_hash)."""
+        return BackfillPage(items=[], next_cursor=None, truncated_by_retention=False)
+
+    def hydrate(self, cfg: ConnectionConfig, item: BackfillItem) -> RawEnvelope:
+        from obsalt.util import sha256_bytes, utcnow
+
+        body = b"{}"
+        return RawEnvelope(
+            envelope_id=item.upstream_entity_id,
+            org_id=cfg.org_id,
+            provider=self.name,
+            connection_id=cfg.connection_id,
+            object_key=f"org/{cfg.org_id}/backfill/{item.upstream_entity_id}",
+            delivery_key=f"{cfg.connection_id}:{item.upstream_entity_id}:{item.content_hash or 'x'}",
+            content_sha256=sha256_bytes(body),
+            body=body,
+            received_at=utcnow(),
+        )
 
     async def frames(self, cfg: ConnectionConfig) -> AsyncIterator[RawEnvelope]:
         """Example StreamSource. Deepgram is additive against this contract."""

@@ -1,0 +1,4 @@
+# Signals not asserted against this fixture corpus, with justification.
+VAD	Retell does not publish VAD clocks.
+TOOL_TIMING	Retell does not provide invocation/result timestamps.
+STAGE_INTERVAL	Retell publishes call-level latency distributions and per-turn samples without stage timestamps.

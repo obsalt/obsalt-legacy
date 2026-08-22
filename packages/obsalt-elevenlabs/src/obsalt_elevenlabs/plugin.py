@@ -107,11 +107,37 @@ class ElevenLabsPlugin:
     def claims(self, span) -> int:
         attrs = getattr(span, "attributes", {}) or {}
         if any(str(k).startswith("elevenlabs.") for k in attrs):
-            return 40
+            return 90
         return 0
 
     def decode_spans(self, spans):
-        return []
+        """OTLP-shaped ElevenLabs webhook: interval only when start/end pass the contract."""
+        from datetime import UTC, datetime
+
+        from obsalt.domain.enums import MeasurementPlacement, Metric, Stage
+        from obsalt.domain.events import StageObserved
+
+        events: list[NormalizedEvent] = []
+        for span in spans:
+            start_ns = getattr(span, "start_unix_nano", 0) or 0
+            end_ns = getattr(span, "end_unix_nano", 0) or 0
+            if start_ns <= 0 or end_ns <= start_ns:
+                continue
+            started = datetime.fromtimestamp(start_ns / 1e9, tz=UTC)
+            ended = datetime.fromtimestamp(end_ns / 1e9, tz=UTC)
+            events.append(
+                StageObserved(
+                    stage=Stage.E2E,
+                    metric=Metric.DURATION,
+                    value_ms=(end_ns - start_ns) / 1e6,
+                    placement=MeasurementPlacement.INTERVAL,
+                    started_at=started,
+                    ended_at=ended,
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path=f"span:{getattr(span, 'name', 'elevenlabs')}",
+                )
+            )
+        return events
 
     def decode(self, envelope: RawEnvelope) -> Iterable[NormalizedEvent]:
         payload = _json(envelope.body or b"{}")

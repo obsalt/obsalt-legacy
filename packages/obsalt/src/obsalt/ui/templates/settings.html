@@ -50,6 +50,12 @@
     </dl>
     <p>Tier-2 baseline sample rate: {{ baseline_sample_rate|default(0) }}</p>
     <p class="muted">Raw blobs are unredacted by definition. Replay is bounded by the configured raw retention horizon.</p>
+    {% if csrf and org %}
+    <form method="post" action="/v1/ui/replay">
+      <input type="hidden" name="csrf" value="{{ csrf }}"/>
+      <button type="submit">Replay retained raw envelopes</button>
+    </form>
+    {% endif %}
   </section>
   <section class="panel">
     <h2>Plugins</h2>

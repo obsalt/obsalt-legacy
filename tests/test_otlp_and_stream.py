@@ -18,6 +18,7 @@ from obsalt.plugin.types import ConnectionConfig, ReadableSpan
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_livekit.plugin import LiveKitPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
+from obsalt_testkit import OtlpMapperConformanceTests
 
 
 def test_span_names_are_low_cardinality() -> None:
@@ -90,6 +91,59 @@ def test_pipecat_accepts_provider_name_and_system() -> None:
     from_docs = list(plugin.decode([documented]))
     assert from_named[0].provenance_by_field["agent_id"].source_path == GENAI_PROVIDER
     assert from_docs[0].provenance_by_field["agent_id"].source_path == GENAI_SYSTEM
+
+
+class TestPipecatMapperConformance(OtlpMapperConformanceTests):
+    plugin = PipecatPlugin()
+    spans = [
+        ReadableSpan(
+            name=SPAN_TURN,
+            trace_id="aa" * 16,
+            span_id="bb" * 8,
+            parent_span_id=None,
+            start_unix_nano=1_000_000_000,
+            end_unix_nano=2_000_000_000,
+            attributes={"turn.index": 0, "gen_ai.conversation.id": "room-1", "turn.speaker": "user"},
+        )
+    ]
+
+
+class TestLiveKitMapperConformance(OtlpMapperConformanceTests):
+    plugin = LiveKitPlugin()
+    spans = [
+        ReadableSpan(
+            name="inference",
+            trace_id="aa" * 16,
+            span_id="bb" * 8,
+            start_unix_nano=1_000_000_000,
+            end_unix_nano=2_000_000_000,
+            attributes={"lk.room.name": "room-1"},
+        )
+    ]
+
+
+def test_livekit_maps_inference_to_llm_not_blanket_e2e() -> None:
+    from obsalt.domain.enums import Stage
+    from obsalt.domain.events import StageObserved
+
+    plugin = LiveKitPlugin()
+    events = list(
+        plugin.decode(
+            [
+                ReadableSpan(
+                    name="inference",
+                    trace_id="aa" * 16,
+                    span_id="bb" * 8,
+                    start_unix_nano=1_000_000_000,
+                    end_unix_nano=2_000_000_000,
+                    attributes={"lk.room.name": "room-1"},
+                )
+            ]
+        )
+    )
+    stages = [event.stage for event in events if isinstance(event, StageObserved)]
+    assert Stage.LLM in stages
+    assert Stage.E2E not in stages
 
 
 def test_livekit_accepts_both_audio_token_attribute_names() -> None:

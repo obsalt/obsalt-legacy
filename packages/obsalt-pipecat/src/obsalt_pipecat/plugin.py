@@ -14,7 +14,13 @@ from obsalt.domain.enums import (
     Speaker,
     Stage,
 )
-from obsalt.domain.events import CallObserved, NormalizedEvent, StageObserved, TurnObserved
+from obsalt.domain.events import (
+    CallObserved,
+    NormalizedEvent,
+    StageObserved,
+    ToolObserved,
+    TurnObserved,
+)
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import (
     CONVERSATION_ID,
@@ -87,7 +93,27 @@ class PipecatPlugin:
                 speaker = Speaker.AGENT if attrs.get("turn.speaker") == "agent" else Speaker.USER
                 yield TurnObserved(turn_index=turn_i or 0, speaker=speaker, started_at=started, ended_at=ended)
                 continue
-            stage = {SPAN_STT: Stage.STT, SPAN_LLM: Stage.LLM, SPAN_TTS: Stage.TTS, SPAN_TOOL: Stage.TOOL}.get(span.name)
+            if span.name == SPAN_TOOL:
+                yield ToolObserved(
+                    tool_id=str(attrs.get("tool.id") or attrs.get("gen_ai.tool.call.id") or span.span_id),
+                    name=str(attrs.get("tool.name") or attrs.get("gen_ai.tool.name") or "tool"),
+                    turn_index=turn_i,
+                    started_at=started,
+                    ended_at=ended,
+                )
+                yield StageObserved(
+                    stage=Stage.TOOL,
+                    metric=Metric.DURATION,
+                    value_ms=ms,
+                    turn_index=turn_i,
+                    placement=MeasurementPlacement.INTERVAL,
+                    started_at=started,
+                    ended_at=ended,
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path=f"span:{span.name}",
+                )
+                continue
+            stage = {SPAN_STT: Stage.STT, SPAN_LLM: Stage.LLM, SPAN_TTS: Stage.TTS}.get(span.name)
             if stage is None:
                 continue
             yield StageObserved(

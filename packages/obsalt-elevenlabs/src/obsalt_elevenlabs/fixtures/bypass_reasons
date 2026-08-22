@@ -1,0 +1,5 @@
+# Signals not asserted against this fixture corpus, with justification.
+STAGE_INTERVAL	Post-call JSON uses whole-second message anchors without documented end timestamps.
+VAD	ElevenLabs post-call transcription does not publish VAD clocks.
+TOOL_TIMING	This fixture has no tool invocations.
+GROUNDING_PROMPT	Post-call transcription fixture does not include the agent system prompt.

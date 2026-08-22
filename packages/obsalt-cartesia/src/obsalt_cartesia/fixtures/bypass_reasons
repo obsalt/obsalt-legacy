@@ -1,0 +1,4 @@
+# Signals not asserted against this fixture corpus, with justification.
+STAGE_INTERVAL	Cartesia Line publishes real turn intervals but only unplaced STT/TTS TTFBs.
+VAD	Line webhook fixture does not include VAD clocks.
+GROUNDING_PROMPT	Fixture does not include agent configuration / system prompt.

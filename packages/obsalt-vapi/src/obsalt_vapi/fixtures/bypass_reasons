@@ -1,0 +1,5 @@
+# Signals not asserted against this fixture corpus, with justification.
+# Format: SIGNAL<TAB>reason
+VAD	Vapi does not publish VAD start/stop clocks on the end-of-call webhook.
+TOOL_TIMING	Tool messages have a time field but not a measured invocation duration.
+STAGE_INTERVAL	Vapi publishes per-turn stage durations without stage timestamps; INTERVAL is not claimed.

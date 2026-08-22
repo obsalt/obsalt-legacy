@@ -39,5 +39,8 @@ class MapperRegistry:
             groups.setdefault(ident, []).append(span)
         events: list[NormalizedEvent] = []
         for ident, group in groups.items():
-            events.extend(list(mappers[ident].decode(group)))
+            mapper = mappers[ident]
+            decode_spans = getattr(mapper, "decode_spans", None)
+            decode_fn = decode_spans if callable(decode_spans) else mapper.decode
+            events.extend(list(decode_fn(group)))
         return events

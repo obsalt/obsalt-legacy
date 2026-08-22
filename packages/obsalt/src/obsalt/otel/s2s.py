@@ -33,7 +33,7 @@ from obsalt.otel.conventions import (
     SPAN_USER_INPUT,
     TURN_INDEX,
 )
-from obsalt.plugin.types import ReadableSpan
+from obsalt.plugin.types import InstrumentedClient, ReadableSpan, SdkConfig
 
 S2S_SPAN_TO_STAGE = {
     SPAN_USER_INPUT: Stage.USER_INPUT,
@@ -159,3 +159,101 @@ def decode_s2s_spans(
             provenance=Provenance.PROVIDER_REPORTED,
             source_path=f"span:{span.name}",
         )
+
+
+class InstrumentedVoiceClient:
+    """Thin OTel wrapper. Own process emits S2S spans; we do not invent cascade stages."""
+
+    def __init__(self, client: object, *, provider: str, service_name: str = "voice-agent") -> None:
+        self.client = client
+        self.provider = provider
+        self.service_name = service_name
+        self.emitted: list[ReadableSpan] = []
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.client, name)
+
+    def record_user_input(
+        self,
+        conversation_id: str,
+        start_unix_nano: int,
+        end_unix_nano: int,
+        *,
+        attributes: dict[str, object] | None = None,
+    ) -> ReadableSpan:
+        return self._emit(SPAN_USER_INPUT, conversation_id, start_unix_nano, end_unix_nano, attributes)
+
+    def record_generation(
+        self,
+        conversation_id: str,
+        start_unix_nano: int,
+        end_unix_nano: int,
+        *,
+        attributes: dict[str, object] | None = None,
+    ) -> ReadableSpan:
+        return self._emit(SPAN_GENERATION, conversation_id, start_unix_nano, end_unix_nano, attributes)
+
+    def record_playout(
+        self,
+        conversation_id: str,
+        start_unix_nano: int,
+        end_unix_nano: int,
+        *,
+        attributes: dict[str, object] | None = None,
+    ) -> ReadableSpan:
+        return self._emit(SPAN_PLAYOUT, conversation_id, start_unix_nano, end_unix_nano, attributes)
+
+    def record_barge_in(
+        self,
+        conversation_id: str,
+        start_unix_nano: int,
+        end_unix_nano: int,
+        *,
+        turn_index: int | None = None,
+    ) -> ReadableSpan:
+        attrs: dict[str, object] = {OBSALT_BARGE_IN: True}
+        if turn_index is not None:
+            attrs[TURN_INDEX] = turn_index
+        return self._emit(SPAN_GENERATION, conversation_id, start_unix_nano, end_unix_nano, attrs)
+
+    def _emit(
+        self,
+        name: str,
+        conversation_id: str,
+        start_unix_nano: int,
+        end_unix_nano: int,
+        attributes: dict[str, object] | None,
+    ) -> ReadableSpan:
+        attrs: dict[str, str | bool | int | float] = {
+            CONVERSATION_ID: conversation_id,
+            "gen_ai.provider.name": self.provider,
+        }
+        if attributes:
+            for key, value in attributes.items():
+                if isinstance(value, (str, bool, int, float)):
+                    attrs[key] = value
+        span = ReadableSpan(
+            name=name,
+            trace_id="0" * 32,
+            span_id=f"{len(self.emitted):016x}",
+            parent_span_id=None,
+            start_unix_nano=start_unix_nano,
+            end_unix_nano=end_unix_nano,
+            attributes=attrs,
+        )
+        self.emitted.append(span)
+        try:
+            from opentelemetry import trace
+
+            tracer = trace.get_tracer(self.service_name)
+            with tracer.start_as_current_span(name) as otel_span:
+                for key, value in attrs.items():
+                    otel_span.set_attribute(key, value)
+        except Exception:
+            pass
+        return span
+
+
+def instrument_s2s(client: object, cfg: SdkConfig, *, provider: str, notes: str) -> InstrumentedClient:
+    wrapper = InstrumentedVoiceClient(client, provider=provider, service_name=cfg.service_name)
+    return InstrumentedClient(client=wrapper, notes=notes)

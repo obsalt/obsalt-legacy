@@ -111,6 +111,20 @@ class MemoryInbox:
     def get_by_id(self, envelope_id: str) -> RawEnvelope | None:
         return self.by_id.get(envelope_id)
 
+    def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
+        return [envelope for envelope in self.by_id.values() if envelope.org_id == org_id]
+
+    def requeue(self, envelope_id: str) -> None:
+        envelope = self.by_id.get(envelope_id)
+        if envelope is None:
+            return
+        if envelope.state is EnvelopeState.TOMBSTONED:
+            return
+        envelope.state = EnvelopeState.QUEUED
+        self.leased.discard(envelope_id)
+        if envelope_id not in self.outbox:
+            self.outbox.append(envelope_id)
+
 
 class MemoryResolver:
     def __init__(self) -> None:

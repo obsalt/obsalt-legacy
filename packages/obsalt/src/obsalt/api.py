@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from pathlib import Path
 
@@ -11,11 +12,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from obsalt._version import __version__
 from obsalt.assemble.timeline import timeline_view
 from obsalt.config import Settings
-from obsalt.domain.enums import AnalysisState, KeyScope
-from obsalt.domain.models import AnalysisExecution, Rubric
+from obsalt.domain.enums import AnalysisState, KeyScope, Role
+from obsalt.domain.models import AnalysisExecution, CallRevision, Rubric
 from obsalt.ingest.headers import RawHeaders
+from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.ingest.receive import ReceiveLimits, receive_webhook
-from obsalt.otel.mappers import MapperRegistry
 from obsalt.otel.receiver import parse_otlp_request, request_to_spans, serialized_success
 from obsalt.plugin.host import plugin_by_name
 from obsalt.plugin.types import TombstoneHints
@@ -31,9 +32,10 @@ from obsalt.query import (
     tools_rollup,
 )
 from obsalt.runtime import AppState, bump_generation, create_connection, in_memory_state
-from obsalt.security.sessions import sign_session, verify_session
-from obsalt.util import new_id, sha256_bytes
-from obsalt.worker.process import drain_inbox, process_normalized_events
+from obsalt.security.sessions import check_csrf, read_session, sign_session, verify_session
+from obsalt.util import new_id
+from obsalt.worker.process import drain_inbox
+from obsalt.worker.replay import replay_envelopes
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "ui" / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -111,30 +113,36 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _require_key(state, x_api_key, KeyScope.INGEST)
         raw = await request.body()
         ct = content_type.split(";")[0].strip()
-        req = parse_otlp_request(ct, raw, content_encoding)
+        try:
+            req = await asyncio.to_thread(parse_otlp_request, ct, raw, content_encoding)
+        except HTTPException as exc:
+            if exc.status_code == 415:
+                raise
+            raise
         spans = request_to_spans(req)
         for span in spans:
             asserted = (span.resource or {}).get("obsalt.org") or (span.attributes or {}).get("obsalt.org")
             if asserted and str(asserted) != org:
                 raise HTTPException(status_code=401, detail="resource attribute cannot choose an organization")
-        key = f"org/{org}/raw/otlp/{sha256_bytes(raw)}"
-        state.objects.put(key, raw)
-        destinations = [d for d in state.destinations if d.get("org_id") == org]
-        if destinations:
-            from obsalt.otel.forwarder import forward_otlp_batch
-
-            for dest in destinations:
-                forwarded = forward_otlp_batch(
-                    dest["url"],
-                    raw,
-                    content_type=ct,
-                    allow_http_localhost=dest.get("allow_http_localhost") == "true",
-                )
-                if forwarded.retryable:
-                    raise HTTPException(status_code=503, detail=f"otlp forward retryable: {forwarded.detail}")
-                if forwarded.permanent:
-                    raise HTTPException(status_code=400, detail=f"otlp forward denied: {forwarded.detail}")
-        background.add_task(_assemble_otlp, state, org, spans)
+        try:
+            result = receive_otlp_batch(
+                org_id=org,
+                raw=raw,
+                content_type=ct,
+                objects=state.objects,
+                inbox=state.inbox,
+                limits=ReceiveLimits(
+                    compressed_bytes=state.settings.compressed_body_limit,
+                    expanded_bytes=state.settings.expanded_body_limit,
+                ),
+                compressed_size=int(request.headers.get("content-length") or len(raw)),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="ingest capacity") from exc
+        if result.status_code == 413:
+            raise HTTPException(status_code=413, detail=result.rejected)
+        if result.envelope is not None and result.rejected is None:
+            background.add_task(drain_inbox, state)
         return Response(content=serialized_success(), media_type="application/x-protobuf")
 
     @app.get("/v1/calls")
@@ -181,13 +189,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return timeline_view(_active(state, org, call_id))
 
     @app.get("/v1/calls/{call_id}/evidence/{ref}")
-    def get_evidence(call_id: str, ref: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    def get_evidence(call_id: str, ref: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> Response:
         org = _require_key(state, x_api_key, KeyScope.READ)
         rev = _active(state, org, call_id)
-        for item in rev.evidence:
-            if item.uri.endswith(ref) or item.uri == ref:
-                return item.model_dump(mode="json")
-        raise HTTPException(status_code=404, detail="evidence not found")
+        body, content_type = _load_evidence(state, org, rev, ref)
+        if body is None:
+            raise HTTPException(status_code=404, detail="evidence not found")
+        return Response(content=body, media_type=content_type)
 
     @app.post("/v1/search")
     async def search(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -213,7 +221,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _require_key(state, x_api_key, KeyScope.READ)
         _require_range(start, end)
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
-        return latency_rollup(calls, as_of_generation=state.rollup_generation)
+        return latency_rollup(
+            calls,
+            as_of_generation=state.rollup_generation,
+            store=getattr(state, "rollups", None),
+            org_id=org,
+        )
 
     @app.get("/v1/hangups")
     def hangups(
@@ -396,10 +409,20 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
 
     @app.post("/v1/replay")
     async def replay(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        _require_key(state, x_api_key, KeyScope.ADMIN)
-        drain_inbox(state, limit=256)
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        queued = replay_envelopes(
+            state,
+            org_id=org,
+            provider=body.get("provider"),
+            source_call_id=body.get("source_call_id") or body.get("call_id"),
+        )
         bump_generation(state)
-        return {"status": "queued", "as_of_generation": state.rollup_generation}
+        return {"status": "queued", "replayed": queued, "as_of_generation": state.rollup_generation}
 
     @app.post("/v1/backfill")
     def backfill(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -428,12 +451,15 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 to_delete.add(rev.call_id)
         deleter = getattr(state.pointers, "delete", None)
         search = getattr(state, "search", None)
+        rollups = getattr(state, "rollups", None)
         for cid in to_delete:
             state.sink.delete_call(org, cid)
             if callable(deleter):
                 deleter(org, cid)
             if search is not None and hasattr(search, "delete_for_call"):
                 search.delete_for_call(org, cid)
+            if rollups is not None and hasattr(rollups, "delete_call"):
+                rollups.delete_call(org, cid)
         bump_generation(state)
         return {"status": "accepted", "undoable": False}
 
@@ -483,17 +509,29 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         form = await request.form()
         key = str(form.get("api_key") or "")
         try:
-            org = _require_key(state, key, KeyScope.READ)
+            org, scopes = _lookup_key(state, key)
+            if KeyScope.READ not in scopes and KeyScope.ADMIN not in scopes:
+                raise HTTPException(status_code=403, detail="insufficient scope")
         except HTTPException:
             return _render(request, "login.html", {"org": None, "error": "invalid API key"})
         response = RedirectResponse("/v1/ui", status_code=303)
+        cookie = sign_session(org, state.settings.session_secret, role=_role_for_scopes(scopes))
+        info = read_session(cookie, state.settings.session_secret)
         response.set_cookie(
             "obsalt_session",
-            sign_session(org, state.settings.session_secret),
+            cookie,
             httponly=True,
             samesite="lax",
             secure=not state.settings.insecure_defaults(),
         )
+        if info and info.csrf:
+            response.set_cookie(
+                "obsalt_csrf",
+                info.csrf,
+                httponly=False,
+                samesite="lax",
+                secure=not state.settings.insecure_defaults(),
+            )
         return response
 
     @app.get("/v1/ui/calls/{call_id}", response_class=HTMLResponse)
@@ -536,7 +574,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui/latency", response_class=HTMLResponse)
     def ui_latency(request: Request) -> HTMLResponse:
         org = _ui_org(request, state)
-        data = latency_rollup(active_calls(state, org) if org else [], as_of_generation=state.rollup_generation)
+        data = latency_rollup(
+            active_calls(state, org) if org else [],
+            as_of_generation=state.rollup_generation,
+            store=getattr(state, "rollups", None),
+            org_id=org,
+        )
         return _render(request, "latency.html", {"rollup": data, "org": org})
 
     @app.get("/v1/ui/hangups", response_class=HTMLResponse)
@@ -607,33 +650,49 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                     "raw_days": state.settings.raw_retention_days,
                     "aggregates_days": state.settings.aggregate_retention_days,
                 },
+                "csrf": _ui_csrf(request, state),
             },
         )
 
+    @app.post("/v1/ui/replay")
+    async def ui_replay(request: Request) -> Response:
+        org = _ui_org(request, state)
+        if not org:
+            raise HTTPException(status_code=401, detail="session required")
+        form = await request.form()
+        _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
+        replay_envelopes(state, org_id=org)
+        bump_generation(state)
+        return RedirectResponse("/v1/ui", status_code=303)
+
+    @app.post("/v1/ui/calls/{call_id}/analyze")
+    async def ui_analyze(request: Request, call_id: str) -> Response:
+        org = _ui_org(request, state)
+        if not org:
+            raise HTTPException(status_code=401, detail="session required")
+        form = await request.form()
+        _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
+        rev = _active(state, org, call_id)
+        if state.spend_usd >= state.settings.llm_monthly_budget_usd > 0:
+            return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
+        from obsalt.analysis.tier2 import run_tier2
+
+        rubrics = [r for r in state.rubrics.values() if r.org_id == org]
+        result = await run_tier2(
+            rev,
+            rubric=rubrics[0] if rubrics else None,
+            manual=True,
+            baseline_sample_rate=state.settings.baseline_sample_rate,
+            budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
+            spend_usd=state.spend_usd,
+        )
+        writer = getattr(state.sink, "write_analysis", None)
+        existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
+        if writer is not None:
+            writer(org, call_id, rev.revision, list(existing) + [result])
+        return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
+
     return app
-
-
-def _assemble_otlp(state: AppState, org: str, spans: list) -> None:
-    registry = MapperRegistry(state.plugins)
-    events = registry.decode(spans)
-    if not events:
-        return
-    mapper = registry.pick(spans[0]) if spans else None
-    source = getattr(mapper, "name", "otlp")
-    declaration = getattr(mapper, "fidelity", None)
-    if declaration is None:
-        return
-    process_normalized_events(
-        events,
-        org_id=org,
-        source=source,
-        source_call_id=None,
-        envelope_id=new_id(),
-        declaration=declaration,
-        pointers=state.pointers,
-        sink=state.sink,
-        decoder_version=getattr(mapper, "decoder_version", f"{source}/1"),
-    )
 
 
 def _require_range(start: datetime | None, end: datetime | None) -> None:
@@ -641,7 +700,7 @@ def _require_range(start: datetime | None, end: datetime | None) -> None:
         raise HTTPException(status_code=400, detail="start and end are required")
 
 
-def _require_key(state: AppState, key: str | None, scope: KeyScope) -> str:
+def _lookup_key(state: AppState, key: str | None) -> tuple[str, frozenset[KeyScope]]:
     if not key:
         raise HTTPException(status_code=401, detail="API key required")
     found = state.keys.get(key)
@@ -651,10 +710,51 @@ def _require_key(state: AppState, key: str | None, scope: KeyScope) -> str:
             found = (record.org_id, record.scopes)
     if found is None:
         raise HTTPException(status_code=401, detail="invalid API key")
-    org, scopes = found
+    return found
+
+
+def _require_key(state: AppState, key: str | None, scope: KeyScope) -> str:
+    org, scopes = _lookup_key(state, key)
     if scope not in scopes and KeyScope.ADMIN not in scopes:
         raise HTTPException(status_code=403, detail="insufficient scope")
     return org
+
+
+def _role_for_scopes(scopes: frozenset[KeyScope]) -> Role:
+    if scopes >= frozenset(KeyScope):
+        return Role.OWNER
+    if KeyScope.ADMIN in scopes:
+        return Role.ADMIN
+    if KeyScope.ANALYZE in scopes:
+        return Role.ANALYST
+    return Role.REVIEWER
+
+
+def _load_evidence(state: AppState, org: str, rev: object, ref: str) -> tuple[bytes | None, str]:
+    objects = getattr(state, "objects", None)
+    candidates: list[str] = []
+    for item in getattr(rev, "evidence", []) or []:
+        uri = getattr(item, "uri", "")
+        if uri == ref or uri.endswith(ref):
+            candidates.append(uri)
+    for turn in getattr(rev, "turns", []) or []:
+        text_ref = getattr(turn, "text_ref", None)
+        if text_ref and (text_ref == ref or text_ref.endswith(ref)):
+            candidates.append(f"org/{org}/evidence/turn/{text_ref}")
+            text = getattr(turn, "text", "") or ""
+            if text:
+                return text.encode("utf-8"), "text/plain"
+    for prefix in ("turn", "grounding", "tool-args", "tool-result"):
+        candidates.append(f"org/{org}/evidence/{prefix}/{ref}")
+    if objects is not None:
+        for key in candidates:
+            try:
+                body = objects.get(key)
+            except Exception:
+                continue
+            if body is not None:
+                return body, "application/octet-stream"
+    return None, "application/octet-stream"
 
 
 def _ui_org(request: Request, state: AppState) -> str | None:
@@ -662,18 +762,26 @@ def _ui_org(request: Request, state: AppState) -> str | None:
     org = verify_session(cookie, state.settings.session_secret)
     if org:
         return org
-    api_key = request.headers.get("x-api-key") or request.query_params.get("key")
+    api_key = request.headers.get("x-api-key")
     if api_key:
         try:
             return _require_key(state, api_key, KeyScope.READ)
         except HTTPException:
             return None
-    if len(state.keys) == 1:
-        return next(iter(state.keys.values()))[0]
     return None
 
 
-def _active(state: AppState, org: str, call_id: str):
+def _ui_csrf(request: Request, state: AppState) -> str | None:
+    info = read_session(request.cookies.get("obsalt_session"), state.settings.session_secret)
+    return info.csrf if info else None
+
+
+def _require_csrf(request: Request, state: AppState, provided: str | None) -> None:
+    if not check_csrf(request.cookies.get("obsalt_session"), provided, state.settings.session_secret):
+        raise HTTPException(status_code=403, detail="csrf required")
+
+
+def _active(state: AppState, org: str, call_id: str) -> CallRevision:
     rev_id = state.pointers.get(org, call_id)
     if not rev_id:
         raise HTTPException(status_code=404, detail="not found")
@@ -686,6 +794,9 @@ def _active(state: AppState, org: str, call_id: str):
 def _render(request: Request, name: str, context: dict) -> HTMLResponse:
     path = TEMPLATES_DIR / name
     template = name if path.exists() else "call_list.html"
+    state: AppState = request.app.state.obsalt
+    context.setdefault("csrf", _ui_csrf(request, state))
+    context.setdefault("raw_retention_days", state.settings.raw_retention_days)
     return templates.TemplateResponse(request, template, context)
 
 

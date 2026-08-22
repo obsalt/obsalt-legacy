@@ -72,7 +72,7 @@ class LiveKitPlugin:
             if key:
                 source_path = f"span:{span.name}/{key}"
             yield StageObserved(
-                stage=Stage.E2E,
+                stage=_stage_for_span(span.name, attrs),
                 metric=Metric.DURATION,
                 value_ms=(span.end_unix_nano - span.start_unix_nano) / 1e6,
                 placement=MeasurementPlacement.INTERVAL,
@@ -81,3 +81,18 @@ class LiveKitPlugin:
                 provenance=Provenance.PROVIDER_REPORTED,
                 source_path=source_path,
             )
+
+
+def _stage_for_span(name: str, attrs: dict[str, object]) -> Stage:
+    blob = f"{name} {' '.join(str(k) for k in attrs)}".lower()
+    if any(token in blob for token in ("stt", "transcri", "asr", "speech_to_text")):
+        return Stage.STT
+    if any(token in blob for token in ("tts", "synthe", "voice")):
+        return Stage.TTS
+    if any(token in blob for token in ("llm", "inference", "chat", "generate")):
+        return Stage.LLM
+    if any(token in blob for token in ("tool", "function")):
+        return Stage.TOOL
+    if any(token in blob for token in ("vad", "endpoint", "eou")):
+        return Stage.ENDPOINTING
+    return Stage.E2E

@@ -25,7 +25,7 @@ from obsalt.domain.events import (
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.ingest.headers import RawHeaders
 from obsalt.plugin.contract import WebhookSource
-from obsalt.plugin.types import ConnectionConfig, RawEnvelope
+from obsalt.plugin.types import ConnectionConfig, RawEnvelope, ReadableSpan
 from obsalt.testing.fakes import MemoryResolver
 from obsalt.util import new_id, utcnow
 
@@ -164,6 +164,38 @@ class DecoderConformanceTests:
 
         assert "{" not in SPAN_TURN
         assert "execute_tool" == SPAN_TOOL
+
+
+class OtlpMapperConformanceTests:
+    """Required for OTLP mappers. Subclass and provide plugin + spans."""
+
+    plugin: Any
+    spans: list[ReadableSpan]
+
+    def _decode(self) -> list[NormalizedEvent]:
+        decode_spans = getattr(self.plugin, "decode_spans", None)
+        decode_fn = decode_spans if callable(decode_spans) else self.plugin.decode
+        return list(decode_fn(self.spans))
+
+    def test_mapper_claims_first_span(self) -> None:
+        if not self.spans:
+            pytest.skip("no spans")
+        assert self.plugin.claims(self.spans[0]) > 0
+
+    def test_mapper_idempotent_decode(self) -> None:
+        first = [event.model_dump(mode="json") for event in self._decode()]
+        second = [event.model_dump(mode="json") for event in self._decode()]
+        assert first == second
+
+    def test_mapper_stable_fact_ids(self) -> None:
+        first = [fact_id_for(event) for event in self._decode()]
+        second = [fact_id_for(event) for event in self._decode()]
+        assert first == second
+
+    def test_mapper_interval_has_real_timestamps(self) -> None:
+        for event in self._decode():
+            if isinstance(event, StageObserved) and event.placement is MeasurementPlacement.INTERVAL:
+                assert event.started_at is not None and event.ended_at is not None
 
 
 class SecondsVsMillisecondsTests:

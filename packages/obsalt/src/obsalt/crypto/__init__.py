@@ -5,6 +5,7 @@ from obsalt.crypto.primitives import (
     header_values,
     hmac_base64,
     hmac_hex,
+    jwt_hs256_verify,
     parse_kv_header,
     require_singleton,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "header_values",
     "hmac_base64",
     "hmac_hex",
+    "jwt_hs256_verify",
     "parse_kv_header",
     "require_singleton",
 ]

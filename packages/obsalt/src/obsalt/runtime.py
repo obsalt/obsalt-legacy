@@ -7,13 +7,17 @@ import secrets as secretsmod
 from dataclasses import dataclass, field
 from typing import Any
 
+from obsalt.analysis.contributions import MemoryRollupStore
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
 from obsalt.config import Settings
 from obsalt.domain.enums import KeyScope
 from obsalt.domain.models import Rubric
 from obsalt.ingest.receive import ConnectionResolver, Inbox, ObjectStore
+from obsalt.otel.forward_queue import MemoryForwardQueue
+from obsalt.otel.trace_assembly import MemoryTraceAssembler
 from obsalt.plugin.host import LoadedPlugin, discover_plugins
 from obsalt.plugin.types import ConnectionConfig
+from obsalt.search.index import MemorySearchIndex
 from obsalt.security.secrets import hash_key
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.util import new_id
@@ -41,6 +45,9 @@ class AppState:
     leases: Any = None
     key_directory: Any = None
     search: Any = None
+    traces: Any = None
+    forward_queue: Any = None
+    rollups: Any = None
     worker_id: str = "worker"
 
 
@@ -52,7 +59,7 @@ def in_memory_state(
     api_key: str = "dev-key",
     ingest_key: str = "dev",
 ) -> AppState:
-    settings = settings or Settings()
+    settings = settings or Settings(trace_grace_seconds=0)
     plugins = plugins if plugins is not None else discover_plugins()
     resolver = MemoryResolver()
     for plugin in plugins:
@@ -85,6 +92,10 @@ def in_memory_state(
         sink=MemoryRevisionSink(),
         keys={api_key: (org_id, frozenset(KeyScope))},
         rollup_generation=new_id(),
+        search=MemorySearchIndex(),
+        traces=MemoryTraceAssembler(),
+        forward_queue=MemoryForwardQueue(),
+        rollups=MemoryRollupStore(),
     )
 
 
@@ -93,6 +104,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
     plugins = plugins if plugins is not None else discover_plugins()
     from obsalt.store.clickhouse import ClickHouseSink
     from obsalt.store.clickhouse import apply_schema as apply_clickhouse
+    from obsalt.store.forward_pg import PostgresForwardQueue
     from obsalt.store.leases import RedisLeaseAccelerator
     from obsalt.store.objects import S3ObjectStore
     from obsalt.store.postgres import (
@@ -105,6 +117,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         connect,
         ping,
     )
+    from obsalt.store.trace_pg import PostgresTraceAssembler
 
     conn = connect(settings.postgres_dsn)
     ping(conn)
@@ -155,6 +168,9 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         leases=leases,
         key_directory=key_directory,
         search=PostgresSearchDocuments(conn),
+        traces=PostgresTraceAssembler(conn),
+        forward_queue=PostgresForwardQueue(conn, objects),
+        rollups=MemoryRollupStore(),
     )
 
 
