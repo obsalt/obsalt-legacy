@@ -7,7 +7,7 @@ import json
 from fastapi.testclient import TestClient
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
 
-from obsalt.api import create_app
+from obsalt.api import create_test_app
 from obsalt.config import Settings
 from obsalt.domain.enums import EnvelopeState
 from obsalt.ingest.otlp import receive_otlp_batch
@@ -42,7 +42,7 @@ def test_otlp_uses_inbox_and_does_not_forward_on_request_path() -> None:
 
 def test_otlp_span_identity_conflict_is_partial_success() -> None:
     state = example_state()
-    client = TestClient(create_app(Settings(environment="test", trace_grace_seconds=0), state))
+    client = TestClient(create_test_app(Settings(environment="test", trace_grace_seconds=0), state))
     first = {
         "resourceSpans": [
             {
@@ -114,7 +114,7 @@ def test_otlp_span_identity_conflict_is_partial_success() -> None:
 
 def test_otlp_complete_batch_assembles_stage_level() -> None:
     state = example_state(extra_plugins=[LoadedPlugin(PipecatPlugin())])
-    client = TestClient(create_app(Settings(environment="test", trace_grace_seconds=0), state))
+    client = TestClient(create_test_app(Settings(environment="test", trace_grace_seconds=0), state))
     payload = {
         "resourceSpans": [
             {

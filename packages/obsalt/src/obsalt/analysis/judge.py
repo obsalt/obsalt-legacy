@@ -132,6 +132,7 @@ class OpenAICompatibleJudge:
             quotes=[str(item) for item in parsed.get("quotes") or []],
             model=request.model or self.model,
             prompt_version=LLM_PROMPT_VERSION,
+            cost_usd=_usage_cost_usd(payload, parsed),
         )
 
 
@@ -225,6 +226,18 @@ def _entail_claim(request: JudgeRequest) -> JudgeResult:
         model=HEURISTIC_VERSION,
         prompt_version="entailment/1",
     )
+
+
+def _usage_cost_usd(payload: dict[str, Any], parsed: dict[str, Any]) -> float | None:
+    """Use a cost the judge or gateway actually reported. Do not invent a token price."""
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    raw = usage.get("cost") or usage.get("total_cost") or parsed.get("cost_usd")
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def _message_content(payload: dict[str, Any]) -> str:

@@ -20,6 +20,7 @@ from obsalt.domain.enums import (
     HangupReason,
     MeasurementPlacement,
     Provenance,
+    Speaker,
     ToolStatus,
 )
 from obsalt.domain.events import (
@@ -160,6 +161,12 @@ class Assembler:
             )
             if turns:
                 hangup.last_speaker = turns[-1].speaker
+                last_user = next((t for t in reversed(turns) if t.speaker is Speaker.USER), None)
+                last_agent = next((t for t in reversed(turns) if t.speaker is Speaker.AGENT), None)
+                if last_user is not None:
+                    hangup.last_user_text_ref = last_user.text_ref
+                if last_agent is not None:
+                    hangup.last_agent_text_ref = last_agent.text_ref
 
         started, ended, derived_provenance = _lifecycle_bounds(call_obs, outcome, turns)
         status = CallStatus.ENDED if finalized or hangup else CallStatus.ONGOING

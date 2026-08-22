@@ -204,7 +204,13 @@ def cluster_hangups(
                     "top_call_id": top.call_id,
                     "max_loss_score": _loss(top),
                     "loss_reasons": list(top.hangup.loss_reasons) if top.hangup else [],
-                    "last_user_text": _last_user_text(top),
+                    "last_speaker": (
+                        top.hangup.last_speaker.value
+                        if top.hangup and top.hangup.last_speaker
+                        else None
+                    ),
+                    "last_user_text": _last_text(top, Speaker.USER),
+                    "last_agent_text": _last_text(top, Speaker.AGENT),
                 }
             )
 
@@ -230,8 +236,12 @@ def _loss(call: CallRevision) -> float:
 
 
 def _last_user_text(call: CallRevision) -> str:
+    return _last_text(call, Speaker.USER)
+
+
+def _last_text(call: CallRevision, speaker: Speaker) -> str:
     for turn in reversed(call.turns):
-        if turn.speaker is Speaker.USER:
+        if turn.speaker is speaker:
             return turn.text
     return ""
 

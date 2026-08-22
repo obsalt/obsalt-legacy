@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from obsalt.analysis.cluster import cluster_hangups
+from obsalt.analysis.cluster import MemoryHangupClusterStore, cluster_hangups
+from obsalt.analysis.contributions import MemoryRollupStore
 from obsalt.analysis.rollups import build_latency_rollup, build_quality_rollup
 from obsalt.analysis.tier2 import decide_tier2
 from obsalt.domain.enums import (
@@ -26,7 +27,7 @@ from obsalt.domain.models import (
     StageMeasurement,
     Turn,
 )
-from obsalt.query import latency_rollup, sample_percentile
+from obsalt.query import hangup_rollup, latency_rollup, sample_percentile
 
 
 def _call() -> CallRevision:
@@ -82,11 +83,43 @@ def test_hangup_clusters_and_zero_baseline_samples_out() -> None:
     clustered = cluster_hangups([call], "g1")
     assert clustered["as_of_generation"] == "g1"
     assert clustered["clusters"][0]["reason"] == HangupReason.USER_HANGUP.value
+
+
+def test_hangup_cluster_includes_last_speaker_and_closing_texts() -> None:
+    call = _call().model_copy(
+        update={
+            "hangup": Hangup(reason=HangupReason.USER_HANGUP, last_speaker=Speaker.AGENT),
+            "turns": [
+                Turn(index=0, speaker=Speaker.USER, text="I want a refund."),
+                Turn(index=1, speaker=Speaker.AGENT, text="I can help with that."),
+            ],
+        }
+    )
+    cluster = cluster_hangups([call], "g1")["clusters"][0]
+    assert cluster["last_speaker"] == "agent"
+    assert cluster["last_user_text"] == "I want a refund."
+    assert cluster["last_agent_text"] == "I can help with that."
     execution = decide_tier2(
         call.model_copy(update={"hangup": Hangup(reason=HangupReason.COMPLETED)}),
         baseline_sample_rate=0.0,
     )
     assert execution.state is AnalysisState.SAMPLED_OUT
+
+
+def test_hangup_rollup_ignores_store_cache_outside_the_window() -> None:
+    store = MemoryHangupClusterStore()
+    store.refresh("acme", [_call()], "g1")
+    empty = hangup_rollup([], as_of_generation="g1", store=store, org_id="acme")
+    assert empty["clusters"] == []
+    assert empty["items"] == []
+
+
+def test_latency_rollup_empty_window_does_not_read_store_samples() -> None:
+    store = MemoryRollupStore()
+    store.contribute(_call())
+    empty = latency_rollup([], as_of_generation="g1", store=store, org_id="acme")
+    assert empty["sample_percentiles"] == {}
+    assert empty["items"] == []
 
 
 def test_pending_hallucination_candidates_are_not_fleet_failures() -> None:

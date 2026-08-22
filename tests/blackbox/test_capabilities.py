@@ -69,8 +69,13 @@ def test_hangup_cluster_uses_the_provider_agnostic_reason() -> None:
     reasons = {item["reason"]: item for item in body["items"]}
     assert "user_hangup" in reasons
     assert reasons["user_hangup"]["count"] == 1
+    cluster = next(row for row in body["clusters"] if row["reason"] == "user_hangup")
+    assert cluster["last_speaker"] == "agent"
+    assert cluster["last_user_text"] == EXAMPLE_USER_TEXT
+    assert cluster["last_agent_text"] == "I can help with that."
     detail = client.get(f"/v1/calls/{first_call_id(client)}", headers=auth()).json()
     assert detail["hangup"]["reason"] == "user_hangup"
+    assert detail["hangup"]["last_speaker"] == "agent"
     assert detail["source_call_id"] == EXAMPLE_SOURCE_CALL_ID
     assert detail["agent_id"] == EXAMPLE_AGENT_ID
 

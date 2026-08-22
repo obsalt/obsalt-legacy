@@ -2,7 +2,10 @@
 {% block title %}obsalt — calls{% endblock %}
 {% block content %}
   <h1>Calls</h1>
-  <p class="muted">Call analytics. Not a dashboard builder.</p>
+  <p class="muted">Call analytics. Not a dashboard builder. A time range is required.</p>
+  {% if error %}
+    <p class="decode_failed">{{ error }}</p>
+  {% endif %}
   {% set filters = filters|default({}) %}
   <form class="filters" method="get" action="/v1/ui">
     <label>Agent <input name="agent_id" value="{{ filters.agent_id|default('') }}" /></label>

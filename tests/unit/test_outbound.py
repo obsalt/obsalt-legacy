@@ -4,29 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from obsalt.analysis.cluster import MemoryHangupClusterStore
 from obsalt.config import Settings
-from obsalt.domain.enums import HangupReason, MeasurementPlacement, Metric, Provenance, Stage
-from obsalt.domain.models import CallRevision, Hangup, StageMeasurement
-from obsalt.query import hangup_rollup
+from obsalt.domain.enums import MeasurementPlacement, Metric, Provenance, Stage
+from obsalt.domain.models import CallRevision, StageMeasurement
 from obsalt.runtime import in_memory_state
 from obsalt.webhooks.outbound import maybe_emit_slo, mint_whsec
-
-
-def test_hangup_rollup_serves_materialized_store() -> None:
-    store = MemoryHangupClusterStore()
-    call = CallRevision(
-        org_id="acme",
-        call_id="c1",
-        revision="r1",
-        source="vapi",
-        source_call_id="s1",
-        hangup=Hangup(reason=HangupReason.USER_HANGUP),
-    )
-    store.refresh("acme", [call], "g1")
-    store.by_org["acme"]["clusters"][0]["reason"] = "cached-user-hangup"
-    data = hangup_rollup([], as_of_generation="g1", store=store, org_id="acme")
-    assert data["items"][0]["reason"] == "cached-user-hangup"
 
 
 def test_slo_breached_emitted_when_e2e_exceeds_threshold(monkeypatch) -> None:

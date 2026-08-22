@@ -506,11 +506,9 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
         for r in getattr(state, "rubrics", {}).values()
         if getattr(r, "org_id", None) == revision.org_id
     ]
-    existing = list(
-        getattr(state.sink, "analysis", {}).get(
-            (revision.org_id, revision.call_id, revision.revision), []
-        )
-    )
+    from obsalt.query import analysis_for
+
+    existing = list(analysis_for(state, revision.org_id, revision.call_id, revision.revision))
 
     claims = []
     for row in existing:
@@ -614,11 +612,10 @@ def _emit_slo(state: Any, revision: CallRevision) -> None:
 
 
 def _emit_analysis_hooks(state: Any, revision: CallRevision) -> None:
+    from obsalt.query import analysis_for
     from obsalt.webhooks.outbound import emit_standard_event
 
-    rows = getattr(state.sink, "analysis", {}).get(
-        (revision.org_id, revision.call_id, revision.revision), []
-    )
+    rows = analysis_for(state, revision.org_id, revision.call_id, revision.revision)
     for row in rows:
         payload = getattr(row, "payload", {}) or {}
         analyzer = getattr(getattr(row, "execution", None), "analyzer_id", "")

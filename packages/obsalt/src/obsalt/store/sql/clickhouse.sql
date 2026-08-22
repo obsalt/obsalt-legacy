@@ -112,6 +112,13 @@ CREATE TABLE IF NOT EXISTS obsalt.analysis_results (
     analyzer_id String,
     analyzer_version String,
     payload String,
+    state String DEFAULT 'completed',
+    error String DEFAULT '',
+    rubric_version String DEFAULT '',
     created_at DateTime64(3)
 ) ENGINE = MergeTree
 ORDER BY (org_id, call_id, revision, analyzer_id, analyzer_version);
+
+ALTER TABLE obsalt.analysis_results ADD COLUMN IF NOT EXISTS state String DEFAULT 'completed';
+ALTER TABLE obsalt.analysis_results ADD COLUMN IF NOT EXISTS error String DEFAULT '';
+ALTER TABLE obsalt.analysis_results ADD COLUMN IF NOT EXISTS rubric_version String DEFAULT '';

@@ -128,6 +128,39 @@ def test_key_rotation_keeps_overlap() -> None:
     assert client.get("/v1/plugins", headers=auth(new_key)).status_code == 200
 
 
+def test_console_collection_pages_require_a_time_range() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
+    login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
+    assert login.status_code == 303
+    for path in ("/v1/ui", "/v1/ui/latency", "/v1/ui/hangups", "/v1/ui/quality"):
+        bare = client.get(path)
+        assert bare.status_code == 200
+        assert b"start and end are required" in bare.content
+        assert call_id.encode() not in bare.content
+        found = client.get(f"{path}?{RANGE_QS}")
+        assert found.status_code == 200
+        if path == "/v1/ui":
+            assert call_id.encode() in found.content
+
+
+def test_console_review_records_disagreement() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
+    assert login.status_code == 303
+    csrf = client.cookies.get("obsalt_csrf")
+    assert csrf
+    posted = client.post(
+        "/v1/ui/quality/review",
+        data={"csrf": csrf, "call_id": first_call_id(client), "agree": "0"},
+        follow_redirects=False,
+    )
+    assert posted.status_code == 303
+    assert "/v1/ui/quality" in posted.headers.get("location", "")
+
+
 def test_console_search_requires_a_range_and_finds_refunds() -> None:
     client = api_client(example_state())
     ingest_example(client)

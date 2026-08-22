@@ -216,12 +216,8 @@ def latency_rollup(
     store: Any | None = None,
     org_id: str | None = None,
 ) -> dict[str, Any]:
-    if store is not None and getattr(store, "samples", None):
-        from obsalt.analysis.contributions import latency_from_store_or_calls
-
-        return latency_from_store_or_calls(
-            calls, as_of_generation=as_of_generation, store=store, org_id=org_id
-        )
+    # Always score the caller-provided window. The contribution store is
+    # written on promote; it is not an all-time override of start/end.
     data = build_latency_rollup(calls, as_of_generation)
     items = []
     for stage, stats in (data.get("sample_percentiles") or {}).items():
@@ -253,21 +249,7 @@ def hangup_rollup(
     store: Any | None = None,
     org_id: str | None = None,
 ) -> dict[str, Any]:
-    if store is not None and org_id:
-        cached = store.get(org_id, as_of_generation)
-        if cached is not None:
-            data = dict(cached)
-            data.setdefault(
-                "items",
-                [
-                    {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
-                    for row in data.get("clusters") or []
-                ],
-            )
-            return data
-        data = store.refresh(org_id, calls, as_of_generation)
-    else:
-        data = cluster_hangups(calls, as_of_generation)
+    data = cluster_hangups(calls, as_of_generation)
     data["items"] = [
         {"reason": row["reason"], "count": row["size"], "call_ids": row["call_ids"]}
         for row in data.get("clusters") or []

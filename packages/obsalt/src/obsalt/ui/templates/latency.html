@@ -4,6 +4,16 @@
   {% set rollup = rollup|default({}) %}
   <h1>Latency</h1>
   <p>Serving generation <code>{{ rollup.as_of_generation|default(as_of_generation) }}</code>. One generation per response; never mixed.</p>
+  <p class="muted">A time range is required.</p>
+  {% if error %}
+    <p class="decode_failed">{{ error }}</p>
+  {% endif %}
+  {% set filters = filters|default({}) %}
+  <form class="filters" method="get" action="/v1/ui/latency">
+    <label>Start <input name="start" value="{{ filters.start|default('') }}" /></label>
+    <label>End <input name="end" value="{{ filters.end|default('') }}" /></label>
+    <button type="submit">Filter</button>
+  </form>
   <p class="muted">{{ rollup.note|default("Sample p50/p95 come from StageMeasurement rows only. Provider-published AggregateMeasurement percentiles are listed separately and never enter sample percentiles.") }}</p>
   <h2>Sample percentiles</h2>
   <table>

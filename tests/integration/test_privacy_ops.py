@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from obsalt.api import create_app
+from obsalt.api import create_test_app
 from obsalt.config import Settings
 from obsalt.domain.enums import EnvelopeState, Speaker
 from obsalt.domain.events import CallObserved, TurnObserved
@@ -72,7 +72,7 @@ def test_delete_by_caller_and_range() -> None:
     assert keep.call_id not in ranged["deleted_calls"]
     result = apply_deletion(state, org_id="acme", caller="+15550000")
     assert result["deleted_calls"]
-    client = TestClient(create_app(Settings(environment="test"), state))
+    client = TestClient(create_test_app(Settings(environment="test"), state))
     listed = client.get(
         "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
         headers={"X-API-Key": "k"},

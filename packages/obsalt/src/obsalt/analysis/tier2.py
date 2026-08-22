@@ -305,6 +305,9 @@ async def _judge_payload(
         "selection": selection,
         "trigger": selection,
     }
+    cost_usd = getattr(judged, "cost_usd", None)
+    if cost_usd:
+        payload["cost_usd"] = cost_usd
     if candidates:
         payload["candidates"] = [dict(item) for item in candidates]
         payload["claims"] = payload["candidates"]

@@ -247,7 +247,8 @@ class ClickHouseSink(RevisionSink):
         try:
             result = self._client.query(
                 """
-                SELECT call_id, revision, analyzer_id, analyzer_version, payload
+                SELECT call_id, revision, analyzer_id, analyzer_version, payload,
+                       state, error, rubric_version
                 FROM analysis_results
                 WHERE org_id = {org:String}
                   AND ({cid:String} = '' OR call_id = {cid:String})
@@ -258,7 +259,10 @@ class ClickHouseSink(RevisionSink):
         except Exception:
             return self._memory_analysis(org_id, call_id, revision)
         rows: list[AnalysisResult] = []
-        for call, rev, analyzer_id, analyzer_version, payload in result.result_rows:
+        for row in result.result_rows:
+            call, rev, analyzer_id, analyzer_version, payload, state, error, rubric_version = (
+                _analysis_row(row)
+            )
             if isinstance(payload, bytes):
                 payload = payload.decode("utf-8")
             parsed = payload
@@ -269,6 +273,10 @@ class ClickHouseSink(RevisionSink):
                     parsed = json.loads(payload)
                 except json.JSONDecodeError:
                     parsed = {"raw": payload}
+            try:
+                exec_state = AnalysisState(str(state or AnalysisState.COMPLETED.value))
+            except ValueError:
+                exec_state = AnalysisState.COMPLETED
             rows.append(
                 AnalysisResult(
                     execution=AnalysisExecution(
@@ -276,7 +284,9 @@ class ClickHouseSink(RevisionSink):
                         revision=str(rev),
                         analyzer_id=str(analyzer_id),
                         analyzer_version=str(analyzer_version),
-                        state=AnalysisState.COMPLETED,
+                        rubric_version=str(rubric_version) or None,
+                        state=exec_state,
+                        error=str(error) or None,
                     ),
                     payload=parsed if isinstance(parsed, dict) else {"value": parsed},
                 )
@@ -343,6 +353,9 @@ class ClickHouseSink(RevisionSink):
                     item.execution.analyzer_id,
                     item.execution.analyzer_version,
                     canonical_json(item.payload),
+                    item.execution.state.value,
+                    item.execution.error or "",
+                    item.execution.rubric_version or "",
                     now,
                 ]
                 for item in results
@@ -354,6 +367,9 @@ class ClickHouseSink(RevisionSink):
                 "analyzer_id",
                 "analyzer_version",
                 "payload",
+                "state",
+                "error",
+                "rubric_version",
                 "created_at",
             ],
         )
@@ -393,3 +409,12 @@ class ClickHouseSink(RevisionSink):
             payload = row[0].decode("utf-8") if isinstance(row[0], bytes) else row[0]
             out.append(CallRevision.model_validate_json(payload))
         return out
+
+
+def _analysis_row(row: Any) -> tuple[Any, ...]:
+    """New rows are 8 columns. Older inserts were payload-only (5 columns)."""
+    values = tuple(row)
+    if len(values) >= 8:
+        return values[:8]
+    call, rev, analyzer_id, analyzer_version, payload = values[:5]
+    return (call, rev, analyzer_id, analyzer_version, payload, "completed", "", "")

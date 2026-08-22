@@ -5,9 +5,10 @@ This is the product. The HTTP API is the same data without the HTML.
 If you are deciding whether obsalt is the right tool, read
 [Product](product.md) first — then come back here for the fidelity table.
 
-Open `/v1/ui` after a live call has been decoded. If the list is empty,
-ingest has not promoted a revision yet — check `obsalt worker` and
-`GET /ready`.
+Open `/v1/ui` after a live call has been decoded. Collection pages
+(calls, latency, hangups, quality, search) require a `start` and `end`.
+If the list is still empty, ingest has not promoted a revision yet —
+check `obsalt worker` and `GET /ready`.
 
 ## What you are looking at
 
@@ -20,8 +21,8 @@ OTLP backend.
 | **Calls** | What happened, recently. Filter by agent, outcome, source, latency, flag, eval. |
 | **Call detail** | Where time went **and** what was said. Timeline left, transcript right. |
 | **Latency** | Stage distributions and percentiles, by agent, over time. |
-| **Hangups** | Why calls ended, clustered, with drill-through to the ugly ones. |
-| **Quality** | Rubric results and hallucination flags. Missing output is never a pass. |
+| **Hangups** | Why calls ended, clustered, with last speaker, last user/agent text, and drill-through. |
+| **Quality** | Rubric results and hallucination flags. Missing output is never a pass. Agree or disagree on the review queue. |
 | **Search** | "Customers asking about refunds." Semantic + filters. |
 | **Settings** | Connections, rubrics, retention, plugins, keys, users. |
 

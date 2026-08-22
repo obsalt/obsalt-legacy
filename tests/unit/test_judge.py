@@ -132,3 +132,10 @@ def test_grounding_corpus_includes_tool_errors() -> None:
     assert "Be honest" in corpus
     assert any("not_found" in item and "lookup_order" in item for item in corpus)
     assert extract_candidate_claims(call) == []
+
+
+def test_usage_cost_uses_reported_dollars_only() -> None:
+    from obsalt.analysis.judge import _usage_cost_usd
+
+    assert _usage_cost_usd({"usage": {"total_cost": "0.02"}}, {}) == 0.02
+    assert _usage_cost_usd({"usage": {"prompt_tokens": 10}}, {}) is None
