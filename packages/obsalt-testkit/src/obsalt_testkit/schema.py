@@ -48,19 +48,22 @@ class FixtureSuite:
         files = sorted(self.schema_dir.glob("*.json"))
         if not files:
             raise FileNotFoundError(f"no schema in {self.schema_dir}")
-        return json.loads(files[0].read_text(encoding="utf-8"))
+        return _json_object(files[0])
 
     def raw_payloads(self) -> list[tuple[Path, dict[str, Any]]]:
-        out = []
+        out: list[tuple[Path, dict[str, Any]]] = []
         for path in sorted(self.raw_dir.glob("*.json")):
-            out.append((path, json.loads(path.read_text(encoding="utf-8"))))
+            out.append((path, _json_object(path)))
         return out
 
     def expected_for(self, raw_name: str) -> list[dict[str, Any]] | None:
         path = self.expected_dir / raw_name
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            raise TypeError(f"{path} must contain a JSON array")
+        return [row for row in data if isinstance(row, dict)]
 
 
 def validate_raw_fixtures(suite: FixtureSuite) -> list[str]:
@@ -105,7 +108,7 @@ def _first_error(validator: Draft202012Validator, payload: Any) -> str | None:
     try:
         validator.validate(payload)
     except ValidationError as exc:
-        return exc.message
+        return str(exc.message)
     return None
 
 
@@ -130,8 +133,10 @@ def _load_overlays(suite: FixtureSuite) -> dict[str, Overlay]:
 def _apply_overlay_schema(schema: dict[str, Any], patch_path: Path) -> dict[str, Any]:
     if not patch_path.exists():
         return schema
-    patch = json.loads(patch_path.read_text(encoding="utf-8"))
+    patch = _json_object(patch_path)
     merged = json.loads(json.dumps(schema))
+    if not isinstance(merged, dict):
+        return schema
     extras = patch.get("additionalProperties")
     if extras is not None:
         merged["additionalProperties"] = extras
@@ -139,3 +144,10 @@ def _apply_overlay_schema(schema: dict[str, Any], patch_path: Path) -> dict[str,
     if isinstance(props, dict):
         merged.setdefault("properties", {}).update(props)
     return merged
+
+
+def _json_object(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError(f"{path} must contain a JSON object")
+    return data

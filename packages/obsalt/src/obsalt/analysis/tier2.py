@@ -8,7 +8,6 @@ from obsalt.domain.enums import AnalysisExecutionState
 from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
 from obsalt.plugin.protocol import Judge, JudgeRequest
 
-
 DEFAULT_BASELINE_RATE = 0.0
 
 

@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-
 from obsalt.api.app import create_app
 from obsalt.assemble.assembler import fold_events, stamp_events
 from obsalt.config import Settings
 from obsalt.crypto.keys import hash_secret
-from obsalt.domain.enums import MeasurementPlacement, PipelineArchitecture, Provenance, Speaker, Stage, Metric
+from obsalt.domain.enums import MeasurementPlacement, Metric, PipelineArchitecture, Provenance, Speaker, Stage
 from obsalt.domain.events import CallObserved, StageObserved, TurnObserved
 from obsalt.otel.mappers import SpanView
 from obsalt.plugin.protocol import ConnectionConfig, RedactedDocument
@@ -28,7 +27,9 @@ def _runtime() -> tuple[Runtime, str, str]:
         org_id="acme", scope="admin", kind="service", role="owner"
     )
     runtime.put_connection(
-        ConnectionConfig(org_id="acme", provider="example", connection_id="ex", credentials={"shared_secret": "s"}),
+        ConnectionConfig(
+            org_id="acme", provider="example", connection_id="ex", credentials={"shared_secret": "s"}
+        ),
         creds["ingest_key"],
     )
     return runtime, creds["api_key"], creds["ingest_key"]
@@ -47,7 +48,12 @@ def test_stamp_applies_call_key_to_every_event() -> None:
         ),
     ]
     stamped = stamp_events(
-        events, org_id="o", source="example", envelope_id="e", decoder_version="example/1", processing_run_id="r"
+        events,
+        org_id="o",
+        source="example",
+        envelope_id="e",
+        decoder_version="example/1",
+        processing_run_id="r",
     )
     assert all(event.call_key == "o:example:c1" for event in stamped)
     assert all(event.org_id == "o" for event in stamped)
@@ -84,13 +90,15 @@ def test_hybrid_search_finds_refund_language() -> None:
 def test_ngram_embedder_is_not_a_document_hash() -> None:
     embedder = NgramEmbedder()
     left = embedder.embed_sync([RedactedDocument(document_id="1", text="refund the invoice")])[0].values
-    right = embedder.embed_sync([RedactedDocument(document_id="2", text="please refund my invoice")])[0].values
+    right = embedder.embed_sync([RedactedDocument(document_id="2", text="please refund my invoice")])[
+        0
+    ].values
     assert left != right
     assert sum(a * b for a, b in zip(left, right, strict=False)) > 0.2
 
 
 def test_pipecat_interval_has_real_timestamps() -> None:
-    start = datetime(2026, 8, 22, 12, 0, 0, tzinfo=timezone.utc).timestamp() * 1e9
+    start = datetime(2026, 8, 22, 12, 0, 0, tzinfo=UTC).timestamp() * 1e9
     end = start + 120_000_000
     span = SpanView(
         name="stt.transcription",
@@ -131,7 +139,9 @@ def test_otlp_json_assembles_and_rejects_mixed_org() -> None:
             }
         ]
     }
-    ok = client.post("/v1/traces", json=payload, headers={"X-API-Key": key, "content-type": "application/json"})
+    ok = client.post(
+        "/v1/traces", json=payload, headers={"X-API-Key": key, "content-type": "application/json"}
+    )
     assert ok.status_code == 200
     mixed = {
         "resourceSpans": [
@@ -141,7 +151,9 @@ def test_otlp_json_assembles_and_rejects_mixed_org() -> None:
             }
         ]
     }
-    denied = client.post("/v1/traces", json=mixed, headers={"X-API-Key": key, "content-type": "application/json"})
+    denied = client.post(
+        "/v1/traces", json=mixed, headers={"X-API-Key": key, "content-type": "application/json"}
+    )
     assert denied.status_code == 400
 
 

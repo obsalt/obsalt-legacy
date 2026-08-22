@@ -186,9 +186,7 @@ RawHeaderList = list[tuple[bytes, bytes]]
 class WebhookSource(Protocol):
     singleton_headers: ClassVar[frozenset[bytes]]
 
-    def authenticate(
-        self, raw: bytes, headers: RawHeaderList, cfg: ConnectionConfig
-    ) -> VerifyResult: ...
+    def authenticate(self, raw: bytes, headers: RawHeaderList, cfg: ConnectionConfig) -> VerifyResult: ...
 
     def classify(self, raw: bytes) -> ObservationalEventKind: ...
 

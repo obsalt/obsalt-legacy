@@ -95,9 +95,7 @@ def _default_fact_id(event: NormalizedEvent, source: str) -> str:
             "stage", source, event.stage.value, event.metric.value, turn, event.placement.value
         )
     if isinstance(event, AggregateObserved):
-        return fact_id_for(
-            "aggregate", source, event.stage.value, event.metric.value, event.statistic.value
-        )
+        return fact_id_for("aggregate", source, event.stage.value, event.metric.value, event.statistic.value)
     if isinstance(event, ToolObserved):
         return fact_id_for("tool", source, event.tool_id, event.name)
     if isinstance(event, OutcomeObserved):

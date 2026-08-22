@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-
 from obsalt.assemble.assembler import stamp_events
 from obsalt.assemble.fidelity import derive_coverage, derive_fidelity
-from obsalt.domain.enums import MeasurementPlacement, ObservationalEventKind, Signal, SignalCoverageStatus
+from obsalt.domain.enums import MeasurementPlacement, Signal, SignalCoverageStatus
 from obsalt.domain.events import CallObserved, GroundingObserved, NormalizedEvent, StageObserved
 from obsalt.otel.conventions import is_pii_attr, tool_span_name, turn_span_name
 from obsalt.plugin.protocol import ConnectionConfig, RawEnvelope
+
 from obsalt_testkit.schema import FixtureSuite, validate_raw_fixtures
 
 
@@ -35,7 +35,11 @@ class DecoderConformanceTests:
         return RawEnvelope(
             envelope_id=name,
             org_id=self.org_id,
-            provider=getattr(self.plugin_cls if not isinstance(self.plugin_cls, type) else self.plugin_cls(), "name", "example"),
+            provider=getattr(
+                self.plugin_cls if not isinstance(self.plugin_cls, type) else self.plugin_cls(),
+                "name",
+                "example",
+            ),
             connection_id="c1",
             object_key="k",
             body=raw,
@@ -142,9 +146,7 @@ class DecoderConformanceTests:
         if not declaration.structurally_absent:
             return
         for events in self._decode_all(plugin, suite):
-            coverage = derive_coverage(
-                events, decoder_version="test", declaration=declaration
-            )
+            coverage = derive_coverage(events, decoder_version="test", declaration=declaration)
             present = {row.signal for row in coverage if row.status is SignalCoverageStatus.PRESENT}
             leaked = present & set(declaration.structurally_absent)
             assert not leaked, f"declared unsupported but present: {leaked}"
@@ -159,7 +161,9 @@ class DecoderConformanceTests:
             expected = suite.expected_for(path.name)
             if expected is None:
                 continue
-            events = [e.model_dump(mode="json") for e in plugin.decode(self._envelope(path.read_bytes(), path.stem))]
+            events = [
+                e.model_dump(mode="json") for e in plugin.decode(self._envelope(path.read_bytes(), path.stem))
+            ]
             assert _strip(events) == _strip(expected)
 
 
@@ -186,7 +190,11 @@ class UnitsConformanceTests:
         )
         values = []
         for event in plugin.decode(envelope):
-            if isinstance(event, StageObserved) and event.source_path and self.field_path in event.source_path:
+            if (
+                isinstance(event, StageObserved)
+                and event.source_path
+                and self.field_path in event.source_path
+            ):
                 values.append(event.value_ms)
             if hasattr(event, "started_at") and hasattr(event, "ended_at"):
                 if event.started_at and event.ended_at:

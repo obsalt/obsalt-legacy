@@ -84,7 +84,12 @@ def hybrid_search(
     embedder = NgramEmbedder()
     query_vec = ngram_vector(query)
     catalog = [
-        (call_id, revision, text, embedder.embed_sync([RedactedDocument(document_id=call_id, text=text)])[0].values)
+        (
+            call_id,
+            revision,
+            text,
+            embedder.embed_sync([RedactedDocument(document_id=call_id, text=text)])[0].values,
+        )
         for call_id, revision, text in documents
     ]
     vector = vector_rank(query_vec, catalog)

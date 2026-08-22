@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import date
+from datetime import UTC, date
 from typing import Any
 
 from obsalt.domain.enums import (
@@ -25,10 +25,18 @@ class PipecatPlugin:
     manifest = PluginManifest()
     fidelity = FidelityDeclaration(
         source_format="pipecat.otel",
-        possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
+        possible_architectures=frozenset(
+            {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
+        ),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
         provides=frozenset(
-            {Signal.STAGE_INTERVALS, Signal.STT_DURATION, Signal.LLM_TTFT, Signal.TTS_TTFB, Signal.E2E_DURATION}
+            {
+                Signal.STAGE_INTERVALS,
+                Signal.STT_DURATION,
+                Signal.LLM_TTFT,
+                Signal.TTS_TTFB,
+                Signal.E2E_DURATION,
+            }
         ),
         structurally_absent={},
         schema_source="https://docs.pipecat.ai",
@@ -50,11 +58,7 @@ class PipecatPlugin:
         call_id = None
         for span in spans:
             attrs = getattr(span, "attributes", {}) or {}
-            call_id = (
-                call_id
-                or attrs.get("gen_ai.conversation.id")
-                or attrs.get("call.id")
-            )
+            call_id = call_id or attrs.get("gen_ai.conversation.id") or attrs.get("call.id")
             start, end = getattr(span, "start_time", None), getattr(span, "end_time", None)
             name = getattr(span, "name", "") or ""
             stage = _stage_from(name, attrs)
@@ -90,16 +94,16 @@ def _span_ms(start: float, end: float) -> float:
 
 
 def _as_dt(value: Any):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     ns = float(value)
     if ns > 1e14:
-        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
-    return datetime.fromtimestamp(ns, tz=timezone.utc)
+        return datetime.fromtimestamp(ns / 1e9, tz=UTC)
+    return datetime.fromtimestamp(ns, tz=UTC)
 
 
 def _stage_from(name: str, attrs: dict[str, Any]) -> Stage | None:

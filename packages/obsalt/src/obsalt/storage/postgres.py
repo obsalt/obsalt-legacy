@@ -80,9 +80,12 @@ class PostgresStore:
         if not row:
             return {}
         try:
-            return json.loads(decrypt_secret(bytes(row[0]), key=self.master_key))
+            loaded = json.loads(decrypt_secret(bytes(row[0]), key=self.master_key))
         except Exception:
             return {}
+        if not isinstance(loaded, dict):
+            return {}
+        return {str(key): str(value) for key, value in loaded.items()}
 
     def persist_connection(self, cfg: ConnectionConfig, key_hash: str) -> None:
         blob = b"{}"

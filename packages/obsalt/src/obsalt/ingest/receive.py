@@ -13,8 +13,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -115,13 +116,13 @@ class ReceiveService:
         resolver: ConnectionResolver,
         objects: ObjectWriter,
         inbox: Inbox,
-        now: callable | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.host = host
         self.resolver = resolver
         self.objects = objects
         self.inbox = inbox
-        self.now = now or (lambda: datetime.now(timezone.utc))
+        self.now = now or (lambda: datetime.now(UTC))
 
     def handle(
         self,
@@ -149,7 +150,7 @@ class ReceiveService:
                 state=None,
             )
         plugin = self.host.webhook(provider)
-        singleton = getattr(plugin, "singleton_headers", frozenset())
+        singleton: frozenset[bytes] = getattr(plugin, "singleton_headers", frozenset())
         dup = reject_duplicate_singletons(headers, singleton)
         if dup is not None:
             return ReceiveResult(

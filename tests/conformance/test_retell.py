@@ -19,7 +19,9 @@ class TestRetellDecoder(DecoderConformanceTests):
 
 class TestRetellUnits(UnitsConformanceTests):
     plugin_cls = RetellPlugin
-    seconds_payload = (Path(str(files("obsalt_retell") / "fixtures" / "raw" / "call_ended.json"))).read_bytes()
+    seconds_payload = (
+        Path(str(files("obsalt_retell") / "fixtures" / "raw" / "call_ended.json"))
+    ).read_bytes()
     field_path = "words.start"
     expected_ms = 300.0  # 0.4s to 0.7s
 
@@ -49,10 +51,20 @@ def test_retell_samples_and_aggregates_are_separate() -> None:
     assert abs((first.ended_at - first.started_at).total_seconds() * 1000.0 - 300.0) < 1.0
 
     stamped = stamp_events(
-        events, org_id="o", source="retell", envelope_id="e", decoder_version="retell/2", processing_run_id="r"
+        events,
+        org_id="o",
+        source="retell",
+        envelope_id="e",
+        decoder_version="retell/2",
+        processing_run_id="r",
     )
     revision = fold_events(stamped, org_id="o", source="retell", source_call_id="retell-call-happy-1")
     view = timeline_view(revision)
     assert view["waterfall"] is False
-    assert revision.lifecycle.timeline_fidelity in {TimelineFidelity.TURN_LEVEL, TimelineFidelity.MESSAGE_LEVEL}
-    assert all(m.placement is not MeasurementPlacement.INTERVAL or m.started_at for m in revision.stage_measurements)
+    assert revision.lifecycle.timeline_fidelity in {
+        TimelineFidelity.TURN_LEVEL,
+        TimelineFidelity.MESSAGE_LEVEL,
+    }
+    assert all(
+        m.placement is not MeasurementPlacement.INTERVAL or m.started_at for m in revision.stage_measurements
+    )

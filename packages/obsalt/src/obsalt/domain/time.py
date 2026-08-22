@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 _ISO_Z = re.compile(r"Z$")
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def parse_datetime(value: Any) -> datetime | None:
@@ -16,13 +16,13 @@ def parse_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     if isinstance(value, (int, float)):
         ts = float(value)
         if ts > 1e10:
             ts /= 1000.0
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return datetime.fromtimestamp(ts, tz=UTC)
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -30,7 +30,7 @@ def parse_datetime(value: Any) -> datetime | None:
         if text.isdigit() or re.fullmatch(r"-?\d+\.\d+", text):
             return parse_datetime(float(text))
         try:
-            return datetime.fromisoformat(_ISO_Z.sub("+00:00", text)).astimezone(timezone.utc)
+            return datetime.fromisoformat(_ISO_Z.sub("+00:00", text)).astimezone(UTC)
         except ValueError:
             return None
     return None

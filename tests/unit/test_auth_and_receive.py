@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 
 from obsalt.auth.primitives import hmac_hex
 from obsalt.domain.enums import EnvelopeState, VerifyOutcome
@@ -55,12 +54,16 @@ def test_retell_real_signature() -> None:
     ts = str(int(time.time() * 1000))
     sig = hmac_hex("api-key", body + ts.encode())
     header = f"v={ts},d={sig}".encode()
-    cfg = ConnectionConfig(org_id="o", provider="retell", connection_id="c", credentials={"api_key": "api-key"})
+    cfg = ConnectionConfig(
+        org_id="o", provider="retell", connection_id="c", credentials={"api_key": "api-key"}
+    )
     svc = _svc(
         RetellPlugin(),
         connections={("retell", "k"): cfg},
     )
-    result = svc.handle(provider="retell", ingest_key="k", raw=body, headers=[(b"x-retell-signature", header)])
+    result = svc.handle(
+        provider="retell", ingest_key="k", raw=body, headers=[(b"x-retell-signature", header)]
+    )
     assert result.verify and result.verify.ok
     assert result.response.status_code == 204
 
@@ -73,13 +76,19 @@ def test_authorization_headers_are_not_archived() -> None:
     inbox = MemoryInbox()
     host = PluginHost()
     host._register(ExamplePlugin(), source="test")
-    svc = ReceiveService(host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox)
+    svc = ReceiveService(
+        host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox
+    )
     body = b'{"event":"call.completed","call_id":"c1"}'
     svc.handle(
         provider="example",
         ingest_key="k",
         raw=body,
-        headers=[(b"x-example-secret", b"s"), (b"authorization", b"Bearer nope"), (b"content-type", b"application/json")],
+        headers=[
+            (b"x-example-secret", b"s"),
+            (b"authorization", b"Bearer nope"),
+            (b"content-type", b"application/json"),
+        ],
     )
     meta = next(iter(objects.meta.values()))
     assert "authorization" not in {k.lower() for k in meta}
@@ -95,7 +104,9 @@ def test_tombstone_purges_orphan() -> None:
     inbox.add_tombstone(org_id="o", source_call_id="c1")
     host = PluginHost()
     host._register(ExamplePlugin(), source="test")
-    svc = ReceiveService(host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox)
+    svc = ReceiveService(
+        host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox
+    )
     result = svc.handle(
         provider="example",
         ingest_key="k",
@@ -114,7 +125,9 @@ def test_duplicate_delivery_resumes() -> None:
     inbox = MemoryInbox()
     host = PluginHost()
     host._register(ExamplePlugin(), source="test")
-    svc = ReceiveService(host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox)
+    svc = ReceiveService(
+        host=host, resolver=MemoryResolver({("example", "k"): cfg}), objects=objects, inbox=inbox
+    )
     body = b'{"event":"call.completed","call_id":"c1"}'
     headers = [(b"x-example-secret", b"s")]
     first = svc.handle(provider="example", ingest_key="k", raw=body, headers=headers)

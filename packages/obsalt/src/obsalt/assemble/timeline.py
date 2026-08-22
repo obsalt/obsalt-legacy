@@ -16,15 +16,9 @@ def timeline_view(revision: CallRevision) -> dict[str, Any]:
         for m in revision.stage_measurements
         if m.placement is MeasurementPlacement.INTERVAL and m.started_at and m.ended_at
     ]
-    unplaced = [
-        m
-        for m in revision.stage_measurements
-        if m.placement is not MeasurementPlacement.INTERVAL
-    ]
+    unplaced = [m for m in revision.stage_measurements if m.placement is not MeasurementPlacement.INTERVAL]
     anchored = [
-        m
-        for m in revision.stage_measurements
-        if m.placement is MeasurementPlacement.ANCHORED_DURATION
+        m for m in revision.stage_measurements if m.placement is MeasurementPlacement.ANCHORED_DURATION
     ]
     draw_waterfall = fidelity is TimelineFidelity.STAGE_LEVEL and waterfall_allowed(intervals)
     return {

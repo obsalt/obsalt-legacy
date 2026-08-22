@@ -44,12 +44,8 @@ class CartesiaPlugin:
     fidelity = FidelityDeclaration(
         source_format="cartesia.line.post_call",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset(
-            {MeasurementPlacement.UNPLACED, MeasurementPlacement.INTERVAL}
-        ),
-        provides=frozenset(
-            {Signal.TURN_INTERVALS, Signal.STT_DURATION, Signal.TTS_TTFB, Signal.TRANSCRIPT}
-        ),
+        possible_placements=frozenset({MeasurementPlacement.UNPLACED, MeasurementPlacement.INTERVAL}),
+        provides=frozenset({Signal.TURN_INTERVALS, Signal.STT_DURATION, Signal.TTS_TTFB, Signal.TRANSCRIPT}),
         structurally_absent={
             Signal.STAGE_INTERVALS: "Cartesia publishes turn intervals and unplaced STT/TTS TTFBs, not stage intervals",
         },
@@ -58,7 +54,9 @@ class CartesiaPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         missing = require_secret(cfg.credentials.get("webhook_secret"), name="webhook_secret")
         if missing:
             return missing

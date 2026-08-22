@@ -4,10 +4,9 @@ from itertools import permutations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from obsalt.assemble.assembler import fold_events, stamp_events
 from obsalt.assemble.timeline import timeline_view
-from obsalt.domain.enums import MeasurementPlacement, PipelineArchitecture, Provenance, Speaker, Stage, Metric
+from obsalt.domain.enums import MeasurementPlacement, Metric, PipelineArchitecture, Provenance, Speaker, Stage
 from obsalt.domain.events import CallObserved, StageObserved, TurnObserved
 from obsalt.domain.time import parse_datetime
 
@@ -77,6 +76,11 @@ def test_unplaced_stages_do_not_draw_waterfall() -> None:
 @settings(max_examples=20)
 def test_stamp_then_fold_never_crashes(sample) -> None:
     stamped = stamp_events(
-        sample, org_id="o", source="example", envelope_id="e", decoder_version="example/1", processing_run_id="r"
+        sample,
+        org_id="o",
+        source="example",
+        envelope_id="e",
+        decoder_version="example/1",
+        processing_run_id="r",
     )
     fold_events(stamped, org_id="o", source="example", source_call_id="c1")

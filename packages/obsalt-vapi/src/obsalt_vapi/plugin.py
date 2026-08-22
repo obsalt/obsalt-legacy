@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import jwt
-
 from obsalt.auth.primitives import (
     constant_time_eq,
     enforce_window,
@@ -22,8 +21,8 @@ from obsalt.auth.primitives import (
     singleton_or_reject,
 )
 from obsalt.domain.enums import (
-    Capability,
     CallDirection,
+    Capability,
     EvidenceKind,
     GroundingKind,
     InterruptionKind,
@@ -66,6 +65,7 @@ from obsalt.plugin.protocol import (
     VerifyResult,
     WebhookResponse,
 )
+
 from obsalt_vapi.hangup import classify_ended_reason
 
 DECODER_VERSION = "vapi/3"
@@ -80,6 +80,18 @@ REJECTED_TYPES = frozenset(
         "voice-request",
     }
 )
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _message_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    raw_message = payload.get("message")
+    return raw_message if isinstance(raw_message, dict) else payload
+
 
 OBSERVATIONAL = {
     "end-of-call-report": ObservationalEventKind.CALL_ENDED,
@@ -107,9 +119,7 @@ class VapiPlugin:
     name = "vapi"
     display_name = "Vapi"
     DECODER_VERSION = DECODER_VERSION
-    capabilities = frozenset(
-        {Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.REST_BACKFILL}
-    )
+    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.REST_BACKFILL})
     singleton_headers = frozenset(
         {
             b"x-vapi-secret",
@@ -156,7 +166,9 @@ class VapiPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         mode = str(cfg.settings.get("auth_mode") or "legacy_secret")
         if mode == "legacy_secret":
             missing = require_secret(cfg.credentials.get("shared_secret"), name="shared_secret")
@@ -235,7 +247,11 @@ class VapiPlugin:
                     cfg.credentials.get("oauth_jwks") or cfg.credentials.get("oauth_secret") or "",
                     algorithms=["HS256", "RS256"],
                     audience=cfg.credentials["oauth_audience"],
-                    options={"verify_signature": bool(cfg.credentials.get("oauth_jwks") or cfg.credentials.get("oauth_secret"))},
+                    options={
+                        "verify_signature": bool(
+                            cfg.credentials.get("oauth_jwks") or cfg.credentials.get("oauth_secret")
+                        )
+                    },
                 )
             except jwt.PyJWTError as exc:
                 return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE, detail=str(exc))
@@ -247,7 +263,7 @@ class VapiPlugin:
             payload = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return ObservationalEventKind.UNKNOWN_OBSERVATIONAL
-        message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
+        message = _message_payload(payload)
         event_type = as_str(message.get("type")) or ""
         if event_type in REJECTED_TYPES:
             return ObservationalEventKind.REJECTED_SYNCHRONOUS
@@ -258,8 +274,8 @@ class VapiPlugin:
             payload = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return None
-        message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
-        call = message.get("call") if isinstance(message.get("call"), dict) else {}
+        message = _message_payload(payload)
+        call = _as_dict(message.get("call"))
         call_id = as_str(call.get("id")) or as_str(message.get("callId"))
         event_type = as_str(message.get("type"))
         if call_id and event_type:
@@ -271,8 +287,8 @@ class VapiPlugin:
             payload = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
             return TombstoneHints()
-        message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
-        call = message.get("call") if isinstance(message.get("call"), dict) else {}
+        message = _message_payload(payload)
+        call = _as_dict(message.get("call"))
         return TombstoneHints(source_call_id=as_str(call.get("id")) or as_str(message.get("callId")))
 
     def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse:
@@ -304,14 +320,15 @@ class VapiPlugin:
             return []
         if not isinstance(payload, dict):
             return []
-        message = payload.get("message") if isinstance(payload.get("message"), dict) else payload
-        if as_str(message.get("type")) in REJECTED_TYPES:
+        message = _message_payload(payload)
+        event_type = as_str(message.get("type"))
+        if event_type is not None and event_type in REJECTED_TYPES:
             return []
         extracted = MAP.extract(payload if "message" in payload else {"message": message})
         source_call_id = as_str(extracted.get("source_call_id"))
         if not source_call_id:
             return []
-        call_obj = message.get("call") if isinstance(message.get("call"), dict) else {}
+        call_obj = _as_dict(message.get("call"))
         direction = CallDirection.UNKNOWN
         call_type = as_str(call_obj.get("type")) or ""
         if "inbound" in call_type.lower():
@@ -354,10 +371,8 @@ class VapiPlugin:
 
 def _grounding(message: dict[str, Any], call_obj: dict[str, Any]) -> list[NormalizedEvent]:
     events: list[NormalizedEvent] = []
-    assistant = message.get("assistant") if isinstance(message.get("assistant"), dict) else {}
-    if not assistant and isinstance(call_obj.get("assistant"), dict):
-        assistant = call_obj["assistant"]
-    model = assistant.get("model") if isinstance(assistant.get("model"), dict) else {}
+    assistant = _as_dict(message.get("assistant")) or _as_dict(call_obj.get("assistant"))
+    model = _as_dict(assistant.get("model"))
     for item in model.get("messages") or []:
         if isinstance(item, dict) and item.get("role") == "system":
             text = as_str(item.get("content"))
@@ -373,7 +388,7 @@ def _grounding(message: dict[str, Any], call_obj: dict[str, Any]) -> list[Normal
 
 
 def _turns_and_tools(message: dict[str, Any]) -> list[NormalizedEvent]:
-    artifact = message.get("artifact") if isinstance(message.get("artifact"), dict) else {}
+    artifact = _as_dict(message.get("artifact"))
     messages = artifact.get("messages") or message.get("messages") or []
     events: list[NormalizedEvent] = []
     user_text: list[str] = []
@@ -387,7 +402,7 @@ def _turns_and_tools(message: dict[str, Any]) -> list[NormalizedEvent]:
             for item in raw.get("toolCalls") or raw.get("toolCallList") or []:
                 if not isinstance(item, dict):
                     continue
-                inner = item.get("function") if isinstance(item.get("function"), dict) else item
+                inner = _as_dict(item.get("function")) or item
                 name = as_str(inner.get("name")) or "unknown"
                 args = inner.get("arguments") or inner.get("parameters") or {}
                 events.append(
@@ -407,7 +422,9 @@ def _turns_and_tools(message: dict[str, Any]) -> list[NormalizedEvent]:
                     tool_id=as_str(raw.get("toolCallId")) or "tool",
                     name=as_str(raw.get("name")) or "unknown",
                     result=result,
-                    status=ToolStatus.ERROR if (isinstance(result, str) and "error" in result.lower()[:40]) else ToolStatus.SUCCESS,
+                    status=ToolStatus.ERROR
+                    if (isinstance(result, str) and "error" in result.lower()[:40])
+                    else ToolStatus.SUCCESS,
                     source_path="artifact.messages[].toolCallId",
                 )
             )
@@ -479,15 +496,15 @@ def _word_confidence(raw: dict[str, Any]) -> float | None:
     if not isinstance(words, list) or not words:
         return as_float(raw.get("confidence"))
     values = [as_float(w.get("confidence")) for w in words if isinstance(w, dict)]
-    values = [v for v in values if v is not None]
-    if not values:
+    numeric: list[float] = [v for v in values if v is not None]
+    if not numeric:
         return None
-    return sum(values) / len(values)
+    return sum(numeric) / len(numeric)
 
 
 def _latency(message: dict[str, Any]) -> list[NormalizedEvent]:
     events: list[NormalizedEvent] = []
-    artifact = message.get("artifact") if isinstance(message.get("artifact"), dict) else {}
+    artifact = _as_dict(message.get("artifact"))
     perf = message.get("performanceMetrics") or artifact.get("performanceMetrics") or {}
     if not isinstance(perf, dict):
         return events
@@ -524,8 +541,8 @@ def _latency(message: dict[str, Any]) -> list[NormalizedEvent]:
 
 def _interruptions(message: dict[str, Any]) -> list[NormalizedEvent]:
     events: list[NormalizedEvent] = []
-    analysis = message.get("analysis") if isinstance(message.get("analysis"), dict) else {}
-    artifact = message.get("artifact") if isinstance(message.get("artifact"), dict) else {}
+    analysis = _as_dict(message.get("analysis"))
+    artifact = _as_dict(message.get("artifact"))
     for key, kind in (
         ("numAssistantInterrupted", InterruptionKind.ASSISTANT),
         ("numUserInterrupted", InterruptionKind.USER),
@@ -544,8 +561,8 @@ def _interruptions(message: dict[str, Any]) -> list[NormalizedEvent]:
 
 
 def _recording(message: dict[str, Any]) -> EvidenceObserved | None:
-    artifact = message.get("artifact") if isinstance(message.get("artifact"), dict) else {}
-    recording = artifact.get("recording") if isinstance(artifact.get("recording"), dict) else {}
+    artifact = _as_dict(message.get("artifact"))
+    recording = _as_dict(artifact.get("recording"))
     uri = (
         as_str(recording.get("stereoUrl"))
         or as_str(recording.get("monoUrl"))

@@ -56,7 +56,7 @@ class Runtime:
     durable: Any = None
 
     @classmethod
-    def create(cls, settings: Settings | None = None, extra_plugins: list | None = None) -> Runtime:
+    def create(cls, settings: Settings | None = None, extra_plugins: list[Any] | None = None) -> Runtime:
         settings = settings or Settings()
         host = PluginHost.load(extra=extra_plugins or [])
         objects = MemoryObjects()
@@ -73,14 +73,12 @@ class Runtime:
         )
 
     @classmethod
-    def create_durable(cls, settings: Settings, extra_plugins: list | None = None) -> Runtime:
+    def create_durable(cls, settings: Settings, extra_plugins: list[Any] | None = None) -> Runtime:
         from obsalt.storage.durable import open_durable
 
         backend = open_durable(settings)
         host = PluginHost.load(extra=extra_plugins or [])
-        receive = ReceiveService(
-            host=host, resolver=backend, objects=backend, inbox=backend
-        )
+        receive = ReceiveService(host=host, resolver=backend, objects=backend, inbox=backend)
         runtime = cls(
             settings=settings,
             host=host,
@@ -136,7 +134,7 @@ class Runtime:
         if self.durable is not None:
             raw = self.durable.get_evidence(org_id, ref)
             if raw is not None:
-                text = raw.decode("utf-8")
+                text = bytes(raw).decode("utf-8")
                 self.evidence[(org_id, ref)] = text
                 return text
         return None
@@ -176,9 +174,11 @@ class Runtime:
                 self.evidence[(revision.org_id, ref)] = turn.text
         text = " ".join(turn.text or "" for turn in revision.turns)
         if text:
-            vec = NgramEmbedder().embed_sync(
-                [RedactedDocument(document_id=revision.call_id, text=text)]
-            )[0].values
+            vec = (
+                NgramEmbedder()
+                .embed_sync([RedactedDocument(document_id=revision.call_id, text=text)])[0]
+                .values
+            )
             self.search_vectors[(revision.org_id, revision.call_id)] = vec
         if self.durable is None:
             self.rollup_generation += 1
@@ -248,9 +248,7 @@ class Runtime:
         return count
 
 
-def decode_loaded(
-    runtime: Runtime, envelope: Any, plugin: object, blobs: dict[str, str]
-) -> CallRevision:
+def decode_loaded(runtime: Runtime, envelope: Any, plugin: object, blobs: dict[str, str]) -> CallRevision:
     from obsalt.workers.decode import decode_envelope
 
     declaration = None

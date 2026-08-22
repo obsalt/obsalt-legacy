@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from obsalt.plugin.protocol import ConnectionConfig, RawEnvelope
@@ -19,5 +19,5 @@ class ExampleStreamSource:
             object_key="stream/example",
             body=b'{"event":"frame","call_id":"stream-1"}',
             delivery_key="stream:stream-1",
-            received_at=datetime.now(timezone.utc).isoformat(),
+            received_at=datetime.now(UTC).isoformat(),
         )

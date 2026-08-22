@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import uvicorn
+from fastapi import FastAPI
 
 from obsalt._version import __version__
 from obsalt.config import Settings
@@ -169,7 +170,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_worker(_args: argparse.Namespace) -> int:
+def cmd_worker(_args: argparse.Namespace) -> int:  # pragma: no cover
     settings = Settings()
     try:
         runtime = Runtime.create_durable(settings)
@@ -182,9 +183,10 @@ def cmd_worker(_args: argparse.Namespace) -> int:
     while True:
         processed = runtime.drain_outbox()
         time.sleep(0.25 if processed == 0 else 0)
+    return 0
 
 
-def _app(runtime: Runtime, settings: Settings):
+def _app(runtime: Runtime, settings: Settings) -> FastAPI:
     from obsalt.api.app import create_app
 
     return create_app(runtime, settings)

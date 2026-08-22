@@ -101,10 +101,13 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     @app.get("/v1/calls/{call_id}")
     def get_call(call_id: str, principal: ApiPrincipal = Depends(require_scope("read"))) -> dict[str, Any]:
         revision = _call_or_404(runtime, principal.org_id, call_id)
-        return revision.model_dump(mode="json")
+        dumped = revision.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else {"call": dumped}
 
     @app.get("/v1/calls/{call_id}/timeline")
-    def get_timeline(call_id: str, principal: ApiPrincipal = Depends(require_scope("read"))) -> dict[str, Any]:
+    def get_timeline(
+        call_id: str, principal: ApiPrincipal = Depends(require_scope("read"))
+    ) -> dict[str, Any]:
         revision = _call_or_404(runtime, principal.org_id, call_id)
         return timeline_view(revision)
 
@@ -118,11 +121,14 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             return {"ref": ref, "call_id": revision.call_id, "text": blob}
         for item in revision.evidence:
             if item.content_ref == ref or item.uri == ref:
-                return item.model_dump(mode="json")
+                dumped = item.model_dump(mode="json")
+                return dumped if isinstance(dumped, dict) else {"ref": ref}
         raise HTTPException(status_code=404, detail="not found")
 
     @app.post("/v1/search")
-    def search(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("read"))) -> dict[str, Any]:
+    def search(
+        body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("read"))
+    ) -> dict[str, Any]:
         query = str(body.get("q") or "")
         docs = [
             (rev.call_id, rev.revision, " ".join(t.text or "" for t in rev.turns))
@@ -176,9 +182,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
                         "name": tool.name,
                         "status": tool.status.value,
                         "duration_ms": tool.duration_ms,
-                        "duration_label": (
-                            None if tool.duration_ms is not None else "not reported"
-                        ),
+                        "duration_label": (None if tool.duration_ms is not None else "not reported"),
                     }
                 )
         return {"as_of_generation": runtime.rollup_generation, "items": rows}
@@ -216,8 +220,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             return {"call_id": revision.call_id, "revision": revision.revision, "state": state.value}
         transcript = " ".join(t.text or "" for t in revision.turns)
         grounding = [
-            runtime.get_blob(principal.org_id, item.content_ref) or ""
-            for item in revision.grounding
+            runtime.get_blob(principal.org_id, item.content_ref) or "" for item in revision.grounding
         ]
         grounding = [g for g in grounding if g]
         judge = HeuristicJudge()
@@ -240,7 +243,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         key = (revision.org_id, revision.call_id, revision.revision)
         runtime.analysis.setdefault(key, []).extend([analysis, *hall_results])
         runtime.executions[(revision.org_id, revision.call_id, revision.revision, "eval.manual")] = execution
-        runtime.executions[(revision.org_id, revision.call_id, revision.revision, "hallucination")] = hall_exec
+        runtime.executions[(revision.org_id, revision.call_id, revision.revision, "hallucination")] = (
+            hall_exec
+        )
         return {
             "call_id": revision.call_id,
             "revision": revision.revision,
@@ -254,7 +259,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return {"items": items}
 
     @app.post("/v1/rubrics")
-    def create_rubric(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
+    def create_rubric(
+        body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
+    ) -> dict[str, Any]:
         rubric_id = str(body.get("id") or body.get("name"))
         version = int(body.get("version") or 1)
         row = {
@@ -302,16 +309,22 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return {"id": cfg.connection_id, "provider": cfg.provider, "ingest_key": ingest_key}
 
     @app.post("/v1/replay")
-    def replay(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
+    def replay(
+        body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
+    ) -> dict[str, Any]:
         count = runtime.replay_org(principal.org_id, provider=body.get("provider"))
         return {"accepted": True, "replayed": count, "filter": body}
 
     @app.post("/v1/backfill")
-    def backfill(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
+    def backfill(
+        body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
+    ) -> dict[str, Any]:
         return {"accepted": True, "connection_id": body.get("connection_id")}
 
     @app.post("/v1/privacy/deletion-requests")
-    def deletion(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
+    def deletion(
+        body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
+    ) -> dict[str, Any]:
         runtime.tombstones.append({"org_id": principal.org_id, **body})
         kind = body.get("kind")
         if kind == "call" and body.get("call_id"):
@@ -357,7 +370,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return response
 
     @app.get("/v1/ui/calls", response_class=HTMLResponse)
-    def ui_calls(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+    def ui_calls(
+        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+    ) -> Response:
         org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -369,7 +384,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         request: Request,
         call_id: str,
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    ) -> HTMLResponse:
+    ) -> Response:
         org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -387,7 +402,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         )
 
     @app.get("/v1/ui/latency", response_class=HTMLResponse)
-    def ui_latency(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+    def ui_latency(
+        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+    ) -> Response:
         org, principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -395,7 +412,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return TEMPLATES.TemplateResponse(request, "latency.html", data)
 
     @app.get("/v1/ui/hangups", response_class=HTMLResponse)
-    def ui_hangups(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+    def ui_hangups(
+        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+    ) -> Response:
         org, principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -403,7 +422,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return TEMPLATES.TemplateResponse(request, "hangups.html", data)
 
     @app.get("/v1/ui/quality", response_class=HTMLResponse)
-    def ui_quality(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+    def ui_quality(
+        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+    ) -> Response:
         org, principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -415,7 +436,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         request: Request,
         q: str = "",
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    ) -> HTMLResponse:
+    ) -> Response:
         org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -427,7 +448,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return TEMPLATES.TemplateResponse(request, "search.html", {"q": q, "hits": hits})
 
     @app.get("/v1/ui/settings", response_class=HTMLResponse)
-    def ui_settings(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+    def ui_settings(
+        request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")
+    ) -> Response:
         org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
             return RedirectResponse("/v1/ui/login", status_code=303)
@@ -449,9 +472,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     return app
 
 
-def _ui_org(
-    runtime: Runtime, request: Request, token: str | None
-) -> tuple[str | None, ApiPrincipal | None]:
+def _ui_org(runtime: Runtime, request: Request, token: str | None) -> tuple[str | None, ApiPrincipal | None]:
     principal = _optional_principal(runtime, token)
     if principal is None:
         cookie = request.cookies.get(SESSION_COOKIE)

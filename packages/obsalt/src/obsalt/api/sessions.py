@@ -36,4 +36,4 @@ def check_csrf(secret: str, token: str, nonce: str) -> bool:
         loaded = _serializer(secret, "obsalt-csrf").loads(token, max_age=MAX_AGE)
     except (BadSignature, SignatureExpired):
         return False
-    return loaded == nonce
+    return bool(loaded == nonce)

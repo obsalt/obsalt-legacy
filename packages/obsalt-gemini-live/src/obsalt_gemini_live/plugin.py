@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import date
+from datetime import UTC, date
 from typing import Any
 
 from obsalt.domain.enums import (
@@ -39,7 +39,7 @@ class GeminiLivePlugin:
     )
 
     def instrument(self, client: object, cfg: SdkConfig) -> object:
-        setattr(client, "_obsalt_sdk", {"source": self.name, "cfg": cfg.model_dump()})
+        client._obsalt_sdk = {"source": self.name, "cfg": cfg.model_dump()}
         return client
 
     def claims(self, span: Any) -> int:
@@ -55,18 +55,22 @@ class GeminiLivePlugin:
             attrs = getattr(span, "attributes", {}) or {}
             call_id = call_id or attrs.get("gen_ai.conversation.id")
             name = getattr(span, "name", "")
-            stage = {"user_input": Stage.USER_INPUT, "generation": Stage.GENERATION, "playout": Stage.PLAYOUT}.get(name)
+            stage = {
+                "user_input": Stage.USER_INPUT,
+                "generation": Stage.GENERATION,
+                "playout": Stage.PLAYOUT,
+            }.get(name)
             start, end = getattr(span, "start_time", None), getattr(span, "end_time", None)
             if stage and start is not None and end is not None:
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 def _as_dt(value: Any):
                     if isinstance(value, datetime):
                         return value
                     ns = float(value)
                     if ns > 1e14:
-                        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
-                    return datetime.fromtimestamp(ns, tz=timezone.utc)
+                        return datetime.fromtimestamp(ns / 1e9, tz=UTC)
+                    return datetime.fromtimestamp(ns, tz=UTC)
 
                 events.append(
                     StageObserved(

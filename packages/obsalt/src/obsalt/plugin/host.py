@@ -11,11 +11,11 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from importlib.metadata import EntryPoint, entry_points
-from typing import Any
+from typing import Any, cast
 
 from obsalt._version import SUPPORTED_PLUGIN_API
 from obsalt.domain.enums import Capability
-from obsalt.plugin.protocol import FidelityDeclaration, ObsaltPlugin, OtlpMapper, WebhookSource
+from obsalt.plugin.protocol import FidelityDeclaration, OtlpMapper, WebhookSource
 
 log = logging.getLogger("obsalt.plugin")
 
@@ -65,9 +65,7 @@ class PluginHost:
             return
         lo, hi = SUPPORTED_PLUGIN_API
         if api < lo or api > hi:
-            self.errors.append(
-                f"{name}: API_VERSION {api} outside core supported range {lo}-{hi}"
-            )
+            self.errors.append(f"{name}: API_VERSION {api} outside core supported range {lo}-{hi}")
             return
         caps = frozenset(getattr(plugin, "capabilities", frozenset()))
         self.plugins[name] = LoadedPlugin(
@@ -90,7 +88,7 @@ class PluginHost:
         plugin = self.get(name).instance
         if Capability.WEBHOOK_SOURCE not in self.get(name).capabilities:
             raise TypeError(f"plugin {name!r} does not declare webhook_source")
-        return plugin
+        return cast(WebhookSource, plugin)
 
     def mappers(self) -> list[tuple[str, OtlpMapper]]:
         out: list[tuple[str, OtlpMapper]] = []

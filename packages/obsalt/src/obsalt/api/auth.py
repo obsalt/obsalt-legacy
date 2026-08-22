@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+
 from fastapi import Header, HTTPException, Request
 
 from obsalt.runtime import ApiPrincipal, Runtime
 
 
-def require_scope(scope: str):
+def require_scope(scope: str) -> Callable[..., Awaitable[ApiPrincipal]]:
     async def bound(
         request: Request,
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import date
+from datetime import UTC, date
 from typing import Any
 
 from obsalt.domain.enums import (
@@ -25,7 +25,9 @@ class LiveKitPlugin:
     manifest = PluginManifest()
     fidelity = FidelityDeclaration(
         source_format="livekit.otel",
-        possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
+        possible_architectures=frozenset(
+            {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
+        ),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
         provides=frozenset({Signal.STAGE_INTERVALS, Signal.E2E_DURATION}),
         structurally_absent={},
@@ -48,7 +50,7 @@ class LiveKitPlugin:
             call_id = call_id or attrs.get("gen_ai.conversation.id") or attrs.get("lk.room.name")
             start, end = getattr(span, "start_time", None), getattr(span, "end_time", None)
             if start is not None and end is not None:
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 def _as_dt(value: Any):
                     if value is None:
@@ -57,8 +59,8 @@ class LiveKitPlugin:
                         return value
                     ns = float(value)
                     if ns > 1e14:
-                        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
-                    return datetime.fromtimestamp(ns, tz=timezone.utc)
+                        return datetime.fromtimestamp(ns / 1e9, tz=UTC)
+                    return datetime.fromtimestamp(ns, tz=UTC)
 
                 events.append(
                     StageObserved(

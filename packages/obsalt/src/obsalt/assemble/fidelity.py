@@ -10,7 +10,6 @@ from collections.abc import Iterable
 
 from obsalt.domain.enums import (
     MeasurementPlacement,
-    Provenance,
     Signal,
     SignalCoverageStatus,
     TimelineFidelity,

@@ -7,7 +7,7 @@ signal, never from "agent turn followed by user speech".
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from datetime import date
+from datetime import UTC, date
 from typing import Any
 
 from obsalt.domain.enums import (
@@ -48,7 +48,7 @@ class OpenAIRealtimePlugin:
     )
 
     def instrument(self, client: object, cfg: SdkConfig) -> object:
-        setattr(client, "_obsalt_sdk", {"source": self.name, "cfg": cfg.model_dump()})
+        client._obsalt_sdk = {"source": self.name, "cfg": cfg.model_dump()}
         return client
 
     def claims(self, span: Any) -> int:
@@ -89,7 +89,9 @@ class OpenAIRealtimePlugin:
                 )
             if attrs.get("obsalt.barge_in") is True:
                 events.append(
-                    InterruptionObserved(kind=InterruptionKind.BARGE_IN, count=1, source_path="obsalt.barge_in")
+                    InterruptionObserved(
+                        kind=InterruptionKind.BARGE_IN, count=1, source_path="obsalt.barge_in"
+                    )
                 )
         if call_id:
             events.insert(
@@ -109,7 +111,7 @@ def _span_ms(start: float, end: float) -> float:
 
 
 def _as_dt(value: Any) -> Any:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     if value is None:
         return None
@@ -117,5 +119,5 @@ def _as_dt(value: Any) -> Any:
         return value
     ns = float(value)
     if ns > 1e14:
-        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
-    return datetime.fromtimestamp(ns, tz=timezone.utc)
+        return datetime.fromtimestamp(ns / 1e9, tz=UTC)
+    return datetime.fromtimestamp(ns, tz=UTC)

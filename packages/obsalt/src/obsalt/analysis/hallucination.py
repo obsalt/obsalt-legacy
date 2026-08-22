@@ -25,9 +25,10 @@ _CANDIDATE = re.compile(
 def candidate_claims(turns: Sequence[object]) -> list[str]:
     claims: list[str] = []
     for turn in turns:
-        if getattr(turn, "speaker", None) is None:
+        speaker = getattr(turn, "speaker", None)
+        if speaker is None:
             continue
-        if getattr(turn.speaker, "value", "") != "agent":
+        if getattr(speaker, "value", "") != "agent":
             continue
         text = getattr(turn, "text", "") or ""
         if _CANDIDATE.search(text):

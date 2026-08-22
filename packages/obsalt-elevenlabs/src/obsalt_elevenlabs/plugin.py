@@ -72,7 +72,9 @@ class ElevenLabsPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         missing = require_secret(cfg.credentials.get("webhook_secret"), name="webhook_secret")
         if missing:
             return missing
@@ -171,10 +173,13 @@ class ElevenLabsPlugin:
                 user_bits.append(text)
         if user_bits:
             events.append(
-                GroundingObserved(kind=GroundingKind.USER_TEXT, content="\n".join(user_bits), source_path="data.transcript")
+                GroundingObserved(
+                    kind=GroundingKind.USER_TEXT, content="\n".join(user_bits), source_path="data.transcript"
+                )
             )
         events.append(CallFinalized(reason="post_call_transcription"))
         return events
+
 
 class ElevenLabsOtelMapper:
     API_VERSION = 1

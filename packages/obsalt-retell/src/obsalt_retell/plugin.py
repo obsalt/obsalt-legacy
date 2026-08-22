@@ -24,8 +24,8 @@ from obsalt.auth.primitives import (
     singleton_or_reject,
 )
 from obsalt.domain.enums import (
-    Capability,
     CallDirection,
+    Capability,
     EvidenceKind,
     GroundingKind,
     HangupParty,
@@ -110,9 +110,7 @@ class RetellPlugin:
     fidelity = FidelityDeclaration(
         source_format="retell.call_ended",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset(
-            {MeasurementPlacement.UNPLACED, MeasurementPlacement.COARSE_ANCHOR}
-        ),
+        possible_placements=frozenset({MeasurementPlacement.UNPLACED, MeasurementPlacement.COARSE_ANCHOR}),
         provides=frozenset(
             {
                 Signal.STT_DURATION,
@@ -140,7 +138,9 @@ class RetellPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         missing = require_secret(cfg.credentials.get("api_key"), name="api_key")
         if missing:
             return missing
@@ -377,7 +377,12 @@ def _latency(latency: dict[str, Any]) -> list[NormalizedEvent]:
                     )
                 )
         population = int(as_float(block.get("num")) or 0) or None
-        for stat_name, stat in (("p50", Statistic.P50), ("p90", Statistic.P90), ("p95", Statistic.P95), ("p99", Statistic.P99)):
+        for stat_name, stat in (
+            ("p50", Statistic.P50),
+            ("p90", Statistic.P90),
+            ("p95", Statistic.P95),
+            ("p99", Statistic.P99),
+        ):
             ms = as_float(block.get(stat_name))
             if ms is None:
                 continue

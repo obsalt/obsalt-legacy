@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from datetime import date
 
 from obsalt.auth.primitives import constant_time_eq, require_secret, singleton_or_reject
 from obsalt.domain.enums import (
-    Capability,
     CallDirection,
+    Capability,
     GroundingKind,
     HangupParty,
     HangupReason,
@@ -59,9 +59,7 @@ class ExamplePlugin:
     name = "example"
     display_name = "Example"
     DECODER_VERSION = DECODER_VERSION
-    capabilities = frozenset(
-        {Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.STREAM_SOURCE}
-    )
+    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.STREAM_SOURCE})
     singleton_headers = frozenset({b"x-example-secret"})
     manifest = PluginManifest(secret_fields=frozenset({"shared_secret"}))
     fidelity = FidelityDeclaration(
@@ -87,7 +85,9 @@ class ExamplePlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         missing = require_secret(cfg.credentials.get("shared_secret"), name="shared_secret")
         if missing:
             return missing
@@ -170,7 +170,11 @@ class ExamplePlugin:
         for item in payload.get("turns") or []:
             if not isinstance(item, dict):
                 continue
-            speaker = Speaker(item.get("speaker") or "unknown") if item.get("speaker") in {s.value for s in Speaker} else Speaker.UNKNOWN
+            speaker = (
+                Speaker(item.get("speaker") or "unknown")
+                if item.get("speaker") in {s.value for s in Speaker}
+                else Speaker.UNKNOWN
+            )
             started = parse_datetime(item.get("started_at"))
             ended = parse_datetime(item.get("ended_at"))
             text = as_str(item.get("text")) or ""
@@ -209,7 +213,8 @@ class ExamplePlugin:
                     source_path="turns[user].text",
                 )
             )
-        outcome = payload.get("outcome") if isinstance(payload.get("outcome"), dict) else {}
+        outcome_raw = payload.get("outcome")
+        outcome = outcome_raw if isinstance(outcome_raw, dict) else {}
         code = as_str(outcome.get("code")) or "completed"
         events.append(
             OutcomeObserved(
@@ -223,7 +228,7 @@ class ExamplePlugin:
         events.append(CallFinalized(reason="provider"))
         return events
 
-    async def frames(self, cfg: ConnectionConfig):
+    async def frames(self, cfg: ConnectionConfig) -> AsyncIterator[RawEnvelope]:
         from obsalt_example.stream import ExampleStreamSource
 
         async for envelope in ExampleStreamSource().frames(cfg):

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from typing import Any
-
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from obsalt.domain.events import NormalizedEvent
 from obsalt.plugin.host import PluginHost
@@ -30,16 +29,19 @@ class SpanView:
             return None
         ns = float(value)
         if ns > 1e14:
-            return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
+            return datetime.fromtimestamp(ns / 1e9, tz=UTC)
         if ns > 1e10:
-            return datetime.fromtimestamp(ns / 1e3, tz=timezone.utc)
-        return datetime.fromtimestamp(ns, tz=timezone.utc)
+            return datetime.fromtimestamp(ns / 1e3, tz=UTC)
+        return datetime.fromtimestamp(ns, tz=UTC)
 
 
 def span_from_mapping(row: dict[str, Any]) -> SpanView:
     attrs = row.get("attributes") or {}
     if isinstance(attrs, list):
-        attrs = {item.get("key"): (item.get("value") or {}).get("stringValue") or item.get("value") for item in attrs}
+        attrs = {
+            item.get("key"): (item.get("value") or {}).get("stringValue") or item.get("value")
+            for item in attrs
+        }
     start = row.get("startTimeUnixNano") or row.get("start_time_unix_nano") or row.get("start_time")
     end = row.get("endTimeUnixNano") or row.get("end_time_unix_nano") or row.get("end_time")
     return SpanView(

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from hmac import HMAC
 from hashlib import sha256
+from hmac import HMAC
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +22,9 @@ def caller_token(org_id: str, caller: str, *, key: bytes) -> str:
     return mac.hexdigest()
 
 
-def matches(stone: Tombstone, *, source_call_id: str | None, caller: str | None, when: datetime | None) -> bool:
+def matches(
+    stone: Tombstone, *, source_call_id: str | None, caller: str | None, when: datetime | None
+) -> bool:
     if stone.org_id and source_call_id and stone.kind == "call" and stone.source_call_id == source_call_id:
         return True
     if stone.kind == "caller" and stone.caller_token and caller and stone.caller_token == caller:

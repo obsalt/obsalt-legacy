@@ -8,7 +8,6 @@ from obsalt.domain.enums import AnalysisExecutionState
 from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
 from obsalt.hangup.taxonomy import customer_loss_score
 
-
 ANALYZER_VERSION = "tier1/1"
 
 

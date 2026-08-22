@@ -5,7 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import zlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -66,7 +66,7 @@ async def handle_otlp_http(request: Request, runtime: Any) -> Response:
         object_key=key,
         body=body,
         delivery_key=f"otlp:{org}:{sha256_bytes(body)[:24]}",
-        received_at=datetime.now(timezone.utc).isoformat(),
+        received_at=datetime.now(UTC).isoformat(),
     )
     try:
         stored_id, _created = runtime.inbox.accept(
@@ -145,7 +145,9 @@ def _inflate(raw: bytes, encoding: str) -> bytes:
 
 
 def _org_from_request(request: Request, runtime: Any) -> str | None:
-    token = request.headers.get("x-api-key") or request.headers.get("authorization", "").removeprefix("Bearer ")
+    token = request.headers.get("x-api-key") or request.headers.get("authorization", "").removeprefix(
+        "Bearer "
+    )
     if not token:
         return None
     principal = runtime.authenticate_api_key(token)
@@ -225,6 +227,6 @@ def _partial(*, rejected: bool) -> bytes:
     try:
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
 
-        return ExportTraceServiceResponse().SerializeToString()
+        return bytes(ExportTraceServiceResponse().SerializeToString())
     except Exception:
         return b"{}"
