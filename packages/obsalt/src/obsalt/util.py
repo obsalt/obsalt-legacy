@@ -1,3 +1,5 @@
+"""Shared primitives: clocks, hashing, JSON, and call identity."""
+
 from __future__ import annotations
 
 import hashlib

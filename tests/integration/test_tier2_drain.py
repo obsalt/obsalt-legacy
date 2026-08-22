@@ -6,7 +6,6 @@ from obsalt.domain.enums import AnalysisState, Speaker, ToolStatus
 from obsalt.domain.events import CallObserved, ToolObserved, TurnObserved
 from obsalt.worker.drain import drain_tier2
 from obsalt.worker.process import process_normalized_events
-
 from tests.helpers import example_state, fidelity_declaration
 
 

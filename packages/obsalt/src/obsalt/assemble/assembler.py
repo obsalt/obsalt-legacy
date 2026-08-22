@@ -102,7 +102,9 @@ def _revision_cmp(left: FactRecord, right: FactRecord) -> int | None:
 
 
 class Assembler:
-    def __init__(self, declaration: FidelityDeclaration, *, decoder_version: str, processing_run_id: str) -> None:
+    def __init__(
+        self, declaration: FidelityDeclaration, *, decoder_version: str, processing_run_id: str
+    ) -> None:
         self.declaration = declaration
         self.decoder_version = decoder_version
         self.processing_run_id = processing_run_id
@@ -118,7 +120,9 @@ class Assembler:
         rooted: bool = True,
     ) -> CallRevision:
         accepted, conflicts, retracted = fold_facts(events)
-        remaining = [record.event for record in accepted.values() if record.fact_id not in retracted]
+        remaining = [
+            record.event for record in accepted.values() if record.fact_id not in retracted
+        ]
         remaining = [event for event in remaining if not isinstance(event, FactRetracted)]
 
         call_obs = _last_of(remaining, CallObserved)
@@ -222,7 +226,9 @@ class Assembler:
         return revision
 
 
-def fold_facts(events: Iterable[NormalizedEvent]) -> tuple[dict[str, FactRecord], list[str], set[str]]:
+def fold_facts(
+    events: Iterable[NormalizedEvent],
+) -> tuple[dict[str, FactRecord], list[str], set[str]]:
     accepted: dict[str, FactRecord] = {}
     conflicts: list[str] = []
     retracted: set[str] = set()

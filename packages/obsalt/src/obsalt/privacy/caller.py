@@ -18,7 +18,9 @@ def caller_token(org_id: str, caller: str, master_key: bytes | str) -> str:
     return hmac.new(key, material, hashlib.sha256).hexdigest()
 
 
-def match_caller(org_id: str, caller: str, stored_token: str | None, master_key: bytes | str) -> bool:
+def match_caller(
+    org_id: str, caller: str, stored_token: str | None, master_key: bytes | str
+) -> bool:
     if not stored_token:
         return False
     return constant_time_eq(caller_token(org_id, caller, master_key), stored_token)

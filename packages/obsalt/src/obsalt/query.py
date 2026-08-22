@@ -113,7 +113,9 @@ def _flag_kinds(rows: list[Any]) -> set[str]:
     kinds: set[str] = set()
     for row in rows:
         payload = row.payload if hasattr(row, "payload") else {}
-        for item in payload.get("flags") or payload.get("candidates") or payload.get("claims") or []:
+        for item in (
+            payload.get("flags") or payload.get("candidates") or payload.get("claims") or []
+        ):
             if isinstance(item, dict) and item.get("kind"):
                 kinds.add(str(item["kind"]))
     return kinds
@@ -237,7 +239,9 @@ def hangup_rollup(
     return data
 
 
-def quality_rollup(calls: list[CallRevision], analysis: object, *, as_of_generation: str) -> dict[str, Any]:
+def quality_rollup(
+    calls: list[CallRevision], analysis: object, *, as_of_generation: str
+) -> dict[str, Any]:
     rows: list[AnalysisResult] = []
     if isinstance(analysis, dict):
         for value in analysis.values():
@@ -265,7 +269,11 @@ def search_calls(
         return list(result.get("items") or [])
     if not query.strip():
         return []
-    search_index = index if isinstance(index, MemorySearchIndex) and getattr(index, "_docs", None) else MemorySearchIndex()
+    search_index = (
+        index
+        if isinstance(index, MemorySearchIndex) and getattr(index, "_docs", None)
+        else MemorySearchIndex()
+    )
     if not getattr(search_index, "_docs", None):
         if not calls:
             return []

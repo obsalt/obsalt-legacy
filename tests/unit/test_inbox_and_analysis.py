@@ -28,7 +28,6 @@ from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_testkit import decode_raw_fixture
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import CARTESIA_FIXTURES, ELEVEN_FIXTURES, example_state, fidelity_declaration
 
 
@@ -147,7 +146,10 @@ def test_elevenlabs_and_cartesia_emit_user_grounding() -> None:
         ElevenLabsPlugin(),
         ELEVEN_FIXTURES / "raw" / "post_call_transcription.json",
     )
-    assert any(isinstance(event, GroundingObserved) and "refund" in event.content.lower() for event in eleven)
+    assert any(
+        isinstance(event, GroundingObserved) and "refund" in event.content.lower()
+        for event in eleven
+    )
     cartesia = decode_raw_fixture(
         CartesiaPlugin(),
         CARTESIA_FIXTURES / "raw" / "call_ended.json",
@@ -193,4 +195,6 @@ def test_slo_breached_emitted_when_e2e_exceeds_threshold(monkeypatch) -> None:
         ],
     )
     maybe_emit_slo(state, revision)
-    assert any(item.get("payload", {}).get("type") == "slo.breached" for item in state.webhook_outbox)
+    assert any(
+        item.get("payload", {}).get("type") == "slo.breached" for item in state.webhook_outbox
+    )

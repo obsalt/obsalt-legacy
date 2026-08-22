@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from obsalt.egress import EgressDenied, validate_destination, validate_redirect
 from obsalt.otel.forwarder import ForwardOutcome, forward_otlp_batch
 from obsalt.webhooks.outbound import deliver, mint_whsec, parse_whsec

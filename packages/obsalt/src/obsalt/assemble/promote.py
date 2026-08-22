@@ -73,7 +73,9 @@ class MemoryPointerStore(RevisionPointerStore):
         return self._ptrs.get((org_id, call_id))
 
     def list_org(self, org_id: str) -> list[tuple[str, str]]:
-        return [(call_id, revision) for (oid, call_id), revision in self._ptrs.items() if oid == org_id]
+        return [
+            (call_id, revision) for (oid, call_id), revision in self._ptrs.items() if oid == org_id
+        ]
 
     def delete(self, org_id: str, call_id: str) -> None:
         self._ptrs.pop((org_id, call_id), None)

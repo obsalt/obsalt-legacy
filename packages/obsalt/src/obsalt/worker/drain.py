@@ -109,7 +109,9 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
         envelope = envelope.model_copy(update={"body": decoded})
     from obsalt.plugin.host import invoke_with_deadline
 
-    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    deadline = float(
+        getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0
+    )
     events = invoke_with_deadline(lambda: list(plugin.decode(envelope)), timeout_seconds=deadline)
     source_call_id = envelope.source_call_id or _source_call_id(events) or envelope.envelope_id
     extracted = _tombstone_from_events(events, source_call_id)
@@ -152,7 +154,9 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     registry = MapperRegistry(state.plugins)
     from obsalt.plugin.host import invoke_with_deadline
 
-    deadline = float(getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0)
+    deadline = float(
+        getattr(getattr(state, "settings", None), "plugin_deadline_seconds", 10.0) or 10.0
+    )
     events = invoke_with_deadline(lambda: list(registry.decode(spans)), timeout_seconds=deadline)
     mapper = registry.pick(spans[0]) if spans else None
     if mapper is None:
@@ -182,7 +186,9 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
         raw=raw,
     )
 
-    if not assembler.ready(record, now=utcnow(), grace_seconds=grace, max_call_duration_seconds=max_dur):
+    if not assembler.ready(
+        record, now=utcnow(), grace_seconds=grace, max_call_duration_seconds=max_dur
+    ):
         state.inbox.mark_assembled(envelope.envelope_id)
         envelope.state = EnvelopeState.ASSEMBLED
         return None
@@ -353,11 +359,17 @@ def _after_promote(
 
     active = state.pointers.get(revision.org_id, revision.call_id)
     frontier_fn = getattr(state.pointers, "frontier", None)
-    stored_frontier = frontier_fn(revision.org_id, revision.call_id) if callable(frontier_fn) else frozenset()
+    stored_frontier = (
+        frontier_fn(revision.org_id, revision.call_id) if callable(frontier_fn) else frozenset()
+    )
     covers = True
     if stored_frontier:
         covers = stored_frontier <= _revision_fact_ids(revision)
-    if revision.conflicts or active != revision.revision or (active == revision.revision and not covers):
+    if (
+        revision.conflicts
+        or active != revision.revision
+        or (active == revision.revision and not covers)
+    ):
         from obsalt.metrics import promotion_failures_total
 
         promotion_failures_total.inc()
@@ -488,8 +500,16 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
     budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
     spend = org_spend_usd(state, revision.org_id)
     budget_usd = budget if budget > 0 else float("inf")
-    rubrics = [r for r in getattr(state, "rubrics", {}).values() if getattr(r, "org_id", None) == revision.org_id]
-    existing = list(getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), []))
+    rubrics = [
+        r
+        for r in getattr(state, "rubrics", {}).values()
+        if getattr(r, "org_id", None) == revision.org_id
+    ]
+    existing = list(
+        getattr(state.sink, "analysis", {}).get(
+            (revision.org_id, revision.call_id, revision.revision), []
+        )
+    )
 
     claims = []
     for row in existing:
@@ -532,7 +552,9 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
         if execution.state is AnalysisState.PENDING:
             result = _run_tier2_blocking(
                 revision,
-                rubric=next((r for r in rubrics if str(r.version) == str(execution.rubric_version)), None),
+                rubric=next(
+                    (r for r in rubrics if str(r.version) == str(execution.rubric_version)), None
+                ),
                 baseline_sample_rate=rate,
                 budget_usd=budget_usd,
                 spend_usd=spend,
@@ -547,11 +569,15 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
             if not result.payload.get("passed", True):
                 from obsalt.webhooks.outbound import emit_standard_event
 
-                emit_standard_event(state, revision, "eval.failed", {"analyzer_id": execution.analyzer_id})
+                emit_standard_event(
+                    state, revision, "eval.failed", {"analyzer_id": execution.analyzer_id}
+                )
         else:
             from obsalt.domain.models import AnalysisResult
 
-            results.append(AnalysisResult(execution=execution, payload={"selection": execution.state.value}))
+            results.append(
+                AnalysisResult(execution=execution, payload={"selection": execution.state.value})
+            )
     if writer is not None:
         writer(revision.org_id, revision.call_id, revision.revision, results)
 
@@ -589,7 +615,9 @@ def _emit_slo(state: Any, revision: CallRevision) -> None:
 def _emit_analysis_hooks(state: Any, revision: CallRevision) -> None:
     from obsalt.webhooks.outbound import emit_standard_event
 
-    rows = getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), [])
+    rows = getattr(state.sink, "analysis", {}).get(
+        (revision.org_id, revision.call_id, revision.revision), []
+    )
     for row in rows:
         payload = getattr(row, "payload", {}) or {}
         analyzer = getattr(getattr(row, "execution", None), "analyzer_id", "")
@@ -606,7 +634,9 @@ def _source_call_id(events: Iterable[NormalizedEvent]) -> str | None:
     return None
 
 
-def _tombstone_from_events(events: Iterable[NormalizedEvent], source_call_id: str | None) -> TombstoneHints:
+def _tombstone_from_events(
+    events: Iterable[NormalizedEvent], source_call_id: str | None
+) -> TombstoneHints:
     event_time = None
     for event in events:
         if isinstance(event, CallObserved):

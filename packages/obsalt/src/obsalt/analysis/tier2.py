@@ -153,7 +153,9 @@ async def run_tier2(
 ) -> AnalysisResult:
     """Run HeuristicJudge when eligible. Cache hits do not consume budget."""
     candidates = _candidates(call, hallucination_candidates)
-    resolved_analyzer = analyzer_id or (HALLUCINATION_ANALYZER_ID if rubric is None and _needs_llm(candidates) else ANALYZER_ID)
+    resolved_analyzer = analyzer_id or (
+        HALLUCINATION_ANALYZER_ID if rubric is None and _needs_llm(candidates) else ANALYZER_ID
+    )
     store: MutableMapping[str, AnalysisResult] = cache if cache is not None else {}
     key = cache_key(
         call,
@@ -231,7 +233,8 @@ def _trigger(
     if values and max(values) > latency_threshold_ms:
         return "latency_threshold"
     if call.hangup is not None and (
-        call.hangup.loss_score >= 0.5 or any("negative" in reason for reason in call.hangup.loss_reasons)
+        call.hangup.loss_score >= 0.5
+        or any("negative" in reason for reason in call.hangup.loss_reasons)
     ):
         return "negative_sentiment"
     return None

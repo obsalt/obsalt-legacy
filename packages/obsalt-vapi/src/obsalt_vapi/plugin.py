@@ -4,7 +4,6 @@ import json
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import (
     constant_time_eq,
     enforce_window,
@@ -46,6 +45,7 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.fieldmap import FieldMap, Ts
 from obsalt.plugin.types import (
     BackfillCursor,
@@ -85,13 +85,17 @@ class VapiPlugin:
     API_VERSION = PLUGIN_API_VERSION
     name = "vapi"
     display_name = "Vapi"
-    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.REST_BACKFILL})
+    capabilities = frozenset(
+        {Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.REST_BACKFILL}
+    )
     singleton_headers = frozenset(
         {b"x-vapi-secret", b"authorization", b"x-vapi-signature", b"x-vapi-timestamp"}
     )
     decoder_version = "vapi/3"
     manifest = PluginManifest(
-        secret_fields=frozenset({"legacy_secret", "bearer_token", "hmac_secret", "oauth_token", "api_key"}),
+        secret_fields=frozenset(
+            {"legacy_secret", "bearer_token", "hmac_secret", "oauth_token", "api_key"}
+        ),
         config_schema={
             "type": "object",
             "properties": {
@@ -106,7 +110,11 @@ class VapiPlugin:
         source_format="vapi.server-message",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
         possible_placements=frozenset(
-            {MeasurementPlacement.UNPLACED, MeasurementPlacement.ANCHORED_DURATION, MeasurementPlacement.COARSE_ANCHOR}
+            {
+                MeasurementPlacement.UNPLACED,
+                MeasurementPlacement.ANCHORED_DURATION,
+                MeasurementPlacement.COARSE_ANCHOR,
+            }
         ),
         provides=frozenset(
             {
@@ -140,12 +148,16 @@ class VapiPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         mode = (cfg.settings.get("auth_mode") or "legacy_secret").lower()
         if mode == "legacy_secret":
             secret = cfg.secrets.get("legacy_secret") or cfg.secrets.get("secret")
             if not secret:
-                return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="legacy_secret required")
+                return VerifyResult(
+                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="legacy_secret required"
+                )
             values = header_values(headers, "x-vapi-secret")
             if not values:
                 return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing X-Vapi-Secret")
@@ -155,7 +167,9 @@ class VapiPlugin:
         if mode == "bearer":
             token = cfg.secrets.get("bearer_token")
             if not token:
-                return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="bearer_token required")
+                return VerifyResult(
+                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="bearer_token required"
+                )
             values = header_values(headers, "authorization")
             if not values:
                 return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing Authorization")
@@ -168,30 +182,40 @@ class VapiPlugin:
         if mode == "oauth2":
             secret = cfg.secrets.get("oauth_token") or cfg.secrets.get("jwt_secret")
             if not secret:
-                return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="oauth_token required")
+                return VerifyResult(
+                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="oauth_token required"
+                )
             values = header_values(headers, "authorization")
             if not values or not values[0].lower().startswith("bearer "):
                 return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing bearer token")
             token = values[0][7:]
             claims = jwt_hs256_verify(token, secret)
             if claims is None:
-                return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE, detail="oauth2 jwt invalid or expired")
+                return VerifyResult(
+                    outcome=VerifyOutcome.BAD_SIGNATURE, detail="oauth2 jwt invalid or expired"
+                )
             return VerifyResult(outcome=VerifyOutcome.OK)
         if mode == "hmac":
             secret = cfg.secrets.get("hmac_secret")
             if not secret:
-                return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="hmac_secret required")
+                return VerifyResult(
+                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="hmac_secret required"
+                )
             header_name = cfg.settings.get("hmac_header") or "x-vapi-signature"
             algo = cfg.settings.get("hmac_algorithm") or "sha256"
             values = header_values(headers, header_name)
             if not values:
-                return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail=f"missing {header_name}")
+                return VerifyResult(
+                    outcome=VerifyOutcome.MALFORMED, detail=f"missing {header_name}"
+                )
             ts_header = cfg.settings.get("timestamp_header")
             message = raw
             if ts_header:
                 ts_values = header_values(headers, ts_header)
                 if not ts_values:
-                    return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail=f"missing {ts_header}")
+                    return VerifyResult(
+                        outcome=VerifyOutcome.MALFORMED, detail=f"missing {ts_header}"
+                    )
                 window = enforce_window(float(ts_values[0]), tolerance_seconds=300, unit="s")
                 if window is not None:
                     return window
@@ -238,7 +262,10 @@ class VapiPlugin:
         payload = _json(raw)
         message = _unwrap(payload)
         call_id = as_str(dig(message, "call", "id")) or as_str(message.get("callId"))
-        return TombstoneHints(source_call_id=call_id, event_time=parse_datetime(message.get("timestamp") or message.get("startedAt")))
+        return TombstoneHints(
+            source_call_id=call_id,
+            event_time=parse_datetime(message.get("timestamp") or message.get("startedAt")),
+        )
 
     def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse:
         return WebhookResponse(status_code=200, body=b'{"ok":true}')
@@ -272,8 +299,12 @@ class VapiPlugin:
             cost=as_float(mapped.get("cost")),
             architecture=PipelineArchitecture.CASCADE,
             provenance_by_field={
-                "source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="message.call.id"),
-                "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="message.startedAt"),
+                "source_call_id": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="message.call.id"
+                ),
+                "started_at": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="message.startedAt"
+                ),
             },
         )
         # §5.3: snapshot decoders may retract omitted facts only on an
@@ -360,6 +391,7 @@ class VapiPlugin:
             return BackfillPage(items=[], next_cursor=None, truncated_by_retention=True)
         try:
             import httpx
+
             from obsalt.egress import validate_destination
 
             url = "https://api.vapi.ai/call"
@@ -378,7 +410,11 @@ class VapiPlugin:
             payload = response.json()
         except Exception:
             return BackfillPage(items=[], next_cursor=None, truncated_by_retention=True)
-        rows = payload if isinstance(payload, list) else payload.get("data") or payload.get("calls") or []
+        rows = (
+            payload
+            if isinstance(payload, list)
+            else payload.get("data") or payload.get("calls") or []
+        )
         items = []
         for row in rows:
             if not isinstance(row, dict):
@@ -396,7 +432,9 @@ class VapiPlugin:
             )
         next_token = None
         if isinstance(payload, dict):
-            next_token = as_str((payload.get("metadata") or {}).get("nextCursor") or payload.get("nextCursor"))
+            next_token = as_str(
+                (payload.get("metadata") or {}).get("nextCursor") or payload.get("nextCursor")
+            )
         return BackfillPage(
             items=items,
             next_cursor=BackfillCursor(token=next_token) if next_token else None,
@@ -444,7 +482,9 @@ def _message_anchor(raw: dict, call_started: datetime | None) -> tuple[datetime 
 
     seconds_from_start = as_float(raw.get("secondsFromStart"))
     if call_started is not None and seconds_from_start is not None:
-        return call_started + timedelta(seconds=seconds_from_start), "artifact.messages[].secondsFromStart"
+        return call_started + timedelta(
+            seconds=seconds_from_start
+        ), "artifact.messages[].secondsFromStart"
     return parse_datetime(raw.get("time")), "artifact.messages[].time"
 
 
@@ -462,7 +502,11 @@ def _turns_and_tools(
             continue
         role = as_str(raw.get("role")) or ""
         started, started_path = _message_anchor(raw, call_started)
-        if role in {"tool_calls", "tool_call", "function"} or raw.get("toolCalls") or raw.get("toolCallList"):
+        if (
+            role in {"tool_calls", "tool_call", "function"}
+            or raw.get("toolCalls")
+            or raw.get("toolCallList")
+        ):
             for item in raw.get("toolCalls") or raw.get("toolCallList") or []:
                 if not isinstance(item, dict):
                     continue
@@ -479,13 +523,22 @@ def _turns_and_tools(
                     status=ToolStatus.PENDING,
                     args=args,
                     provenance_by_field={
-                        "name": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages.toolCalls"),
-                        "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path=started_path),
+                        "name": ProvenanceStamp(
+                            provenance=Provenance.PROVIDER_REPORTED,
+                            source_path="artifact.messages.toolCalls",
+                        ),
+                        "started_at": ProvenanceStamp(
+                            provenance=Provenance.PROVIDER_REPORTED, source_path=started_path
+                        ),
                     },
                 )
             continue
         if role in {"tool_call_result", "tool", "function_call_result"} or raw.get("toolCallId"):
-            result_id = as_str(raw.get("toolCallId")) or as_str(dig(raw, "toolCallResult", "toolCallId")) or "tool"
+            result_id = (
+                as_str(raw.get("toolCallId"))
+                or as_str(dig(raw, "toolCallResult", "toolCallId"))
+                or "tool"
+            )
             result = raw.get("result") or raw.get("content")
             error = as_str(raw.get("error"))
             status = ToolStatus.ERROR if error else ToolStatus.SUCCESS
@@ -516,7 +569,11 @@ def _turns_and_tools(
         conf = None
         words = raw.get("words") if isinstance(raw.get("words"), list) else []
         if words:
-            confs = [as_float(w.get("confidence")) for w in words if isinstance(w, dict) and as_float(w.get("confidence")) is not None]
+            confs = [
+                as_float(w.get("confidence"))
+                for w in words
+                if isinstance(w, dict) and as_float(w.get("confidence")) is not None
+            ]
             if confs:
                 conf = sum(confs) / len(confs)
         yield TurnObserved(
@@ -528,8 +585,13 @@ def _turns_and_tools(
             confidence=conf,
             interrupted=bool(raw.get("interrupted")),
             provenance_by_field={
-                "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path=started_path),
-                "text": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages[].message"),
+                "started_at": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path=started_path
+                ),
+                "text": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path="artifact.messages[].message",
+                ),
             },
         )
         if speaker is Speaker.USER and text:

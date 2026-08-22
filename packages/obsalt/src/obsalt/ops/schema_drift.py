@@ -58,4 +58,8 @@ def compare_all_vendored(
         report["fixtures"] = str(fixtures)
         reports.append(report)
         diverged = diverged or bool(report.get("diverged"))
-    return {"status": "offline" if remote_schema is None else "compared", "diverged": diverged, "plugins": reports}
+    return {
+        "status": "offline" if remote_schema is None else "compared",
+        "diverged": diverged,
+        "plugins": reports,
+    }

@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            packages/**/pyproject.toml
+      - name: Install Ruff
+        run: python -m pip install -U pip ruff
+      - name: Check
+        run: ruff check packages tests
+      - name: Format
+        run: ruff format --check packages tests
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            packages/**/pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements-dev.txt
+      - name: mypy
+        id: mypy
+        continue-on-error: true
+        run: mypy
+      - name: Informational
+        run: |
+          if [ "${{ steps.mypy.outcome }}" = "failure" ]; then
+            echo "::warning::Strict mypy still has a pre-existing backlog. Lint and tests are the required gates."
+          fi
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            packages/**/pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements-dev.txt
+      - name: Pytest
+        run: pytest --maxfail=1
+      - name: Vendored schema pins
+        run: python -m obsalt schema-drift --all
+
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, typecheck, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require lint and tests
+        run: |
+          test "${{ needs.lint.result }}" = success
+          test "${{ needs.test.result }}" = success
+          echo "typecheck=${{ needs.typecheck.result }}"

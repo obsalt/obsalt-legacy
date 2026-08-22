@@ -162,7 +162,11 @@ def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -
             if getattr(envelope, "org_id", None) != org_id:
                 continue
             source = getattr(envelope, "source_call_id", None)
-            if source in source_ids or source == call_id or call_id in (getattr(envelope, "object_key", "") or ""):
+            if (
+                source in source_ids
+                or source == call_id
+                or call_id in (getattr(envelope, "object_key", "") or "")
+            ):
                 drop = getattr(inbox, "drop_outbox", None)
                 if callable(drop):
                     drop(envelope.envelope_id)
@@ -176,7 +180,9 @@ def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -
             for row in dlq:
                 eid = row.get("envelope_id")
                 env = getattr(inbox, "by_id", {}).get(eid)
-                if env is not None and (env.source_call_id in source_ids or env.source_call_id == call_id):
+                if env is not None and (
+                    env.source_call_id in source_ids or env.source_call_id == call_id
+                ):
                     continue
                 keep.append(row)
             inbox.dlq = keep
@@ -202,7 +208,8 @@ def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -
         queue.pending = [
             job
             for job in pending
-            if getattr(job, "org_id", None) != org_id or call_id not in (getattr(job, "object_key", "") or "")
+            if getattr(job, "org_id", None) != org_id
+            or call_id not in (getattr(job, "object_key", "") or "")
         ]
     purge_fwd = getattr(queue, "purge_org", None) if queue is not None else None
     if callable(purge_fwd):

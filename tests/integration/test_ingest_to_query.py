@@ -17,7 +17,6 @@ from obsalt.worker.process import MemoryRevisionSink, process_envelope
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import (
     EXAMPLE_FIXTURES,
     RETELL_FIXTURES,
@@ -91,7 +90,9 @@ def test_retell_word_offsets_are_seconds_and_latency_values_are_milliseconds() -
     assert 900 in samples
     assert all(value > 1 for value in samples)
     aggregates = [a.value_ms for a in call.aggregate_measurements if a.stage.value == "e2e"]
-    assert 620 in aggregates or any(a.statistic.value == "p50" and a.value_ms == 620 for a in call.aggregate_measurements)
+    assert 620 in aggregates or any(
+        a.statistic.value == "p50" and a.value_ms == 620 for a in call.aggregate_measurements
+    )
     view = timeline_view(call)
     assert view["draw_stage_waterfall"] is False
     first_user = next(t for t in call.turns if t.speaker.value == "user")

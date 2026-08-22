@@ -28,7 +28,7 @@ FACT_TABLES = (
 )
 
 
-def _ch_dt(value: datetime | None) -> datetime | None:
+def as_clickhouse_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is not None:
@@ -84,7 +84,7 @@ class ClickHouseSink(RevisionSink):
         self._client.command("SELECT 1")
 
     def write(self, revision: CallRevision) -> None:
-        created = _ch_dt(revision.created_at) or _ch_dt(utcnow())
+        created = as_clickhouse_datetime(revision.created_at) or as_clickhouse_datetime(utcnow())
         self._client.insert(
             "call_revisions",
             [
@@ -120,8 +120,8 @@ class ClickHouseSink(RevisionSink):
                         revision.revision,
                         turn.index,
                         turn.speaker.value,
-                        _ch_dt(turn.started_at),
-                        _ch_dt(turn.ended_at),
+                        as_clickhouse_datetime(turn.started_at),
+                        as_clickhouse_datetime(turn.ended_at),
                     ]
                     for turn in revision.turns
                 ],
@@ -149,8 +149,8 @@ class ClickHouseSink(RevisionSink):
                         item.value_ms,
                         item.turn_index,
                         item.placement.value,
-                        _ch_dt(item.started_at),
-                        _ch_dt(item.ended_at),
+                        as_clickhouse_datetime(item.started_at),
+                        as_clickhouse_datetime(item.ended_at),
                         item.provenance.value,
                         item.source_path or "",
                         item.derivation or "",
@@ -332,7 +332,7 @@ class ClickHouseSink(RevisionSink):
         self.analysis[(org_id, call_id, revision)] = results
         if not results:
             return
-        now = _ch_dt(utcnow())
+        now = as_clickhouse_datetime(utcnow())
         self._client.insert(
             "analysis_results",
             [
@@ -393,6 +393,3 @@ class ClickHouseSink(RevisionSink):
             payload = row[0].decode("utf-8") if isinstance(row[0], bytes) else row[0]
             out.append(CallRevision.model_validate_json(payload))
         return out
-
-
-ClickHouseRevisionSink = ClickHouseSink

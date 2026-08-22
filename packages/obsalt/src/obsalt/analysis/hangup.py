@@ -118,17 +118,41 @@ def classify_provider_reason(provider: str, reason: str | None) -> tuple[HangupR
 def _prefix_vapi(code: str) -> tuple[HangupReason, HangupParty]:
     """Prefix rules. `*-voice-failed` is TTS *before* provider-name tokens (Deepgram Aura, etc.)."""
     lowered = code.lower()
-    if lowered.endswith("voice-failed") or "-voice-failed" in lowered or "tts" in lowered and "failed" in lowered:
+    if (
+        lowered.endswith("voice-failed")
+        or "-voice-failed" in lowered
+        or "tts" in lowered
+        and "failed" in lowered
+    ):
         return HangupReason.ERROR_TTS, HangupParty.SYSTEM
-    if any(tok in lowered for tok in ("transcriber", "stt-", "-stt", "deepgram-transcriber", "asr", "speechmatics", "gladia", "assembly")):
+    if any(
+        tok in lowered
+        for tok in (
+            "transcriber",
+            "stt-",
+            "-stt",
+            "deepgram-transcriber",
+            "asr",
+            "speechmatics",
+            "gladia",
+            "assembly",
+        )
+    ):
         return HangupReason.ERROR_STT, HangupParty.SYSTEM
-    if any(tok in lowered for tok in ("llm", "openai", "anthropic", "groq", "together", "model-failed")):
+    if any(
+        tok in lowered for tok in ("llm", "openai", "anthropic", "groq", "together", "model-failed")
+    ):
         return HangupReason.ERROR_LLM, HangupParty.SYSTEM
     if "tool" in lowered or "function" in lowered:
         return HangupReason.ERROR_TOOL, HangupParty.SYSTEM
     if any(tok in lowered for tok in ("twilio", "vonage", "telnyx", "sip", "telephony")):
         return HangupReason.ERROR_TELEPHONY, HangupParty.SYSTEM
-    if lowered.startswith("call.start.error") or lowered.startswith("call-start-error") or lowered.startswith("assistant-request") or lowered.startswith("call.start."):
+    if (
+        lowered.startswith("call.start.error")
+        or lowered.startswith("call-start-error")
+        or lowered.startswith("assistant-request")
+        or lowered.startswith("call.start.")
+    ):
         if "busy" in lowered:
             return HangupReason.BUSY, HangupParty.USER
         return HangupReason.DIAL_FAILED, HangupParty.SYSTEM
@@ -136,7 +160,9 @@ def _prefix_vapi(code: str) -> tuple[HangupReason, HangupParty]:
         if "transfer" in lowered:
             return HangupReason.TRANSFER, HangupParty.AGENT
         return HangupReason.COMPLETED, HangupParty.SYSTEM
-    if "warm-transfer" in lowered or (lowered.startswith("call.in-progress.error-transfer") or "transfer-failed" in lowered):
+    if "warm-transfer" in lowered or (
+        lowered.startswith("call.in-progress.error-transfer") or "transfer-failed" in lowered
+    ):
         return HangupReason.TRANSFER, HangupParty.AGENT
     if "microphone" in lowered:
         return HangupReason.NO_ANSWER, HangupParty.USER
@@ -144,11 +170,19 @@ def _prefix_vapi(code: str) -> tuple[HangupReason, HangupParty]:
         return HangupReason.BUSY, HangupParty.USER
     if "forwarding" in lowered and "no-answer" in lowered:
         return HangupReason.NO_ANSWER, HangupParty.USER
-    if lowered.startswith("assistant-not") or lowered.startswith("worker-") or "pipeline-ws" in lowered:
+    if (
+        lowered.startswith("assistant-not")
+        or lowered.startswith("worker-")
+        or "pipeline-ws" in lowered
+    ):
         return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
     if "scheduled-call-deleted" in lowered or lowered in {"call.deleted", "call.delete.failed"}:
         return HangupReason.CANCELLED, HangupParty.SYSTEM
-    if lowered.startswith("assistant-speaks") or lowered.startswith("assistant-waits") or lowered.startswith("assistant-join"):
+    if (
+        lowered.startswith("assistant-speaks")
+        or lowered.startswith("assistant-waits")
+        or lowered.startswith("assistant-join")
+    ):
         return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
     if "did-not-receive-customer-audio" in lowered or "customer-audio" in lowered:
         return HangupReason.ERROR_UNKNOWN, HangupParty.SYSTEM
@@ -186,7 +220,12 @@ def customer_loss_score(call: CallRevision) -> tuple[float, list[str]]:
     elif hangup.reason in {HangupReason.INACTIVITY, HangupReason.SILENCE_TIMEOUT}:
         score += 0.25
         reasons.append("silence_or_inactivity")
-    elif hangup.reason in {HangupReason.ERROR_STT, HangupReason.ERROR_LLM, HangupReason.ERROR_TTS, HangupReason.ERROR_TOOL}:
+    elif hangup.reason in {
+        HangupReason.ERROR_STT,
+        HangupReason.ERROR_LLM,
+        HangupReason.ERROR_TTS,
+        HangupReason.ERROR_TOOL,
+    }:
         score += 0.35
         reasons.append("pipeline_error")
     last_user = ""

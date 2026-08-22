@@ -11,7 +11,6 @@ from obsalt.runtime import AppState
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
 from obsalt_example.plugin import ExamplePlugin
-
 from tests.helpers import EXAMPLE_FIXTURES, api_client, example_headers, example_state
 
 
@@ -193,7 +192,9 @@ def test_csrf_required_for_ui_mutation() -> None:
     call_id = listed.json()["items"][0]["id"]
     login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
     assert login.status_code == 303
-    denied = client.post(f"/v1/ui/calls/{call_id}/analyze", data={"csrf": "nope"}, follow_redirects=False)
+    denied = client.post(
+        f"/v1/ui/calls/{call_id}/analyze", data={"csrf": "nope"}, follow_redirects=False
+    )
     assert denied.status_code == 403
 
 

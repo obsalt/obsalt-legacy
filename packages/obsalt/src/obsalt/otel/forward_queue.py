@@ -80,7 +80,9 @@ def drain_forward_queue(state: Any, *, limit: int = 32) -> int:
     claimed = queue.claim(limit)
     processed = 0
     for job in claimed:
-        org_dests = [d for d in destinations if not d.get("org_id") or d.get("org_id") == job.org_id]
+        org_dests = [
+            d for d in destinations if not d.get("org_id") or d.get("org_id") == job.org_id
+        ]
         if not org_dests:
             _mark_delivered(queue, job)
             processed += 1

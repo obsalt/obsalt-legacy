@@ -67,7 +67,11 @@ class MemoryInbox:
             if hints.caller_token and stored.caller_token == hints.caller_token:
                 return True
             if stored.covers_event(hints.event_time):
-                if stored.caller_token and hints.caller_token and stored.caller_token != hints.caller_token:
+                if (
+                    stored.caller_token
+                    and hints.caller_token
+                    and stored.caller_token != hints.caller_token
+                ):
                     continue
                 return True
         return False
@@ -81,14 +85,20 @@ class MemoryInbox:
         wanted = source_call_ids or set()
         for row in self.dlq:
             env = self.by_id.get(row.get("envelope_id", ""))
-            if env is not None and env.org_id == org_id and (not wanted or env.source_call_id in wanted):
+            if (
+                env is not None
+                and env.org_id == org_id
+                and (not wanted or env.source_call_id in wanted)
+            ):
                 removed += 1
                 continue
             keep.append(row)
         self.dlq = keep
         return removed
 
-    def accept(self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints) -> tuple[RawEnvelope, bool]:
+    def accept(
+        self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints
+    ) -> tuple[RawEnvelope, bool]:
         if self.is_tombstoned(envelope.org_id, tombstone_hints):
             envelope.state = EnvelopeState.TOMBSTONED
             return envelope, False

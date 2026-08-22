@@ -4,7 +4,6 @@ import json
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import (
     constant_time_eq,
     enforce_window,
@@ -44,6 +43,7 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import (
     ConnectionConfig,
     PluginManifest,
@@ -86,9 +86,15 @@ class RetellPlugin:
     manifest = PluginManifest(secret_fields=frozenset({"api_key"}))
     fidelity = FidelityDeclaration(
         source_format="retell.call",
-        possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
+        possible_architectures=frozenset(
+            {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
+        ),
         possible_placements=frozenset(
-            {MeasurementPlacement.UNPLACED, MeasurementPlacement.COARSE_ANCHOR, MeasurementPlacement.ANCHORED_DURATION}
+            {
+                MeasurementPlacement.UNPLACED,
+                MeasurementPlacement.COARSE_ANCHOR,
+                MeasurementPlacement.ANCHORED_DURATION,
+            }
         ),
         provides=frozenset(
             {
@@ -119,13 +125,17 @@ class RetellPlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         api_key = cfg.secrets.get("api_key")
         if not api_key:
             return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="api_key required")
         values = header_values(headers, "x-retell-signature")
         if not values:
-            return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing X-Retell-Signature")
+            return VerifyResult(
+                outcome=VerifyOutcome.MALFORMED, detail="missing X-Retell-Signature"
+            )
         parsed = parse_kv_header(values[0])
         ts = parsed.get("v")
         digest = parsed.get("d")
@@ -190,7 +200,9 @@ class RetellPlugin:
             cost=cost,
             architecture=PipelineArchitecture.CASCADE,
             provenance_by_field={
-                "source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call.call_id"),
+                "source_call_id": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="call.call_id"
+                ),
             },
         )
         # §5.3: only ended/analyzed snapshots are authoritative. call_started
@@ -205,7 +217,9 @@ class RetellPlugin:
                     "grounding_observed",
                 ]
             )
-        recording = as_str(blob.get("recording_url")) or as_str(blob.get("recording_multi_channel_url"))
+        recording = as_str(blob.get("recording_url")) or as_str(
+            blob.get("recording_multi_channel_url")
+        )
         if recording:
             yield EvidenceObserved(
                 kind=EvidenceKind.RECORDING,
@@ -245,7 +259,8 @@ class RetellPlugin:
                 ended_at=parse_datetime(blob.get("end_timestamp")),
                 provenance_by_field={
                     "provider_code": ProvenanceStamp(
-                        provenance=Provenance.PROVIDER_REPORTED, source_path="call.disconnection_reason"
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="call.disconnection_reason",
                     )
                 },
             )
@@ -335,7 +350,9 @@ def _turns_and_tools(
             end_s = as_float(words[-1].get("end")) if isinstance(words[-1], dict) else None
         text = as_str(item.get("content")) or ""
         if not text and words:
-            text = " ".join(as_str(w.get("word")) or "" for w in words if isinstance(w, dict)).strip()
+            text = " ".join(
+                as_str(w.get("word")) or "" for w in words if isinstance(w, dict)
+            ).strip()
         started = None
         ended = None
         if call_started is not None and start_s is not None:

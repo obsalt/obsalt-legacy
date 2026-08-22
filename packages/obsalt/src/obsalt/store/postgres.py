@@ -220,7 +220,9 @@ class PostgresInbox:
                 (org_id, Json({"source_call_id": hints.source_call_id})),
             )
 
-    def accept(self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints) -> tuple[RawEnvelope, bool]:
+    def accept(
+        self, envelope: RawEnvelope, *, tombstone_hints: TombstoneHints
+    ) -> tuple[RawEnvelope, bool]:
         with self._conn.transaction():
             locked = self._conn.execute(
                 f"SELECT 1 FROM tombstones WHERE {_TOMBSTONE_MATCH} FOR SHARE",
@@ -888,7 +890,9 @@ class PostgresRubricStore:
             )
         return rubric
 
-    def new_version(self, previous: Rubric, *, name: str | None = None, description: str | None = None) -> Rubric:
+    def new_version(
+        self, previous: Rubric, *, name: str | None = None, description: str | None = None
+    ) -> Rubric:
         updated = previous.model_copy(
             update={
                 "version": previous.version + 1,
@@ -1036,14 +1040,27 @@ class PostgresSearchDocuments:
               AND (%s IS NULL OR source = %s)
               AND (%s IS NULL OR hangup_reason = %s)
             """,
-            (q or "", literal, org_id, agent_id, agent_id, source, source, hangup_reason, hangup_reason),
+            (
+                q or "",
+                literal,
+                org_id,
+                agent_id,
+                agent_id,
+                source,
+                source,
+                hangup_reason,
+                hangup_reason,
+            ),
         ).fetchall()
         lexical_ids = [
             row["call_id"]
             for row in sorted(rows, key=lambda item: (-float(item["lex"]), item["call_id"]))
             if float(row["lex"]) > 0
         ]
-        vector_ids = [row["call_id"] for row in sorted(rows, key=lambda item: (float(item["dist"]), item["call_id"]))]
+        vector_ids = [
+            row["call_id"]
+            for row in sorted(rows, key=lambda item: (float(item["dist"]), item["call_id"]))
+        ]
         fused = rrf(vector_ids, lexical_ids) if q.strip() else [row["call_id"] for row in rows]
         by_id = {row["call_id"]: row for row in rows}
         items = []
@@ -1059,7 +1076,12 @@ class PostgresSearchDocuments:
                     "score": float(row["lex"]),
                 }
             )
-        return {"items": items, "lexical_ids": lexical_ids, "vector_ids": vector_ids, "fused_ids": fused}
+        return {
+            "items": items,
+            "lexical_ids": lexical_ids,
+            "vector_ids": vector_ids,
+            "fused_ids": fused,
+        }
 
 
 class PostgresDeletionStore:
@@ -1133,7 +1155,9 @@ class PostgresUserStore:
     def __init__(self, conn: PgConn) -> None:
         self._conn = conn
 
-    def upsert(self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None) -> dict[str, Any]:
+    def upsert(
+        self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         role_value = role.value if isinstance(role, Role) else str(role)
         existing = self.get_by_email(org_id, email)
         rid = user_id or (existing["id"] if existing else new_id())
@@ -1151,7 +1175,11 @@ class PostgresUserStore:
                 """,
                 (rid, org_id, email.lower(), role_value),
             ).fetchone()
-        return dict(row) if row else {"id": rid, "org_id": org_id, "email": email.lower(), "role": role_value}
+        return (
+            dict(row)
+            if row
+            else {"id": rid, "org_id": org_id, "email": email.lower(), "role": role_value}
+        )
 
     def get(self, org_id: str, user_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(

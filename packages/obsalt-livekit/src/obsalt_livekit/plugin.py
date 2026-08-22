@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import UTC, date, datetime
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
     GroundingKind,
@@ -25,6 +24,7 @@ from obsalt.domain.events import (
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
 from obsalt.otel.span_time import stage_from_span_semantics, valid_span_interval
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import PluginManifest, ReadableSpan
 
 
@@ -37,7 +37,9 @@ class LiveKitPlugin:
     manifest = PluginManifest()
     fidelity = FidelityDeclaration(
         source_format="livekit.otlp",
-        possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
+        possible_architectures=frozenset(
+            {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
+        ),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
         provides=frozenset({Signal.STAGE_INTERVAL, Signal.TOOL_RESULT}),
         structurally_absent={},
@@ -98,7 +100,9 @@ class LiveKitPlugin:
             if stage is Stage.TOOL or result not in (None, ""):
                 yield ToolObserved(
                     tool_id=str(attrs.get("gen_ai.tool.call.id") or span.span_id),
-                    name=str(attrs.get("gen_ai.tool.name") or attrs.get("lk.tool.name") or span.name),
+                    name=str(
+                        attrs.get("gen_ai.tool.name") or attrs.get("lk.tool.name") or span.name
+                    ),
                     started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
                     ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
                     status=ToolStatus.SUCCESS,
@@ -111,7 +115,9 @@ class LiveKitPlugin:
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path="span.attributes.output.value",
                     )
-            prompt = attrs.get("obsalt.pii.system_prompt") or attrs.get("gen_ai.system_instructions")
+            prompt = attrs.get("obsalt.pii.system_prompt") or attrs.get(
+                "gen_ai.system_instructions"
+            )
             if prompt:
                 yield GroundingObserved(
                     kind=GroundingKind.SYSTEM_PROMPT,

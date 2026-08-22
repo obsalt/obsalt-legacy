@@ -4,7 +4,6 @@ import json
 from collections.abc import AsyncIterator, Iterable
 from datetime import date
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import constant_time_eq, header_values, hmac_hex
 from obsalt.domain.enums import (
     CallDirection,
@@ -31,6 +30,7 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import (
     BackfillCursor,
     BackfillItem,
@@ -50,6 +50,7 @@ class ExamplePlugin:
     API_VERSION = PLUGIN_API_VERSION
     name = "example"
     display_name = "Example"
+    decoder_version = "example/1"
     capabilities = frozenset(
         {
             Capability.WEBHOOK_SOURCE,
@@ -83,10 +84,14 @@ class ExamplePlugin:
         verified_at=date(2026, 8, 22),
     )
 
-    def authenticate(self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig) -> VerifyResult:
+    def authenticate(
+        self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
+    ) -> VerifyResult:
         secret = cfg.secrets.get("hmac_secret")
         if not secret:
-            return VerifyResult(outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="hmac_secret required")
+            return VerifyResult(
+                outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="hmac_secret required"
+            )
         values = header_values(headers, "x-obsalt-example-signature")
         if not values:
             return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing signature header")
@@ -131,7 +136,11 @@ class ExamplePlugin:
             agent_id=payload.get("agent_id") or "example-agent",
             direction=CallDirection.INBOUND,
             architecture=PipelineArchitecture.CASCADE,
-            provenance_by_field={"source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call_id")},
+            provenance_by_field={
+                "source_call_id": ProvenanceStamp(
+                    provenance=Provenance.PROVIDER_REPORTED, source_path="call_id"
+                )
+            },
         )
         # Full-call snapshots may retract omitted facts in the declared domains.
         # stt_ms is a duration without a stage clock — never an INTERVAL (T1).
@@ -154,7 +163,11 @@ class ExamplePlugin:
             )
         user_texts: list[str] = []
         for index, turn in enumerate(payload.get("turns") or []):
-            speaker = Speaker(turn.get("speaker") or "user") if turn.get("speaker") in {"user", "agent"} else Speaker.USER
+            speaker = (
+                Speaker(turn.get("speaker") or "user")
+                if turn.get("speaker") in {"user", "agent"}
+                else Speaker.USER
+            )
             text = turn.get("text") or ""
             yield TurnObserved(
                 turn_index=index,
@@ -248,7 +261,6 @@ class ExamplePlugin:
             body=body,
             received_at=utcnow(),
         )
-
 
 
 def _json(raw: bytes) -> dict:

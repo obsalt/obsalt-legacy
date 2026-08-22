@@ -19,7 +19,10 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
         results.append(_result(call, "hangup", {"loss_score": score, "loss_reasons": reasons}))
 
     flags: list[dict[str, object]] = []
-    if call.hangup and call.hangup.reason in {HangupReason.SILENCE_TIMEOUT, HangupReason.INACTIVITY}:
+    if call.hangup and call.hangup.reason in {
+        HangupReason.SILENCE_TIMEOUT,
+        HangupReason.INACTIVITY,
+    }:
         flags.append({"kind": "silence", "reason": call.hangup.reason.value})
     failed = [t for t in call.tools if t.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}]
     if failed:
@@ -75,7 +78,9 @@ def _dead_air(call: CallRevision) -> float | None:
 
 def _truncated_llm(call: CallRevision) -> bool:
     attrs = getattr(call, "unmapped_attributes", None) or {}
-    finish = str(attrs.get("finish_reason") or attrs.get("gen_ai.response.finish_reason") or "").lower()
+    finish = str(
+        attrs.get("finish_reason") or attrs.get("gen_ai.response.finish_reason") or ""
+    ).lower()
     if finish == "length":
         return True
     agents = call.agent_turns()

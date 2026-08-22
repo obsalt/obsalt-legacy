@@ -1,3 +1,5 @@
+"""Command-line entry point. Production commands talk to the compose stack."""
+
 from __future__ import annotations
 
 import argparse
@@ -15,22 +17,28 @@ from obsalt.config import Settings
 from obsalt.plugin.host import discover_plugins, plugin_by_name
 from obsalt.runtime import in_memory_state, production_state
 
-_INIT_ENV = """# Secrets. Do not commit.
+_INIT_EXAMPLE = """# Secrets. Do not commit the real .env.
 OBSALT_MASTER_KEY=change-me-master-key-not-for-production
 OBSALT_SESSION_SECRET=change-me-session
 OBSALT_BOOTSTRAP_API_KEY=dev-key
 OBSALT_BOOTSTRAP_ORG_ID=local
+
 OBSALT_POSTGRES_DSN=postgresql://obsalt:obsalt@localhost:5432/obsalt
 OBSALT_CLICKHOUSE_URL=http://localhost:8123
 OBSALT_REDIS_URL=redis://localhost:6379/0
+
 OBSALT_S3_ENDPOINT=http://localhost:9010
+OBSALT_S3_BUCKET=obsalt
 OBSALT_S3_ACCESS_KEY=obsalt
 OBSALT_S3_SECRET_KEY=obsalt-secret
+OBSALT_S3_REGION=us-east-1
 """
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="obsalt", description="Self-hosted call analytics for AI voice agents")
+    parser = argparse.ArgumentParser(
+        prog="obsalt", description="Self-hosted call analytics for AI voice agents"
+    )
     parser.add_argument("-V", "--version", action="store_true")
     sub = parser.add_subparsers(dest="command")
     serve = sub.add_parser("serve", help="Run the HTTP API against the compose stack")
@@ -47,7 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.set_defaults(func=cmd_init)
     doctor = sub.add_parser("doctor", help="Check config")
     doctor.set_defaults(func=cmd_doctor)
-    demo = sub.add_parser("demo", help="Launch the ephemeral full stack (docker compose). Not for production.")
+    demo = sub.add_parser(
+        "demo", help="Launch the ephemeral full stack (docker compose). Not for production."
+    )
     demo.set_defaults(func=cmd_demo)
     parse = sub.add_parser("parse", help="Decode a payload with an installed plugin")
     parse.add_argument("path")
@@ -61,29 +71,39 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--provider", required=True)
     record.add_argument("--out", default=None)
     record.set_defaults(func=cmd_record_golden)
-    drift = sub.add_parser("schema-drift", help="Compare a vendored plugin schema to a refetched copy")
+    drift = sub.add_parser(
+        "schema-drift", help="Compare a vendored plugin schema to a refetched copy"
+    )
     drift.add_argument("--fixtures", default=None)
-    drift.add_argument("--all", action="store_true", help="Scan every first-party plugin fixtures/ directory")
-    drift.add_argument("--remote", default=None, help="Optional JSON file of the refetched vendor schema")
+    drift.add_argument(
+        "--all", action="store_true", help="Scan every first-party plugin fixtures/ directory"
+    )
+    drift.add_argument(
+        "--remote", default=None, help="Optional JSON file of the refetched vendor schema"
+    )
     drift.set_defaults(func=cmd_schema_drift)
     retain = sub.add_parser("retain", help="Sweep expired raw, transcript, and aggregate retention")
     retain.set_defaults(func=cmd_retain)
-    worker = sub.add_parser("worker", help="Drain the outbox. Decode never runs on the webhook path.")
+    worker = sub.add_parser(
+        "worker", help="Drain the outbox. Decode never runs on the webhook path."
+    )
     worker.add_argument("--poll", type=float, default=1.0, help="Idle sleep seconds")
     worker.add_argument("--once", action="store_true", help="Process one batch and exit")
     worker.set_defaults(func=cmd_worker)
-    export = sub.add_parser("export", help="Export active-call revisions to a Parquet/JSONL manifest")
+    export = sub.add_parser(
+        "export", help="Export active-call revisions to a Parquet/JSONL manifest"
+    )
     export.add_argument("--org", required=True)
     export.add_argument("--dest", required=True)
     export.set_defaults(func=cmd_export)
     version = sub.add_parser("version")
-    version.set_defaults(func=lambda _a: (print(__version__) or 0))
+    version.set_defaults(func=lambda _a: print(__version__) or 0)
     return parser
 
 
 def cmd_init(args: argparse.Namespace) -> int:
     dest = Path(args.dir) / ".env.example"
-    dest.write_text(_INIT_ENV)
+    dest.write_text(_INIT_EXAMPLE)
     print(f"wrote {dest}")
     print("Install a provider plugin (obsalt-vapi, obsalt-retell, …). Core ships no providers.")
     return 0

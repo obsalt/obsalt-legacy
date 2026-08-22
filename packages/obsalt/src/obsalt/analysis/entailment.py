@@ -35,7 +35,11 @@ async def entail_claims(
             grounding=grounding,
         )
         judged: JudgeResult = await judge_impl.judge(request)
-        verdict = "grounded" if judged.passed else ("contradicted" if judged.score < 0.3 else "unsupported")
+        verdict = (
+            "grounded"
+            if judged.passed
+            else ("contradicted" if judged.score < 0.3 else "unsupported")
+        )
         out.append(
             {
                 **dict(claim),

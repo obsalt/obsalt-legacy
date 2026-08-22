@@ -1,6 +1,6 @@
 """Durable stores. Postgres + ClickHouse + object storage; not a pluggable backend."""
 
-from obsalt.store.clickhouse import ClickHouseRevisionSink, ClickHouseSink
+from obsalt.store.clickhouse import ClickHouseSink, as_clickhouse_datetime
 from obsalt.store.leases import RedisLeaseAccelerator, claim_work
 from obsalt.store.objects import S3ObjectStore
 from obsalt.store.postgres import (
@@ -18,8 +18,8 @@ from obsalt.store.postgres import (
 )
 
 __all__ = [
-    "ClickHouseRevisionSink",
     "ClickHouseSink",
+    "as_clickhouse_datetime",
     "PostgresAuditLog",
     "PostgresDeletionStore",
     "PostgresInbox",

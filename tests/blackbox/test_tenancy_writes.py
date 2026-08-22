@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
-from obsalt.runtime import AppState
 
+from obsalt.runtime import AppState
 from tests.helpers import signed_example_headers
 
 
-def test_ingest_writes_only_the_authenticated_org(
-    client: TestClient, example_raw: bytes
-) -> None:
+def test_ingest_writes_only_the_authenticated_org(client: TestClient, example_raw: bytes) -> None:
     res = client.post(
         "/v1/ingest/example/ik",
         content=example_raw,

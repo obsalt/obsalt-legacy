@@ -13,7 +13,9 @@ from obsalt.plugin.types import ReadableSpan
 class MapperRegistry:
     def __init__(self, plugins: Sequence[LoadedPlugin]) -> None:
         self.mappers: list[OtlpMapper] = [
-            p.plugin for p in plugins if p.has(Capability.OTLP_MAPPER)  # type: ignore[misc]
+            p.plugin
+            for p in plugins
+            if p.has(Capability.OTLP_MAPPER)  # type: ignore[misc]
         ]
         # Conventions, not a provider. Lowest priority so first-party plugins win.
         if not any(getattr(mapper, "name", "") == "foreign-conventions" for mapper in self.mappers):

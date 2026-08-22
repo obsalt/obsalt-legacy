@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from datetime import date
 
-from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
     MeasurementPlacement,
@@ -19,6 +18,7 @@ from obsalt.otel.conventions import (
     genai_provider_name,
 )
 from obsalt.otel.s2s import decode_s2s_spans, instrument_s2s
+from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import InstrumentedClient, PluginManifest, ReadableSpan, SdkConfig
 
 

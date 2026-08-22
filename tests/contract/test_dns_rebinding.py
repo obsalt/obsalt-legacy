@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 
 import pytest
+
 from obsalt.egress import EgressDenied, validate_redirect
 
 

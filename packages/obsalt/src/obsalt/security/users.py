@@ -14,7 +14,9 @@ class MemoryUserStore:
     def __init__(self) -> None:
         self.users: dict[str, dict[str, Any]] = {}
 
-    def upsert(self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None) -> dict[str, Any]:
+    def upsert(
+        self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None
+    ) -> dict[str, Any]:
         role_value = role.value if isinstance(role, Role) else str(role)
         existing = self.get_by_email(org_id, email)
         rid = user_id or (existing["id"] if existing else new_id())

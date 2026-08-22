@@ -156,7 +156,9 @@ def _dot(left: Sequence[float], right: Sequence[float]) -> float:
     return float(sum(a * b for a, b in zip(left, right, strict=True)))
 
 
-def _rrf_scores(vector_ids: Sequence[str], lexical_ids: Sequence[str], *, k: int) -> dict[str, float]:
+def _rrf_scores(
+    vector_ids: Sequence[str], lexical_ids: Sequence[str], *, k: int
+) -> dict[str, float]:
     scores: dict[str, float] = {}
     for rank, item in enumerate(vector_ids, start=1):
         scores[item] = scores.get(item, 0.0) + 1.0 / (k + rank)

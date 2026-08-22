@@ -1,3 +1,5 @@
+"""Conformance tests for obsalt plugins. First-party and third-party use this kit."""
+
 from obsalt_testkit.conformance import (
     DEFAULT_IGNORE_FIELDS,
     AuthenticationConformanceTests,

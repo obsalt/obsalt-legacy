@@ -16,7 +16,6 @@ from obsalt.plugin.types import RawEnvelope, TombstoneHints
 from obsalt.util import utcnow
 from obsalt.worker.drain import _after_promote
 from obsalt.worker.process import process_normalized_events
-
 from tests.helpers import example_state, fidelity_declaration
 
 

@@ -40,7 +40,8 @@ def timeline_view(call: CallRevision) -> dict[str, object]:
             }
             for a in call.aggregate_measurements
         ],
-        "draw_stage_waterfall": call.timeline_fidelity is TimelineFidelity.STAGE_LEVEL and bool(intervals),
+        "draw_stage_waterfall": call.timeline_fidelity is TimelineFidelity.STAGE_LEVEL
+        and bool(intervals),
         "reason": _reason(call),
     }
 
@@ -54,7 +55,10 @@ def _is_interval(measurement: StageMeasurement) -> bool:
 
 
 def _is_anchored(measurement: StageMeasurement) -> bool:
-    return measurement.placement is MeasurementPlacement.ANCHORED_DURATION and measurement.started_at is not None
+    return (
+        measurement.placement is MeasurementPlacement.ANCHORED_DURATION
+        and measurement.started_at is not None
+    )
 
 
 def _measure(measurement: StageMeasurement) -> dict[str, object]:

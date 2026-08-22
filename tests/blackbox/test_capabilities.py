@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from obsalt.domain.enums import AnalysisState
 from obsalt.domain.models import AnalysisExecution, AnalysisResult
-
 from tests.helpers import (
     EXAMPLE_FIXTURES,
     VAPI_FIXTURES,
@@ -116,7 +115,10 @@ def test_quality_http_does_not_count_pending_hallucinations() -> None:
                     analyzer_version="1",
                     state=AnalysisState.PENDING,
                 ),
-                payload={"candidates": [{"kind": "price_claim", "needs_llm": True}], "selection": "pending"},
+                payload={
+                    "candidates": [{"kind": "price_claim", "needs_llm": True}],
+                    "selection": "pending",
+                },
             )
         ],
     )

@@ -7,6 +7,7 @@ name = "obsalt-cartesia"
 version = "2.0.0"
 description = "Cartesia Line hosted source plugin for obsalt"
 requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
 dependencies = ["obsalt==2.0.0"]
 
 [project.entry-points."obsalt.plugins"]
@@ -16,4 +17,4 @@ cartesia = "obsalt_cartesia.plugin:CartesiaPlugin"
 where = ["src"]
 
 [tool.setuptools.package-data]
-obsalt_cartesia = ["fixtures/**/*"]
+obsalt_cartesia = ["py.typed", "fixtures/**/*"]

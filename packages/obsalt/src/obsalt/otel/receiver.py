@@ -45,7 +45,9 @@ def parse_otlp_request(
         except Exception as exc:
             raise HTTPException(status_code=400, detail="malformed otlp json") from exc
         return req
-    raise HTTPException(status_code=415, detail="Content-Type must be application/x-protobuf or application/json")
+    raise HTTPException(
+        status_code=415, detail="Content-Type must be application/x-protobuf or application/json"
+    )
 
 
 def request_to_spans(req: ExportTraceServiceRequest) -> list[ReadableSpan]:

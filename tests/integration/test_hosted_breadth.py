@@ -13,7 +13,6 @@ from obsalt.worker.drain import drain_once
 from obsalt_cartesia.plugin import CartesiaPlugin
 from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_example.plugin import ExamplePlugin
-
 from tests.helpers import (
     CARTESIA_FIXTURES,
     ELEVEN_FIXTURES,

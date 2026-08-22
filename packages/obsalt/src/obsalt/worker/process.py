@@ -65,7 +65,9 @@ class MemoryRevisionSink(RevisionSink):
             self.revisions.pop(key, None)
             self.analysis.pop(key, None)
 
-    def write_analysis(self, org_id: str, call_id: str, revision: str, results: list[AnalysisResult]) -> None:
+    def write_analysis(
+        self, org_id: str, call_id: str, revision: str, results: list[AnalysisResult]
+    ) -> None:
         self.analysis[(org_id, call_id, revision)] = results
 
     def list_analysis(
@@ -123,7 +125,9 @@ def process_envelope(
     )
 
 
-def persist_evidence_blobs(events: Sequence[NormalizedEvent], objects: Any | None, org_id: str) -> None:
+def persist_evidence_blobs(
+    events: Sequence[NormalizedEvent], objects: Any | None, org_id: str
+) -> None:
     """Content-address evidence inside an org namespace. Never cross-tenant dedupe."""
 
     if objects is None:

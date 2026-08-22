@@ -39,15 +39,21 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
     grounding = "\n".join(grounding_corpus(call))
     flags: list[dict[str, object]] = []
     successful = [t.name.lower() for t in call.tools if t.status == ToolStatus.SUCCESS]
-    failed = [t.name.lower() for t in call.tools if t.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}]
+    failed = [
+        t.name.lower() for t in call.tools if t.status in {ToolStatus.ERROR, ToolStatus.TIMEOUT}
+    ]
     for turn in call.agent_turns():
         for sentence in [s.strip() for s in _SENTENCE_RE.split(turn.text) if s.strip()]:
             for match in _MONEY_RE.finditer(sentence):
                 if match.group(0).lower() not in grounding.lower():
-                    flags.append(_flag(HallucinationKind.PRICE_CLAIM, sentence, turn.index, match.group(0)))
+                    flags.append(
+                        _flag(HallucinationKind.PRICE_CLAIM, sentence, turn.index, match.group(0))
+                    )
             for match in _ID_RE.finditer(sentence):
                 if match.group(1).lower() not in grounding.lower():
-                    flags.append(_flag(HallucinationKind.FABRICATED_ID, sentence, turn.index, match.group(1)))
+                    flags.append(
+                        _flag(HallucinationKind.FABRICATED_ID, sentence, turn.index, match.group(1))
+                    )
             action = _ACTION_RE.search(sentence)
             if action:
                 verb = action.group(1)
@@ -55,7 +61,9 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
                 related_success = any(any(h in n for h in hints) for n in successful)
                 related_failed = any(any(h in n for h in hints) for n in failed)
                 if related_failed and not related_success:
-                    flags.append(_flag(HallucinationKind.PHANTOM_TOOL_SUCCESS, sentence, turn.index, verb))
+                    flags.append(
+                        _flag(HallucinationKind.PHANTOM_TOOL_SUCCESS, sentence, turn.index, verb)
+                    )
     return flags
 
 
@@ -69,7 +77,9 @@ def grounding_corpus(call: CallRevision) -> list[str]:
         if tool.error:
             parts.append(f"{tool.name} {status}: {tool.error}")
         elif result not in (None, ""):
-            parts.append(f"{tool.name} {status}: {result if isinstance(result, str) else str(result)}")
+            parts.append(
+                f"{tool.name} {status}: {result if isinstance(result, str) else str(result)}"
+            )
         elif tool.result_ref:
             parts.append(f"{tool.name} {status}: {tool.result_ref}")
         else:

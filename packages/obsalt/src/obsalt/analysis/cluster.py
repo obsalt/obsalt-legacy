@@ -76,7 +76,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
         try:
             import json
 
-            from obsalt.store.clickhouse import _ch_dt
+            from obsalt.store.clickhouse import as_clickhouse_datetime
             from obsalt.util import utcnow
 
             rows = [
@@ -89,7 +89,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
                     int(row["size"]),
                     row["top_call_id"],
                     json.dumps(row),
-                    _ch_dt(utcnow()),
+                    as_clickhouse_datetime(utcnow()),
                 ]
                 for row in payload.get("clusters") or []
             ]
@@ -110,7 +110,9 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
                     ],
                 )
         except Exception:
-            log.warning("hangup_clusters insert failed for org %s generation %s", org_id, generation)
+            log.warning(
+                "hangup_clusters insert failed for org %s generation %s", org_id, generation
+            )
         return payload
 
     def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:

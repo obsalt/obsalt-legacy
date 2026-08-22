@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+
 from obsalt.api import create_app
 from obsalt.config import Settings
 from obsalt.domain.enums import MeasurementPlacement, Metric, Provenance, Stage
@@ -10,7 +11,6 @@ from obsalt.domain.events import CallObserved, StageObserved
 from obsalt.privacy.caller import DEFAULT_PEPPER, caller_token
 from obsalt.runtime import in_memory_state
 from obsalt.worker.process import process_normalized_events
-
 from tests.helpers import example_raw, example_state, fidelity_declaration, signed_example_headers
 
 
@@ -107,7 +107,9 @@ def test_key_rotation_keeps_overlap() -> None:
     settings = Settings(environment="test")
     state = in_memory_state(settings)
     client = TestClient(create_app(settings, state))
-    rotated = client.post("/v1/keys/rotate", headers={"X-API-Key": "dev-key"}, json={"overlap_seconds": 60})
+    rotated = client.post(
+        "/v1/keys/rotate", headers={"X-API-Key": "dev-key"}, json={"overlap_seconds": 60}
+    )
     assert rotated.status_code == 200
     new_key = rotated.json()["key"]
     listed = client.get("/v1/plugins", headers={"X-API-Key": "dev-key"})

@@ -1,3 +1,5 @@
+"""HTTP API and server-rendered UI. Tests must call `create_test_app()`."""
+
 from __future__ import annotations
 
 import asyncio
@@ -126,7 +128,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     ) -> Response:
         raw = await request.body()
         encoding = request.headers.get("content-encoding")
-        header_pairs = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in request.headers.items()]
+        header_pairs = [
+            (k.encode("latin-1"), v.encode("latin-1")) for k, v in request.headers.items()
+        ]
         try:
             loaded = plugin_by_name(provider, state.plugins)
         except KeyError as exc:
@@ -241,7 +245,12 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if start is None or end is None:
             raise HTTPException(status_code=400, detail="start and end are required")
         limit = min(max(limit, 1), 100)
-        if getattr(state.pointers, "supports_sql_list", False) and not flag and not eval_result and latency_ms is None:
+        if (
+            getattr(state.pointers, "supports_sql_list", False)
+            and not flag
+            and not eval_result
+            and latency_ms is None
+        ):
             summaries, next_cursor = state.pointers.list_summaries(
                 org,
                 start=start,
@@ -263,7 +272,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                             "source": row.get("source"),
                             "agent_id": row.get("agent_id"),
                             "status": row.get("status"),
-                            "started_at": row["started_at"].isoformat() if row.get("started_at") else None,
+                            "started_at": row["started_at"].isoformat()
+                            if row.get("started_at")
+                            else None,
                             "hangup": row.get("hangup_reason"),
                         }
                     )
@@ -315,7 +326,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return timeline_view(_active(state, org, call_id))
 
     @app.get("/v1/calls/{call_id}/evidence/{ref}")
-    def get_evidence(call_id: str, ref: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> Response:
+    def get_evidence(
+        call_id: str, ref: str, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> Response:
         org = _authorize(state, x_api_key, KeyScope.READ, "calls.read")
         rev = _active(state, org, call_id)
         body, content_type = _load_evidence(state, org, rev, ref)
@@ -324,7 +337,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return Response(content=body, media_type=content_type)
 
     @app.post("/v1/search")
-    async def search(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def search(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.READ, "search.read")
         body = await request.json()
         query = str(body.get("q") or "")
@@ -332,7 +347,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         end = body.get("end")
         if not start or not end:
             raise HTTPException(status_code=400, detail="start and end are required")
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")) if isinstance(start, str) else start
+        start_dt = (
+            datetime.fromisoformat(start.replace("Z", "+00:00"))
+            if isinstance(start, str)
+            else start
+        )
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end
         filters = {k: body.get(k) for k in ("agent_id", "source", "hangup_reason") if body.get(k)}
         calls = [c for c in active_calls(state, org) if in_range(c, start_dt, end_dt)]
@@ -404,7 +423,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         )
 
     @app.post("/v1/calls/{call_id}/analyze")
-    async def analyze(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def analyze(
+        call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rev = _active(state, org, call_id)
         spend = org_spend_usd(state, org)
@@ -446,7 +467,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         }
 
     @app.post("/v1/rubrics")
-    async def create_rubric(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def create_rubric(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         body = await request.json()
         rubric = Rubric(
@@ -463,7 +486,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return rubric.model_dump(mode="json")
 
     @app.put("/v1/rubrics/{rubric_id}")
-    async def update_rubric(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def update_rubric(
+        rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         existing = state.rubrics.get(rubric_id)
         if existing is None or existing.org_id != org:
@@ -474,13 +499,19 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             updated = store.new_version(
                 existing,
                 name=str(body["name"]) if body.get("name") else None,
-                description=str(body["description"]) if body.get("description") is not None else None,
+                description=str(body["description"])
+                if body.get("description") is not None
+                else None,
             )
         else:
             updated = existing.model_copy(
                 update={
                     "name": str(body.get("name") or existing.name),
-                    "description": str(body.get("description") if body.get("description") is not None else existing.description),
+                    "description": str(
+                        body.get("description")
+                        if body.get("description") is not None
+                        else existing.description
+                    ),
                     "version": existing.version + 1,
                     "threshold": float(body.get("threshold") or existing.threshold),
                 }
@@ -491,7 +522,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return updated.model_dump(mode="json")
 
     @app.delete("/v1/rubrics/{rubric_id}")
-    def delete_rubric(rubric_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    def delete_rubric(
+        rubric_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "rubrics.write")
         existing = state.rubrics.get(rubric_id)
         if existing is None or existing.org_id != org:
@@ -521,7 +554,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"items": items}
 
     @app.post("/v1/connections")
-    async def post_connection(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def post_connection(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "connections.write")
         body = await request.json()
         provider = str(body.get("provider") or "")
@@ -539,7 +574,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return created
 
     @app.delete("/v1/connections/{connection_id}")
-    def delete_connection(connection_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    def delete_connection(
+        connection_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "connections.write")
         deleter = getattr(state.resolver, "delete", None)
         if not callable(deleter) or not deleter(org, connection_id):
@@ -552,15 +589,23 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         items = []
         store = getattr(state, "webhook_store", None)
-        dests = store.list_destinations(org) if getattr(store, "durable", False) else state.webhook_destinations
+        dests = (
+            store.list_destinations(org)
+            if getattr(store, "durable", False)
+            else state.webhook_destinations
+        )
         for dest in dests:
             if dest.get("org_id") and dest.get("org_id") != org:
                 continue
-            items.append({"id": dest.get("id"), "url": dest.get("url"), "event_type": dest.get("event_type")})
+            items.append(
+                {"id": dest.get("id"), "url": dest.get("url"), "event_type": dest.get("event_type")}
+            )
         return {"items": items}
 
     @app.post("/v1/outbound-webhooks")
-    async def create_outbound(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def create_outbound(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         body = await request.json()
         from obsalt.egress import EgressDenied, validate_destination
@@ -588,7 +633,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"id": dest["id"], "url": url, "secret": secret}
 
     @app.post("/v1/outbound-webhooks/{dest_id}/rotate")
-    async def rotate_outbound(dest_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def rotate_outbound(
+        dest_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "webhooks.write")
         from obsalt.webhooks.outbound import mint_whsec
 
@@ -610,13 +657,17 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             for dest in state.webhook_destinations:
                 if dest.get("id") == dest_id and dest.get("org_id") == org:
                     dest["previous_secret"] = dest.get("secret")
-                    dest["previous_secret_expires_at"] = (utcnow() + timedelta(seconds=overlap)).isoformat()
+                    dest["previous_secret_expires_at"] = (
+                        utcnow() + timedelta(seconds=overlap)
+                    ).isoformat()
                     dest["secret"] = secret
                     break
         return {"id": dest_id, "secret": secret, "overlap_seconds": overlap}
 
     @app.post("/v1/keys/rotate")
-    async def rotate_key(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def rotate_key(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "keys.rotate")
         import secrets as secretsmod
         from datetime import timedelta
@@ -640,7 +691,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"key": new_key, "overlap_seconds": overlap}
 
     @app.post("/v1/replay")
-    async def replay(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def replay(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "replay")
         body = {}
         try:
@@ -657,7 +710,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"status": "queued", "replayed": queued, "as_of_generation": state.rollup_generation}
 
     @app.post("/v1/backfill")
-    async def backfill(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def backfill(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "backfill")
         body: dict = {}
         try:
@@ -672,7 +727,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         )
 
     @app.post("/v1/privacy/deletion-requests")
-    async def deletion(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def deletion(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "privacy.delete")
         body = await request.json()
         call_id = body.get("call_id")
@@ -686,7 +743,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             and not body.get("caller_token")
             and not (start and end)
         ):
-            raise HTTPException(status_code=400, detail="call_id, source_call_id, caller, or start/end is required")
+            raise HTTPException(
+                status_code=400, detail="call_id, source_call_id, caller, or start/end is required"
+            )
         return apply_deletion(
             state,
             org_id=org,
@@ -694,7 +753,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             source_call_id=str(source_call_id) if source_call_id else None,
             caller=str(body["caller"]) if body.get("caller") else None,
             caller_token_value=str(body["caller_token"]) if body.get("caller_token") else None,
-            start=datetime.fromisoformat(start.replace("Z", "+00:00")) if isinstance(start, str) else start,
+            start=datetime.fromisoformat(start.replace("Z", "+00:00"))
+            if isinstance(start, str)
+            else start,
             end=datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end,
         )
 
@@ -704,7 +765,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return replay_horizon(raw_retention_days=state.settings.raw_retention_days)
 
     @app.post("/v1/export")
-    async def export_calls(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def export_calls(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "export")
         body: dict = {}
         try:
@@ -723,7 +786,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         )
 
     @app.post("/v1/rubrics/{rubric_id}/calibrate")
-    async def calibrate(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def calibrate(
+        rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rubric = state.rubrics.get(rubric_id)
         if rubric is None or rubric.org_id != org:
@@ -738,7 +803,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return await calibrate_rubric(rubric, labelled, judge=state.judge)
 
     @app.post("/v1/quality/review")
-    async def review(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def review(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.READ, "quality.review")
         body = await request.json()
         item = {
@@ -778,7 +845,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"items": items}
 
     @app.post("/v1/users")
-    async def create_user(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+    async def create_user(
+        request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")
+    ) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ADMIN, "users.write")
         store = getattr(state, "user_store", None)
         if store is None:
@@ -868,7 +937,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         except HTTPException:
             return _render(request, "login.html", {"org": None, "error": "invalid API key"})
         response = RedirectResponse("/v1/ui", status_code=303)
-        cookie = sign_session(org, state.settings.session_secret, role=_role_for_key(state, key, scopes))
+        cookie = sign_session(
+            org, state.settings.session_secret, role=_role_for_key(state, key, scopes)
+        )
         info = read_session(cookie, state.settings.session_secret)
         response.set_cookie(
             "obsalt_session",
@@ -947,7 +1018,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return _render(
             request,
             "hangups.html",
-            {"clusters": data.get("clusters") or [], "as_of_generation": data.get("as_of_generation"), "org": org},
+            {
+                "clusters": data.get("clusters") or [],
+                "as_of_generation": data.get("as_of_generation"),
+                "org": org,
+            },
         )
 
     @app.get("/v1/ui/quality", response_class=HTMLResponse)
@@ -986,7 +1061,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 org_id=org,
                 filters={k: v for k, v in filters.items() if v} or None,
             )
-        return _render(request, "search.html", {"q": q, "results": hits, "org": org, "filters": filters})
+        return _render(
+            request, "search.html", {"q": q, "results": hits, "org": org, "filters": filters}
+        )
 
     @app.get("/v1/ui/settings", response_class=HTMLResponse)
     def ui_settings(request: Request) -> HTMLResponse:
@@ -995,7 +1072,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         for cfg in getattr(state.resolver, "connections", {}).values():
             if org and cfg.org_id != org:
                 continue
-            connections.append({"provider": cfg.provider, "connection_id": cfg.connection_id, "org_id": cfg.org_id})
+            connections.append(
+                {"provider": cfg.provider, "connection_id": cfg.connection_id, "org_id": cfg.org_id}
+            )
         store = getattr(state, "user_store", None)
         users = store.list(org) if store is not None else []
         return _render(
@@ -1022,7 +1101,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     async def ui_replay(request: Request) -> Response:
         org = _ui_require(request, state, "replay")
         form = await request.form()
-        _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
+        _require_csrf(
+            request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or "")
+        )
         replay_envelopes(state, org_id=org)
         bump_generation(state)
         return RedirectResponse("/v1/ui", status_code=303)
@@ -1031,7 +1112,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     async def ui_analyze(request: Request, call_id: str) -> Response:
         org = _ui_require(request, state, "calls.analyze")
         form = await request.form()
-        _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
+        _require_csrf(
+            request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or "")
+        )
         rev = _active(state, org, call_id)
         spend = org_spend_usd(state, org)
         if spend >= state.settings.llm_monthly_budget_usd > 0:
@@ -1192,7 +1275,9 @@ def _ui_csrf(request: Request, state: AppState) -> str | None:
 
 
 def _require_csrf(request: Request, state: AppState, provided: str | None) -> None:
-    if not check_csrf(request.cookies.get("obsalt_session"), provided, state.settings.session_secret):
+    if not check_csrf(
+        request.cookies.get("obsalt_session"), provided, state.settings.session_secret
+    ):
         raise HTTPException(status_code=403, detail="csrf required")
 
 

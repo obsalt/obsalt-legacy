@@ -17,7 +17,9 @@ DIAGNOSTIC_HEADER_ALLOWLIST = frozenset(
     }
 )
 
-FORBIDDEN_HEADER_ARCHIVE = frozenset({"authorization", "cookie", "set-cookie", "proxy-authorization"})
+FORBIDDEN_HEADER_ARCHIVE = frozenset(
+    {"authorization", "cookie", "set-cookie", "proxy-authorization"}
+)
 
 
 class RawHeaders:

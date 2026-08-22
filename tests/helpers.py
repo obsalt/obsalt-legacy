@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
-from obsalt.api import create_app
+
+from obsalt.api import create_test_app
 from obsalt.assemble.facts import stamp_event
 from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.config import Settings
@@ -34,9 +35,21 @@ ELEVEN_FIXTURES = ROOT / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elev
 CARTESIA_FIXTURES = ROOT / "packages" / "obsalt-cartesia" / "src" / "obsalt_cartesia" / "fixtures"
 PIPECAT_OTLP = ROOT / "packages" / "obsalt-pipecat" / "src" / "obsalt_pipecat" / "fixtures" / "otlp"
 LIVEKIT_OTLP = ROOT / "packages" / "obsalt-livekit" / "src" / "obsalt_livekit" / "fixtures" / "otlp"
-ELEVEN_OTLP = ROOT / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elevenlabs" / "fixtures" / "otlp"
-OPENAI_OTLP = ROOT / "packages" / "obsalt-openai-realtime" / "src" / "obsalt_openai_realtime" / "fixtures" / "otlp"
-GEMINI_OTLP = ROOT / "packages" / "obsalt-gemini-live" / "src" / "obsalt_gemini_live" / "fixtures" / "otlp"
+ELEVEN_OTLP = (
+    ROOT / "packages" / "obsalt-elevenlabs" / "src" / "obsalt_elevenlabs" / "fixtures" / "otlp"
+)
+OPENAI_OTLP = (
+    ROOT
+    / "packages"
+    / "obsalt-openai-realtime"
+    / "src"
+    / "obsalt_openai_realtime"
+    / "fixtures"
+    / "otlp"
+)
+GEMINI_OTLP = (
+    ROOT / "packages" / "obsalt-gemini-live" / "src" / "obsalt_gemini_live" / "fixtures" / "otlp"
+)
 
 
 def signed_example_headers(raw: bytes, secret: str = "s") -> dict[str, str]:
@@ -85,7 +98,9 @@ def provider_state(
     **kwargs: Any,
 ) -> AppState:
     resolver = kwargs.pop("resolver", None) or MemoryResolver()
-    plugin_settings = {"auth_mode": "legacy_secret"} if getattr(plugin, "name", "") == "vapi" else {}
+    plugin_settings = (
+        {"auth_mode": "legacy_secret"} if getattr(plugin, "name", "") == "vapi" else {}
+    )
     resolver.add(
         ConnectionConfig(
             org_id=org_id,
@@ -146,7 +161,7 @@ def api_client(state: AppState) -> TestClient:
     settings = getattr(state, "settings", None) or Settings(environment="test")
     if (settings.environment or "").lower() not in {"test", "testing"}:
         settings = Settings(environment="test")
-    return TestClient(create_app(settings, state))
+    return TestClient(create_test_app(settings, state))
 
 
 def vapi_headers(secret: str = "vapi-secret") -> dict[str, str]:

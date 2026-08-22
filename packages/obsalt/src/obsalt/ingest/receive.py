@@ -26,7 +26,9 @@ DEFAULT_EXPANDED_LIMIT = 8_000_000
 
 
 class ObjectStore(Protocol):
-    def put(self, key: str, body: bytes, *, content_type: str = "application/octet-stream") -> None: ...
+    def put(
+        self, key: str, body: bytes, *, content_type: str = "application/octet-stream"
+    ) -> None: ...
     def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
 
@@ -138,7 +140,9 @@ def receive_webhook(
     singleton = getattr(plugin, "singleton_headers", frozenset())
     dup = require_singleton(headers.as_list(), singleton)
     if dup is not None:
-        return ReceiveResult(response=_verify_response(dup), envelope=None, rejected=dup.outcome.value)
+        return ReceiveResult(
+            response=_verify_response(dup), envelope=None, rejected=dup.outcome.value
+        )
 
     auth = plugin.authenticate(wire, headers.as_list(), connection)
     decoded = wire
@@ -152,7 +156,9 @@ def receive_webhook(
             except Exception:
                 return _reject(400, "malformed compressed body")
     if not auth.ok:
-        return ReceiveResult(response=_verify_response(auth), envelope=None, rejected=auth.outcome.value)
+        return ReceiveResult(
+            response=_verify_response(auth), envelope=None, rejected=auth.outcome.value
+        )
     if len(decoded) > limits.expanded_bytes:
         return _reject(413, "expanded body exceeds limit")
 

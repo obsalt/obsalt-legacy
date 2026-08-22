@@ -51,11 +51,15 @@ async def serve_otlp_grpc(state: Any, *, port: int) -> Any:
                 backpressure_limit=getattr(state.settings, "outbox_backpressure_limit", 10_000),
             )
             if result.status_code == 503:
-                await context.abort(grpc.StatusCode.UNAVAILABLE, result.rejected or "ingest capacity")
+                await context.abort(
+                    grpc.StatusCode.UNAVAILABLE, result.rejected or "ingest capacity"
+                )
             if result.status_code == 413:
                 await context.abort(grpc.StatusCode.UNAVAILABLE, result.rejected or "too large")
             if result.status_code == 409:
-                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, result.rejected or "conflict")
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION, result.rejected or "conflict"
+                )
             return trace_service_pb2.ExportTraceServiceResponse()
 
     server = aio.server()
