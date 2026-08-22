@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from obsalt.assemble.rehydrate import events_from_revision
-from obsalt.domain.enums import EnvelopeState, MeasurementPlacement, Metric, Provenance, Speaker, Stage
+from obsalt.domain.enums import (
+    EnvelopeState,
+    MeasurementPlacement,
+    Metric,
+    Provenance,
+    Speaker,
+    Stage,
+)
 from obsalt.domain.events import CallObserved, SnapshotBoundaryObserved, StageObserved, TurnObserved
 from obsalt.plugin.types import RawEnvelope, TombstoneHints
 from obsalt.util import utcnow
 from obsalt.worker.drain import _after_promote
 from obsalt.worker.process import process_normalized_events
-
 from tests.helpers import example_state, fidelity_declaration
 
 

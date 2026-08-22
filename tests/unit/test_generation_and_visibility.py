@@ -7,7 +7,6 @@ from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.domain.events import CallObserved
 from obsalt.runtime import MemoryGenerationStore
 from obsalt.worker.process import MemoryRevisionSink, RevisionSink, process_normalized_events
-
 from tests.helpers import fidelity_declaration
 
 

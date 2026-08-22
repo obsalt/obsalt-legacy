@@ -12,7 +12,13 @@ from obsalt.analysis.judge import HeuristicJudge
 from obsalt.domain.enums import AnalysisState, Capability, HangupReason, Speaker
 from obsalt.domain.events import CallObserved, GroundingObserved, TurnObserved
 from obsalt.domain.models import CallRevision, Hangup, Rubric
-from obsalt.plugin.types import BackfillCursor, BackfillItem, ConnectionConfig, RawEnvelope, TombstoneHints
+from obsalt.plugin.types import (
+    BackfillCursor,
+    BackfillItem,
+    ConnectionConfig,
+    RawEnvelope,
+    TombstoneHints,
+)
 from obsalt.query import hangup_rollup
 from obsalt.testing.fakes import MemoryInbox
 from obsalt.util import utcnow
@@ -22,7 +28,6 @@ from obsalt_elevenlabs.plugin import ElevenLabsPlugin
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_testkit import decode_raw_fixture
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.helpers import CARTESIA_FIXTURES, ELEVEN_FIXTURES, example_state, fidelity_declaration
 
 
@@ -103,6 +108,7 @@ def test_entailment_and_calibration() -> None:
     )
     claims = asyncio.run(entail_claims(rev, judge=HeuristicJudge()))
     assert claims
+    assert any(item["verdict"] != "grounded" for item in claims)
     rubric = Rubric(id="r1", org_id="acme", name="hallucination", description="Flag invented facts")
     result = asyncio.run(calibrate_rubric(rubric, [(rev, False)], judge=HeuristicJudge()))
     assert result["n"] == 1

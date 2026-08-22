@@ -13,12 +13,12 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
 
-log = logging.getLogger("obsalt.analysis.cluster")
-
 from obsalt.domain.enums import HangupParty, HangupReason, Speaker
 from obsalt.domain.models import CallRevision
 from obsalt.plugin.types import RedactedDocument
-from obsalt.search.hybrid import LocalEmbedder
+from obsalt.search.hybrid import LocalEmbedder, content_tokens
+
+log = logging.getLogger("obsalt.analysis.cluster")
 
 
 class MemoryHangupClusterStore:
@@ -249,12 +249,16 @@ def _embed_subclusters(
             continue
         placed = False
         for centroid, bucket in buckets:
-            if _dot(centroid, vector) >= similarity_threshold:
+            representative = _last_user_text(bucket[0])
+            if _similar(centroid, vector, representative, text, similarity_threshold):
                 bucket.append(call)
+                members_n = len(bucket)
+                for index, (old, new) in enumerate(zip(centroid, vector, strict=True)):
+                    centroid[index] = (old * (members_n - 1) + new) / members_n
                 placed = True
                 break
         if not placed:
-            buckets.append((vector, [call]))
+            buckets.append((list(vector), [call]))
     result = [bucket for _centroid, bucket in buckets]
     if empty:
         result.append(empty)
@@ -281,3 +285,23 @@ def _embed_texts(embedder: LocalEmbedder, texts: Sequence[str]) -> list[list[flo
 
 def _dot(left: Sequence[float], right: Sequence[float]) -> float:
     return float(sum(a * b for a, b in zip(left, right, strict=True)))
+
+
+def _similar(
+    centroid: Sequence[float],
+    vector: Sequence[float],
+    text_a: str,
+    text_b: str,
+    threshold: float,
+) -> bool:
+    if _dot(centroid, vector) >= threshold:
+        return True
+    return _lexical_overlap(text_a, text_b) >= 0.25
+
+
+def _lexical_overlap(text_a: str, text_b: str) -> float:
+    left = content_tokens(text_a)
+    right = content_tokens(text_b)
+    if not left or not right or not (left & right):
+        return 0.0
+    return len(left & right) / len(left | right)

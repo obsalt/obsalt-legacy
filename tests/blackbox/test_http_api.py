@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from obsalt.api import create_app, create_test_app
 from obsalt.config import Settings
 from obsalt.crypto.primitives import hmac_hex
-
 from tests.helpers import EXAMPLE_FIXTURES, signed_example_headers
 
 
@@ -140,4 +139,7 @@ def test_ingest_unknown_plugin_is_404(client: TestClient, example_raw: bytes) ->
 def test_signed_example_fixture_still_exists() -> None:
     assert (EXAMPLE_FIXTURES / "raw" / "call_ended.json").is_file()
     raw = (EXAMPLE_FIXTURES / "raw" / "call_ended.json").read_bytes()
-    assert hmac_hex("s", raw)
+    digest = hmac_hex("s", raw)
+    assert digest == hmac_hex("s", raw)
+    assert digest != hmac_hex("wrong", raw)
+    assert len(digest) == 64

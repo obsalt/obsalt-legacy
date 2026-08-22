@@ -10,7 +10,6 @@ from obsalt.domain.events import CallObserved, StageObserved
 from obsalt.privacy.caller import DEFAULT_PEPPER, caller_token
 from obsalt.runtime import in_memory_state
 from obsalt.worker.process import process_normalized_events
-
 from tests.helpers import example_raw, example_state, fidelity_declaration, signed_example_headers
 
 

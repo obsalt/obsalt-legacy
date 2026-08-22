@@ -15,7 +15,13 @@ from obsalt.domain.enums import (
     Stage,
     ToolStatus,
 )
-from obsalt.domain.events import CallObserved, GroundingObserved, NormalizedEvent, StageObserved, ToolObserved
+from obsalt.domain.events import (
+    CallObserved,
+    GroundingObserved,
+    NormalizedEvent,
+    StageObserved,
+    ToolObserved,
+)
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
 from obsalt.plugin.types import PluginManifest, ReadableSpan

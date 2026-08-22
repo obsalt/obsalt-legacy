@@ -69,10 +69,13 @@ def test_hangup_clusters_split_by_closing_utterance() -> None:
         hangup=Hangup(reason=HangupReason.USER_HANGUP, party=HangupParty.USER),
         turns=[Turn(index=0, speaker=Speaker.USER, text="what is the weather tomorrow")],
     )
-    payload = cluster_hangups([refund, refund2, weather], "g1", embedder=LocalEmbedder(), similarity_threshold=0.45)
+    payload = cluster_hangups([refund, refund2, weather], "g1", embedder=LocalEmbedder())
     assert payload["as_of_generation"] == "g1"
     assert payload["call_count"] == 3
-    assert all(":" in row["id"] for row in payload["clusters"])
+    assert all(row["id"].count(":") == 2 for row in payload["clusters"])
     refund_cluster = next(row for row in payload["clusters"] if "refund" in row["call_ids"])
     assert "refund-2" in refund_cluster["call_ids"]
     assert "weather" not in refund_cluster["call_ids"]
+    weather_cluster = next(row for row in payload["clusters"] if "weather" in row["call_ids"])
+    assert weather_cluster["id"] != refund_cluster["id"]
+    assert weather_cluster["id"].startswith("user_hangup:user:")

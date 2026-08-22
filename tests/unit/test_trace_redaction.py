@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from obsalt.domain.events import CallObserved, TurnObserved
 from obsalt.domain.enums import Speaker
+from obsalt.domain.events import CallObserved, TurnObserved
 from obsalt.otel.trace_assembly import MemoryTraceAssembler
 from obsalt.plugin.types import ReadableSpan
 

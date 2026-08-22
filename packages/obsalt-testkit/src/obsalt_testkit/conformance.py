@@ -128,14 +128,22 @@ class DecoderConformanceTests:
             content_sha256="x",
             body=b'{"type":"definitely-not-a-real-event","junk":true}',
         )
-        list(self.plugin.decode(envelope))
+        events = list(self.plugin.decode(envelope))
+        for event in events:
+            if isinstance(event, CallObserved):
+                assert event.source_call_id != "definitely-not-a-real-event"
 
     def test_call_identity_extraction(self) -> None:
-        for path in self.raw_payloads():
+        payloads = self.raw_payloads()
+        assert payloads, "decoder fixtures must include at least one raw payload"
+        identified = False
+        for path in payloads:
             events = self.decode_raw(path)
             calls = [e for e in events if isinstance(e, CallObserved)]
             if calls:
                 assert calls[0].source_call_id
+                identified = True
+        assert identified, "at least one fixture must produce CallObserved with source_call_id"
 
     def test_grounding_populated_where_supplied(self) -> None:
         for path in self.raw_payloads():

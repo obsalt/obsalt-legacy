@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
-from obsalt.api import create_app
-from obsalt.config import Settings
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind
 from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.otel.receiver import parse_otlp_request, serialized_partial_success, serialized_success

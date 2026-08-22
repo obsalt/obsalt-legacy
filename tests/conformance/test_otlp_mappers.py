@@ -17,7 +17,6 @@ from obsalt_testkit import (
     SdkInstrumentationConformanceTests,
     spans_from_fixture,
 )
-
 from tests.helpers import ELEVEN_OTLP, GEMINI_OTLP, LIVEKIT_OTLP, OPENAI_OTLP, PIPECAT_OTLP
 
 

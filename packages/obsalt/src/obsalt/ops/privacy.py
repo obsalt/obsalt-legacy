@@ -27,12 +27,29 @@ def apply_deletion(
     if caller and not token:
         token = caller_token(org_id, caller, DEFAULT_PEPPER)
 
-    resolved_source = source_call_id
-    if resolved_source is None and call_id:
-        for rev in _all_revisions(state, org_id):
+    owned = list(_all_revisions(state, org_id))
+    to_delete: set[str] = set()
+    for rev in owned:
+        if call_id and rev.call_id == call_id:
+            to_delete.add(rev.call_id)
+        if source_call_id and rev.source_call_id == source_call_id:
+            to_delete.add(rev.call_id)
+        if token and getattr(rev, "caller_token", None) == token:
+            to_delete.add(rev.call_id)
+        if start is not None and end is not None and in_range(rev, start, end):
+            to_delete.add(rev.call_id)
+
+    # Tombstones are per-org. Never treat another tenant's call_id as a source id (T10).
+    resolved_source = None
+    if source_call_id and source_call_id != call_id:
+        resolved_source = source_call_id
+    elif call_id and call_id in to_delete:
+        for rev in owned:
             if rev.call_id == call_id and rev.source_call_id:
                 resolved_source = rev.source_call_id
                 break
+    elif source_call_id and any(rev.source_call_id == source_call_id for rev in owned):
+        resolved_source = source_call_id
 
     hints = TombstoneHints(
         source_call_id=resolved_source,
@@ -42,20 +59,6 @@ def apply_deletion(
     )
     if hints.source_call_id or hints.caller_token or (hints.range_start and hints.range_end):
         state.inbox.tombstone(org_id, hints)
-
-    to_delete: set[str] = set()
-    if call_id:
-        to_delete.add(call_id)
-
-    for rev in _all_revisions(state, org_id):
-        if call_id and rev.call_id == call_id:
-            to_delete.add(rev.call_id)
-        if source_call_id and rev.source_call_id == source_call_id:
-            to_delete.add(rev.call_id)
-        if token and getattr(rev, "caller_token", None) == token:
-            to_delete.add(rev.call_id)
-        if start is not None and end is not None and in_range(rev, start, end):
-            to_delete.add(rev.call_id)
 
     deleter = getattr(state.pointers, "delete", None)
     search = getattr(state, "search", None)

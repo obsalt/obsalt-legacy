@@ -150,12 +150,12 @@ def in_memory_state(
 def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = None) -> AppState:
     """Connect to Postgres, ClickHouse, object storage, and Redis. No memory fallback."""
     plugins = plugins if plugins is not None else discover_plugins()
+    from obsalt.search.hybrid import OnnxEmbedder
     from obsalt.store.clickhouse import ClickHouseSink
     from obsalt.store.clickhouse import apply_schema as apply_clickhouse
     from obsalt.store.forward_pg import PostgresForwardQueue
     from obsalt.store.leases import RedisLeaseAccelerator
     from obsalt.store.objects import S3ObjectStore
-    from obsalt.search.hybrid import OnnxEmbedder
     from obsalt.store.postgres import (
         PostgresDeletionStore,
         PostgresGenerationStore,

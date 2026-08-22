@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -13,6 +14,20 @@ from obsalt.plugin.types import JudgeRequest, JudgeResult
 HEURISTIC_VERSION = "heuristic/1"
 LLM_PROMPT_VERSION = "judge/1"
 
+_PRICE_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d{2})?")
+_ID_RE = re.compile(r"\b(?:ord|conf|inv|tkt)[-_][a-z0-9]{2,}\b", re.I)
+_ENTAILMENT_MARKERS = (
+    "hallucin",
+    "invent",
+    "grounded",
+    "unsupported",
+    "contradicted",
+    "entail",
+)
+_SUCCESS_CLAIMS = ("refund", "processed", "booked", "scheduled", "confirmed", "sent")
+_FAILURE_MARKERS = ("error", "not_found", "failed", "timeout", "timed out")
+_ENTAILMENT_RUBRIC_IDS = frozenset({"hallucination-entailment", "hallucination"})
+
 
 class HeuristicJudge:
     """Offline default so evaluate-on-click works without a bill."""
@@ -21,6 +36,8 @@ class HeuristicJudge:
     version = HEURISTIC_VERSION
 
     async def judge(self, request: JudgeRequest) -> JudgeResult:
+        if _is_entailment(request):
+            return _entail_claim(request)
         text = request.rubric_text.lower()
         transcript = request.transcript.lower()
         grounding = "\n".join(request.grounding).lower()
@@ -31,8 +48,8 @@ class HeuristicJudge:
                 if not any(token in grounding for token in ("ord-", "$")):
                     score -= 0.5
                     quotes.append("ungrounded identifier or price")
-        contradicted = ("error" in grounding or "not_found" in grounding) and (
-            "refund" in transcript or "processed" in transcript
+        contradicted = any(token in grounding for token in _FAILURE_MARKERS) and any(
+            token in transcript for token in _SUCCESS_CLAIMS
         )
         if contradicted:
             score = min(score, 0.2)
@@ -131,6 +148,76 @@ def judge_from_settings(
         except EgressDenied:
             return HeuristicJudge()
     return HeuristicJudge()
+
+
+def _is_entailment(request: JudgeRequest) -> bool:
+    if request.rubric_id in _ENTAILMENT_RUBRIC_IDS:
+        return True
+    text = request.rubric_text.lower()
+    return any(marker in text for marker in _ENTAILMENT_MARKERS)
+
+
+def _normalize_money(value: str) -> str:
+    return re.sub(r"[\s,]", "", value.lower())
+
+
+def _entail_claim(request: JudgeRequest) -> JudgeResult:
+    """Fail-closed for checkable claims. Empty grounding is not a pass (§9.4)."""
+
+    transcript = request.transcript.lower()
+    grounding = "\n".join(request.grounding).lower()
+    prices = [_normalize_money(match.group(0)) for match in _PRICE_RE.finditer(request.transcript)]
+    identifiers = [match.group(0).lower() for match in _ID_RE.finditer(request.transcript)]
+    claims_success = any(token in transcript for token in _SUCCESS_CLAIMS)
+    tool_failed = any(token in grounding for token in _FAILURE_MARKERS)
+    missing_price = bool(prices) and not any(price in _normalize_money(grounding) for price in prices)
+    missing_id = bool(identifiers) and not any(item in grounding for item in identifiers)
+    checkable = bool(prices or identifiers or claims_success)
+
+    if tool_failed and claims_success:
+        return JudgeResult(
+            score=0.15,
+            passed=False,
+            rationale="contradicted",
+            quotes=["tool/knowledge corpus contradicts the agent claim"],
+            model=HEURISTIC_VERSION,
+            prompt_version="entailment/1",
+        )
+    if checkable and (not grounding.strip() or missing_price or missing_id):
+        return JudgeResult(
+            score=0.25 if (missing_price or missing_id) else 0.4,
+            passed=False,
+            rationale="unsupported",
+            quotes=["ungrounded identifier or price"] if (prices or identifiers) else ["claim has no supporting span"],
+            model=HEURISTIC_VERSION,
+            prompt_version="entailment/1",
+        )
+    if prices and identifiers and not missing_price and not missing_id:
+        return JudgeResult(
+            score=0.9,
+            passed=True,
+            rationale="grounded",
+            quotes=[request.transcript[:200]],
+            model=HEURISTIC_VERSION,
+            prompt_version="entailment/1",
+        )
+    if grounding.strip() and (prices or identifiers) and not missing_price and not missing_id:
+        return JudgeResult(
+            score=0.85,
+            passed=True,
+            rationale="grounded",
+            quotes=[request.transcript[:200]],
+            model=HEURISTIC_VERSION,
+            prompt_version="entailment/1",
+        )
+    return JudgeResult(
+        score=0.45,
+        passed=False,
+        rationale="unsupported",
+        quotes=["no quoted supporting span"],
+        model=HEURISTIC_VERSION,
+        prompt_version="entailment/1",
+    )
 
 
 def _message_content(payload: dict[str, Any]) -> str:

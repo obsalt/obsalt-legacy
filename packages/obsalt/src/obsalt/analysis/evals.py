@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from obsalt.analysis.hallucination import grounding_corpus
 from obsalt.analysis.judge import HeuristicJudge, OpenAICompatibleJudge, judge_from_settings
 from obsalt.domain.models import CallRevision, Rubric
 from obsalt.plugin.types import JudgeRequest
@@ -13,5 +14,5 @@ def rubric_to_request(call: CallRevision, rubric: Rubric) -> JudgeRequest:
         rubric_version=rubric.version,
         rubric_text=rubric.description,
         transcript="\n".join(f"{t.speaker.value}: {t.text}" for t in call.turns),
-        grounding=[item.content or item.content_ref for item in call.grounding if item.content or item.content_ref],
+        grounding=grounding_corpus(call),
     )

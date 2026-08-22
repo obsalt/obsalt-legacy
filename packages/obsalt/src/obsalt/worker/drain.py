@@ -32,6 +32,7 @@ def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
         log.exception("envelope %s failed", envelope.envelope_id)
         state.inbox.mark_failed(envelope.envelope_id, str(exc))
     finalize_due_traces(state)
+    drain_tier2(state)
     from obsalt.otel.forward_queue import drain_forward_queue
     from obsalt.webhooks.outbound import drain_outbound
 
@@ -42,7 +43,7 @@ def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
 def drain_once(state: Any, *, limit: int = 32) -> int:
     processed = process_outbox(state, limit=limit)
     processed += finalize_due_traces(state)
-    processed += drain_tier2(state)
+    drain_tier2(state)
     from obsalt.otel.forward_queue import drain_forward_queue
     from obsalt.webhooks.outbound import drain_outbound
 
@@ -462,7 +463,7 @@ def drain_tier2(state: Any) -> int:
     queue = list(getattr(state, "tier2_queue", None) or [])
     if not queue:
         return 0
-    getattr(state, "tier2_queue").clear()
+    state.tier2_queue.clear()
     processed = 0
     for org_id, call_id, revision_id in queue:
         revision = state.sink.get(org_id, call_id, revision_id)
@@ -477,9 +478,9 @@ def drain_tier2(state: Any) -> int:
 
 
 def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
+    from obsalt.analysis.hallucination import extract_candidate_claims
     from obsalt.analysis.tier2 import decide_tier2
     from obsalt.domain.enums import AnalysisState
-
     from obsalt.runtime import add_org_spend, org_spend_usd
 
     settings = getattr(state, "settings", None)
@@ -489,13 +490,15 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
     budget_usd = budget if budget > 0 else float("inf")
     rubrics = [r for r in getattr(state, "rubrics", {}).values() if getattr(r, "org_id", None) == revision.org_id]
     existing = list(getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), []))
+
     claims = []
     for row in existing:
         payload = getattr(row, "payload", {}) or {}
         if payload.get("candidates"):
             claims = payload["candidates"]
             break
-    results = list(existing)
+    if not claims:
+        claims = extract_candidate_claims(revision)
     decisions = []
     if claims:
         decisions.append(
@@ -518,6 +521,12 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
                 spend_usd=spend,
             )
         )
+    replacing = {item.analyzer_id for item in decisions}
+    results = [
+        row
+        for row in existing
+        if getattr(getattr(row, "execution", None), "analyzer_id", None) not in replacing
+    ]
     writer = getattr(state.sink, "write_analysis", None)
     for execution in decisions:
         if execution.state is AnalysisState.PENDING:

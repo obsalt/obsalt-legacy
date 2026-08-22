@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from obsalt.crypto.primitives import hmac_hex, jwt_hs256_sign
-from obsalt.domain.enums import Provenance, VerifyOutcome
-from obsalt.domain.events import CallObserved, ToolObserved, TurnObserved
+from obsalt.domain.enums import VerifyOutcome
+from obsalt.domain.events import CallObserved, TurnObserved
 from obsalt.ingest.headers import RawHeaders
 from obsalt.plugin.types import BackfillItem, ConnectionConfig, RawEnvelope
 from obsalt.util import new_id, utcnow

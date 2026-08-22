@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
-import pytest
 from obsalt.analysis.entailment import entail_claims
 from obsalt.analysis.hallucination import extract_candidate_claims
 from obsalt.analysis.judge import HeuristicJudge
 from obsalt.analysis.tier2 import decide_tier2, run_tier2
-from obsalt.domain.enums import AnalysisState, HangupReason, Speaker, ToolStatus
-from obsalt.domain.models import CallRevision, GroundingRef, Hangup, ToolInvocation, Turn
-from obsalt.runtime import MemoryOrgSpend, add_org_spend, org_spend_usd
-from obsalt.runtime import AppState
-from obsalt.config import Settings
 from obsalt.assemble.promote import MemoryPointerStore
+from obsalt.config import Settings
+from obsalt.domain.enums import (
+    AnalysisState,
+    GroundingKind,
+    HangupReason,
+    Provenance,
+    Speaker,
+    ToolStatus,
+)
+from obsalt.domain.models import CallRevision, GroundingRef, Hangup, ToolInvocation, Turn
+from obsalt.runtime import AppState, MemoryOrgSpend, add_org_spend, org_spend_usd
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
 
@@ -44,19 +50,17 @@ def test_hard_budget_blocks_before_judge() -> None:
     assert execution.state is AnalysisState.BUDGET_BLOCKED
 
 
-@pytest.mark.asyncio
-async def test_manual_trigger_runs_and_cache_is_free() -> None:
+def test_manual_trigger_runs_and_cache_is_free() -> None:
     call = _call()
     cache: dict = {}
-    first = await run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge())
+    first = asyncio.run(run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge()))
     assert first.execution.state is AnalysisState.COMPLETED
-    second = await run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge(), cost_usd=0.5)
+    second = asyncio.run(run_tier2(call, manual=True, cache=cache, judge=HeuristicJudge(), cost_usd=0.5))
     assert second is first
     assert "cost_usd" not in (second.payload or {})
 
 
-@pytest.mark.asyncio
-async def test_ungrounded_price_claim_is_not_a_pass() -> None:
+def test_ungrounded_price_claim_is_not_a_pass() -> None:
     call = _call(
         turns=[Turn(index=0, speaker=Speaker.AGENT, text="I refunded $48.50 for order ORD-99999.")],
         grounding=[],
@@ -64,27 +68,45 @@ async def test_ungrounded_price_claim_is_not_a_pass() -> None:
     )
     claims = extract_candidate_claims(call)
     assert claims
-    entailed = await entail_claims(call, judge=HeuristicJudge(), candidates=claims)
-    assert any(item["verdict"] != "grounded" for item in entailed)
+    assert {item["kind"] for item in claims} >= {"price_claim", "fabricated_id"}
+    entailed = asyncio.run(entail_claims(call, judge=HeuristicJudge(), candidates=claims))
+    assert entailed
+    assert all(item["verdict"] != "grounded" for item in entailed)
+    assert any(item["verdict"] == "contradicted" for item in entailed)
+    assert any(item.get("quotes") for item in entailed)
+    assert any("lookup_order" in " ".join(item.get("grounding_considered") or []) for item in entailed)
 
 
-@pytest.mark.asyncio
-async def test_grounded_identifier_passes() -> None:
+def test_grounded_identifier_passes() -> None:
     call = _call(
         turns=[Turn(index=0, speaker=Speaker.AGENT, text="Order ORD-100 is $12.00")],
         grounding=[
             GroundingRef(
-                kind="tool_result",  # type: ignore[arg-type]
+                kind=GroundingKind.TOOL_RESULT,
                 content="ORD-100 $12.00",
                 content_ref="g1",
-                provenance="provider_reported",  # type: ignore[arg-type]
+                provenance=Provenance.PROVIDER_REPORTED,
             )
         ],
     )
     claims = extract_candidate_claims(call)
-    if not claims:
-        return
-    entailed = await entail_claims(call, judge=HeuristicJudge(), candidates=claims)
+    assert claims == [], "grounded price and order id must not be flagged by the tier-1 pre-filter"
+    entailed = asyncio.run(
+        entail_claims(
+            call,
+            judge=HeuristicJudge(),
+            candidates=[
+                {
+                    "kind": "price_claim",
+                    "span_text": "Order ORD-100 is $12.00",
+                    "turn_index": 0,
+                    "evidence": ["$12.00"],
+                    "needs_llm": True,
+                }
+            ],
+        )
+    )
+    assert entailed
     assert all(item["verdict"] == "grounded" for item in entailed)
 
 

@@ -78,6 +78,22 @@ def test_snapshot_retracts_omitted_authoritative_facts() -> None:
     assert turns[0].text == "new"
 
 
+def test_four_event_permutations_agree_including_tool() -> None:
+    from obsalt.domain.enums import ToolStatus
+    from obsalt.domain.events import ToolObserved
+
+    catalog = _catalog()
+    catalog["tool"] = ToolObserved(tool_id="t1", name="lookup", status=ToolStatus.SUCCESS, result="ok")
+    names = ["call", "turn", "stt", "tool"]
+    hashes = set()
+    for order in itertools.permutations(names):
+        events = [catalog[name] for name in order]
+        accepted, conflicts, _ = fold_facts(events)
+        assert conflicts == []
+        hashes.add(frozenset(record.content_hash for record in accepted.values()))
+    assert len(hashes) == 1
+
+
 def test_conflicting_agent_ids_block_promotion() -> None:
     assembler = Assembler(_decl(), decoder_version="t/1", processing_run_id="r")
     events = [

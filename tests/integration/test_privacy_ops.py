@@ -20,7 +20,6 @@ from obsalt.runtime import in_memory_state
 from obsalt.util import utcnow
 from obsalt.worker.process import process_normalized_events
 from obsalt_testkit.schema import FixtureSuite, blocking_errors, validate_raw_fixtures
-
 from tests.helpers import EXAMPLE_FIXTURES, example_state, fidelity_declaration
 
 
@@ -44,8 +43,33 @@ def test_delete_by_caller_and_range() -> None:
         sink=state.sink,
         decoder_version="t/1",
     )
-    result = apply_deletion(state, org_id="acme", caller="+15551212")
-    assert result["undoable"] is False
+    keep = process_normalized_events(
+        [
+            CallObserved(
+                source_call_id="c2",
+                from_number="+15550000",
+                started_at=datetime(2026, 6, 1, tzinfo=UTC),
+            ),
+            TurnObserved(turn_index=0, speaker=Speaker.USER, text="later"),
+        ],
+        org_id="acme",
+        source="example",
+        source_call_id="c2",
+        envelope_id="e2",
+        declaration=fidelity_declaration(),
+        pointers=state.pointers,
+        sink=state.sink,
+        decoder_version="t/1",
+    )
+    ranged = apply_deletion(
+        state,
+        org_id="acme",
+        start=datetime(2026, 1, 1, tzinfo=UTC),
+        end=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    assert ranged["undoable"] is False
+    assert keep.call_id not in ranged["deleted_calls"]
+    result = apply_deletion(state, org_id="acme", caller="+15550000")
     assert result["deleted_calls"]
     client = TestClient(create_app(Settings(environment="test"), state))
     listed = client.get(

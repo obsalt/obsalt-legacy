@@ -13,7 +13,6 @@ from obsalt.otel.receiver import serialized_partial_success
 from obsalt.plugin.host import LoadedPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceResponse
-
 from tests.helpers import example_state
 
 
@@ -132,6 +131,17 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                     {"key": "gen_ai.conversation.id", "value": {"stringValue": "room-1"}},
                                     {"key": "turn.speaker", "value": {"stringValue": "user"}},
                                 ],
+                            },
+                            {
+                                "traceId": "aa" * 16,
+                                "spanId": "cc" * 8,
+                                "parentSpanId": "bb" * 8,
+                                "name": "stt.transcription",
+                                "startTimeUnixNano": "1000000000",
+                                "endTimeUnixNano": "1300000000",
+                                "attributes": [
+                                    {"key": "gen_ai.conversation.id", "value": {"stringValue": "room-1"}},
+                                ],
                             }
                         ]
                     }
@@ -153,4 +163,4 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
     item = listed.json()["items"][0]
     detail = client.get(f"/v1/calls/{item['id']}", headers={"X-API-Key": "k"})
     assert detail.status_code == 200
-    assert detail.json()["timeline_fidelity"] in {"stage_level", "turn_level"}
+    assert detail.json()["timeline_fidelity"] == "stage_level"
