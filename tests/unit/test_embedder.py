@@ -1,4 +1,4 @@
-"""Local embedder is lexical, not the v0.1 MD5 trick, and clusters similar phrases."""
+"""Local embedder is lexical and clusters similar phrases."""
 
 from __future__ import annotations
 

@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "obsalt-providers-all"
-version = "2.0.0"
+version = "0.0.0"
 description = "Meta-package installing all first-party obsalt source plugins"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
-  "obsalt-vapi==2.0.0",
-  "obsalt-retell==2.0.0",
-  "obsalt-elevenlabs==2.0.0",
-  "obsalt-cartesia==2.0.0",
-  "obsalt-openai-realtime==2.0.0",
-  "obsalt-gemini-live==2.0.0",
-  "obsalt-pipecat==2.0.0",
-  "obsalt-livekit==2.0.0",
+  "obsalt-vapi==0.0.0",
+  "obsalt-retell==0.0.0",
+  "obsalt-elevenlabs==0.0.0",
+  "obsalt-cartesia==0.0.0",
+  "obsalt-openai-realtime==0.0.0",
+  "obsalt-gemini-live==0.0.0",
+  "obsalt-pipecat==0.0.0",
+  "obsalt-livekit==0.0.0",
 ]

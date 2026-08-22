@@ -55,7 +55,7 @@ class LocalEmbedder:
 
     Token hashes plus character trigrams put documents that share words *or*
     nearby phrasing close together. Stop words are down-weighted so content
-    tokens (refund, weather) dominate. This is not MiniLM and not the v0.1 MD5
+    tokens (refund, weather) dominate. This is not MiniLM and not a hash
     trick. Production upgrades by pointing ``OBSALT_EMBEDDER_ONNX_PATH`` at a
     local ONNX model (no torch, works air-gapped).
     """

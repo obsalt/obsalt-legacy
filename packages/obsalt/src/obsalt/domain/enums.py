@@ -128,7 +128,7 @@ class HangupParty(StrEnum):
 
 
 class HangupReason(StrEnum):
-    """Provider-agnostic hangup taxonomy. Carried forward from v0.1 and kept stable."""
+    """Provider-agnostic hangup taxonomy. Keep this list stable."""
 
     USER_HANGUP = "user_hangup"
     AGENT_HANGUP = "agent_hangup"

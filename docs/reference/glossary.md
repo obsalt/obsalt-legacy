@@ -39,5 +39,5 @@
   `stage_level`, `turn_level`, `message_level`, `call_level`, `none`.
 - **unplaced** — A duration without timestamps. Shown as a chip, never as a
   span position.
-- **VoiceCall** — A library class in your agent process. Emits OTLP. Does
-  not POST an obsalt JSON snapshot.
+- **VoiceCall** — A library class in your agent process. Emits OTLP. Not
+  used for hosted-platform webhooks.

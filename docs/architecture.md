@@ -1,216 +1,204 @@
 # Architecture
 
-A call enters as raw bytes. It becomes a trusted, queryable revision only after
-it is authenticated, persisted, decoded, redacted, assembled, and promoted.
-Nothing provider-facing waits on decode or analysis.
+A call enters as raw bytes. It becomes something you can trust only after
+it is authenticated, persisted, decoded, redacted, assembled, and
+promoted. Nothing the provider is waiting on does the expensive work.
+
+If you are connecting an agent, you do not need this page.
+[Getting started](getting-started.md) and the connect guides are enough.
+This page is for people who will change obsalt — or who need to know why
+the console refuses to draw a pretty lie.
 
 ```mermaid
 flowchart TB
   subgraph sources ["Sources"]
     WH["Webhook receiver<br/>signed, per-tenant"]
-    OTLP["OTLP receiver<br/>HTTP proto + JSON, gRPC"]
-    SDK["obsalt SDK<br/>custom agents"]
-    PULL["Provider REST<br/>backfill + reconcile"]
-    SOCK["Stream tap<br/>future: Deepgram"]
+    OTLP["OTLP receiver<br/>HTTP proto + JSON"]
+    SDK["VoiceCall in your process"]
+    PULL["Provider REST backfill"]
   end
 
   subgraph spine ["Durable spine"]
     RAW["RawEnvelope blob<br/>object storage"]
-    INBOX[("Postgres inbox<br/>envelope index, dedupe,<br/>transactional outbox")]
-    Q["Leased work delivery<br/>Redis accelerator"]
-  end
-
-  subgraph decode ["Decode"]
-    SRC["Source plugins"]
-    MAP["Convention mappers"]
+    INBOX[("Postgres inbox<br/>dedupe + outbox")]
   end
 
   subgraph core ["Core"]
-    NORM["NormalizedEvent stream"]
+    DEC["Plugin decode"]
     RED["Redaction choke point"]
-    ASM["Assembler<br/>immutable revision + promote"]
+    ASM["Assembler<br/>immutable revision"]
   end
 
-  subgraph store ["Storage"]
-    CH[("ClickHouse<br/>immutable call revisions")]
-    PG[("Postgres<br/>config, inbox, pointers, search")]
-    OBJ[("Object store<br/>raw, evidence, recordings")]
+  subgraph store ["Stores"]
+    CH[("ClickHouse<br/>call facts")]
+    PG[("Postgres<br/>pointers, keys, search")]
   end
 
-  subgraph analysis ["Analysis"]
-    T1["Tier 1 — every call"]
-    IDX["Indexing — eligible calls"]
-    T2["Tier 2 — sampled"]
-  end
-
-  subgraph out ["Outputs"]
+  subgraph out ["You look here"]
     API["HTTP API"]
-    UI["Web UI"]
-    FWD["Identity-preserving<br/>OTLP forwarder"]
-    EXP["OTLP destinations"]
-    HOOK["Outbound webhooks"]
+    UI["Console"]
+    FWD["OTLP forward"]
   end
 
   WH --> RAW
   OTLP --> RAW
   SDK --> OTLP
   PULL --> RAW
-  SOCK --> RAW
-  RAW --> INBOX --> Q
-  Q --> SRC
-  Q --> MAP
-  SRC --> NORM
-  MAP --> NORM
-  NORM --> RED --> ASM
+  RAW --> INBOX --> DEC --> RED --> ASM
   ASM --> CH
   ASM --> PG
-  ASM --> OBJ
-  CH --> T1 --> CH
-  CH --> IDX --> PG
-  CH --> T2 --> CH
-  PG --> API
+  PG --> API --> UI
   CH --> API
-  API --> UI
-  INBOX --> FWD --> EXP
-  T1 --> HOOK
-  T2 --> HOOK
+  INBOX --> FWD
 ```
 
-## Stage contracts
+## The rules we will not break
 
-| Stage | Input | Output | Idempotent? | Versioned? |
-| --- | --- | --- | --- | --- |
-| Receive | HTTP request | `RawEnvelope` + inbox/outbox committed; provider-specific success response | yes, by transport delivery key | — |
-| Decode | `RawEnvelope` | `NormalizedEvent[]` | yes, pure function | `decoder_version` |
-| Redact | `NormalizedEvent[]` | `NormalizedEvent[]` | yes | `redaction_policy_version` |
-| Assemble | `NormalizedEvent[]` | immutable `CallRevision` + active-revision promotion | yes, stable fact identities | `assembler_version` |
-| Analyze T1 | active call revision | analysis rows keyed by call revision | yes | `analyzer_version` |
-| Index | active call revision | lexical + vector search document | yes, cached by content hash | `index_version` + `embedder_version` |
-| Analyze T2 | active call revision | analysis rows keyed by call revision | yes, cached by content hash | `judge_version` + `prompt_version` |
+These are load-bearing. If one of them is wrong, the shape of the system
+changes. Attack them in review before anything else.
 
-Every stage records its version and `processing_run_id` on its output. The UI
-can show that one call's latency was decoded by `vapi/3` while another was
-decoded by `vapi/2`.
+1. **Never draw what you did not measure.** A waterfall bar requires real
+   start and end. Durations without clocks are chips or distributions.
+   Provider p50/p95 never enter sample percentiles.
+2. **Provenance is a field, not a footnote.** Every value is
+   `provider_reported` (with a source path) or `obsalt_derived` (with a
+   derivation). Absence is its own fact, with a reason. That is how we
+   tell "they did not send it" from "we dropped it."
+3. **Raw first, then ack.** The wire bytes hit object storage and a
+   Postgres inbox/outbox **before** the provider-facing success response.
+   Decode is a pure function. Adapter bugs become replays, not silent
+   holes. Replay dies when raw retention dies; the console says so.
+4. **Decoders are validated against the vendor, not against themselves.**
+   Fixtures must match a vendored schema. Golden `NormalizedEvent[]`
+   plus unit assertions cover units, placement, and pairing — things a
+   schema will not catch.
+5. **One choke point per cross-cutting concern.** All sources hit one
+   normalize/assemble path. Queryable content crosses one redaction
+   boundary. Forwarded telemetry crosses one export-policy boundary.
+   Plugins cannot skip either.
+6. **Decode, assemble, and analyze are separate, versioned stages.**
+   Reprocessing builds a complete new revision and promotes it. We do
+   not mutate a stored call in place.
+7. **Pick the storage engine once.** Production is Postgres + ClickHouse
+   + object storage. Memory types are test doubles. There is no
+   pluggable-backend layer and no SQLite mode.
+8. **Providers are separately installable packages.** Core ships none.
+   First-party plugins use the same public contract as anyone else's.
+9. **Expensive analysis is sampled and budget-capped.** Cheap
+   deterministic work runs on every call. LLM judges run on a trigger or
+   a sample, behind a hard per-org monthly cap. Missing judge output is
+   not a pass.
+10. **Tenant identity comes only from authenticated credentials.**
+    Payload fields and OTLP resource attributes may corroborate. They
+    may never select an org. There is no `require_auth=false`.
 
-Late events create a new call revision. They invalidate revision-keyed analysis
-and search documents without mutating historical results.
+## Pipeline
 
-## Promotion and serving consistency
+| Stage | Input | Output |
+| --- | --- | --- |
+| Receive | HTTP request | `RawEnvelope` committed; provider-specific ack |
+| Decode | `RawEnvelope` | `NormalizedEvent[]` (plugin, `decoder_version`) |
+| Redact | those events | same, policy-stamped |
+| Assemble | events | immutable `CallRevision` |
+| Promote | candidate in ClickHouse | Postgres pointer CAS |
+| Analyze T1 | active revision | hangup, tools, coverage, flags |
+| Index | active revision | lexical + vector search doc |
+| Analyze T2 | active revision | LLM eval / hallucination, if sampled |
 
-There is no cross-database transaction between ClickHouse and Postgres, so the
-design does not pretend there is one:
+Receive, in order, and not negotiable:
 
-1. Write a complete immutable candidate revision to ClickHouse and verify it is
+1. Read **raw bytes**. Parsing first breaks signatures.
+2. Resolve `ingest_key` → org, plugin, encrypted credentials.
+3. Fail-closed auth.
+4. Classify. Observational events only on the webhook path.
+5. Delivery key (transport identity ≠ call identity).
+6. Write the blob. Commit inbox + dedupe + outbox in one Postgres
+   transaction.
+7. Ack.
+
+OTLP (`POST /v1/traces`) uses the same durability path. Tenancy is the
+ingest key. obsalt is **not** a general span store. Raw spans stay in
+the archive for replay and forwarding. The queryable model is the call.
+
+Voice calls have a natural upper bound generic tracing lacks. A trace
+finalizes at `min(root_ended_at + grace, first_seen_at + max_call_duration)`.
+A still-rootless trace becomes `unrooted` and does not invent an outcome.
+
+## Promotion
+
+There is no cross-database transaction. We do not pretend there is:
+
+1. Write a complete candidate revision to ClickHouse. Wait until it is
    query-visible.
-2. Compare-and-swap the Postgres active-revision pointer from the expected base
-   revision to the candidate. A failed CAS rebases the candidate's accepted
-   fact frontier onto the new active revision and retries. An accepted envelope
-   is not marked assembled until an active revision covers its fact frontier.
-3. Call-detail reads fetch the pointer first and query the exact ClickHouse
-   revision. They never ask ClickHouse to guess "latest."
-4. Analysis and search build revision-keyed outputs after promotion. Their
-   execution state is explicit: `pending`, `sampled_out`, `budget_blocked`,
-   `running`, `failed`, or `completed`.
-5. Fleet rollups are immutable serving generations. A correction rebuilds
-   affected partitions, verifies them, then compare-and-swaps a separate
-   Postgres rollup-generation pointer. APIs expose `as_of_generation` and may
-   lag call detail, but never mix generations in one response.
+2. CAS the Postgres active-revision pointer. Failed CAS rebases and
+   retries. An envelope is not "assembled" until some active revision
+   covers its facts.
+3. Call detail reads the pointer first, then that exact ClickHouse
+   revision. Never `SELECT latest`.
+4. Analysis and search are keyed by revision. States are explicit:
+   `pending`, `sampled_out`, `budget_blocked`, `running`, `failed`,
+   `completed`.
+5. Fleet rollups are serving generations. One `as_of_generation` per
+   response. A page never mixes generations.
 
-This is atomic selection of already-durable immutable data, not impossible
-atomic writes across the two databases.
+Late events create a **new** revision. History stays put.
 
-## Ingest
+## Stores
 
-### Webhook
-
-`POST /v1/ingest/{provider}/{ingest_key}`
-
-`ingest_key` is an opaque, high-entropy, hashed-at-rest per-connection
-identifier. We resolve the connection *before* authenticating, so each tenant
-has its own provider credentials instead of one global secret.
-
-Ordered pipeline, non-negotiable:
-
-1. Read **raw bytes**. Never parse first — parsing changes the byte sequence
-   and breaks authentication. Enforce compressed and expanded body limits.
-2. Resolve `ingest_key` → `(org_id, provider, connection, encrypted credentials, plugin)`.
-3. Fail-closed authentication. Empty secret is not "skip verification."
-4. Classify the event. This endpoint accepts observational delivery only.
-   Synchronous request/response events (Vapi `assistant-request`, tool
-   execution, transfer, knowledge-base) must be routed to the user's
-   application.
-5. Derive a transport delivery key. Event identity and call identity are
-   different concepts.
-6. Write the raw body to an org-namespaced deterministic object key.
-7. In one Postgres transaction, insert or resume the envelope index, delivery
-   key dedupe row, and transactional outbox. A committed envelope can never
-   exist without queued work.
-8. Return the provider-specific acknowledgement.
-
-Decode happens in a worker. Redis leases outbox work; Postgres remains the
-source of truth.
-
-### OTLP
-
-`POST /v1/traces` — OTLP/HTTP protobuf and proto3-JSON. OTLP/gRPC is opt-in on
-a separate server in the same process.
-
-Tenancy comes from an ingest-scoped API key, connection token, or mTLS identity
-bound to one org. `obsalt.org` and `service.namespace` may corroborate. They
-may never establish the organization. Mixed-org assertions in one batch are
-rejected.
-
-**obsalt does not become a general span store.** Raw spans stay in the raw
-archive for bounded replay and durable forwarding. The queryable model is the
-Call aggregate.
-
-Waiting for trace completion is unsolvable in general. Voice calls have a
-natural upper bound that generic tracing lacks: finalize at
-`min(root_ended_at + grace, first_seen_at + max_call_duration)`. A still-
-rootless trace becomes an `unrooted` revision that does not invent call name,
-outcome, or end time.
-
-### Backfill, SDK, stream tap
-
-Webhooks are lossy. `RestBackfill` scans a provider API and emits `RawEnvelope`s
-with identity `(connection, upstream_entity_id, content_hash)`. Replay
-re-decodes retained raw data; backfill reduces outage gaps. Neither guarantees
-recovery beyond the displayed raw and provider retention horizons.
-
-OpenAI Realtime and Gemini Live have no post-call webhook. Their telemetry
-exists only in your process, so they are served by `VoiceCall` — a thin
-OpenTelemetry wrapper — not an obsalt-invented JSON envelope.
-
-Deepgram's shape is "tap the WebSocket." That is `StreamSource`, declared in
-v2 with no first-party implementation. Adding it later must not require a
-core change.
-
-## Analysis
-
-**Tier 1 — every call, deterministic, cheap.** Stage normalization, tool
-telemetry, hangup classification, coverage, rule-based flags.
-
-**Indexing — every eligible call.** Redacted lexical documents and embeddings.
-Sampling search would make it silently incomplete.
-
-**Tier 2 — sampled or triggered, expensive.** LLM evals and hallucination
-entailment. Default baseline sample rate is 0%. Triggers: manual request,
-Tier-1 signal, user filter, then optional baseline sample. A per-org monthly
-LLM spend cap is a hard stop.
-
-Missing analysis output is never interpreted as a passing call.
-
-## Why this architecture and not something else
-
-| Alternative | Why not |
+| Store | Holds |
 | --- | --- |
-| Reconstruct a waterfall from provider summary statistics | That is a chart that causes wrong conclusions. Hosted platforms ship durations without stage timestamps. See [T1](tenets.md#t1-never-draw-what-you-did-not-measure). |
-| Decode on the webhook request | Adapter bugs become permanent data loss. Receive must ack fast and persist raw first. |
-| One database | Transactional acceptance and billion-row percentile queries are different jobs. See [storage](storage.md). |
-| Pluggable storage backends | The thing to avoid, not the thing to build. Langfuse rejected this as maintenance overhead. |
-| Providers in core | The public plugin API would rot. First-party plugins use the same entry point as third-party ones. |
-| Span synthesis from durations | The v0.1 category error. Even with field names fixed, there is nothing to place those values at. |
-| Langfuse-compatible ingest | Tempting for Vapi's `observabilityPlan`. Deferred: a proprietary, undocumented, moving API. Breadth of first-class providers wins. |
+| **ClickHouse** | Immutable revisions, turns, stage measurements, tools, analysis. Append-mostly, percentile queries. |
+| **Postgres** | Inbox, outbox, dedupe, active-revision pointer, keys, encrypted secrets, tombstones, search documents + pgvector. |
+| **Object storage** | Org-namespaced raw blobs (unredacted, short-lived), evidence, recordings. |
+| **Redis** | Lease accelerator. If it dies, workers still claim from Postgres. |
 
-The tenets that force this shape are in [tenets.md](tenets.md). The record of
-choices is in [decisions.md](decisions.md).
+Queries always specify `(org_id, call_id, revision)`. Call-list cursors
+are `{call_id}:{revision}`.
+
+This split is intentional. Receive needs a transaction. A year of stage
+measurements does not belong in the same engine. We are not going to add
+a second storage backend to make `pip install && serve` look friendlier.
+Compose is the compromise.
+
+Retention defaults: 30 days raw, 90 days transcripts, 400 days
+aggregates. Raw is unredacted on purpose — that is the replay tradeoff.
+
+Search is hybrid (lexical + vector) over redacted content. Default
+embedder is a local ONNX model.
+
+## Measurement vs timeline
+
+Hosted platforms send durations. They often do not send stage clocks.
+Those are different facts:
+
+- `StageMeasurement` — one duration, with `placement` (`interval`,
+  `anchored_duration`, `unplaced`, `coarse_anchor`) and provenance.
+- `AggregateMeasurement` — a provider p95. Stored separately. Never
+  mixed into sample rollups.
+- `SignalCoverage` — present / absent / unsupported / redacted /
+  decode_failed.
+
+A plugin that claims `INTERVAL` and emits a value without timestamps
+fails conformance. A plugin that marks a signal unsupported while its
+own fixtures contain the unconsumed field also fails.
+
+Speech-to-speech sources use `user_input` / `generation` / `playout`.
+Cascade STT/LLM/TTS rows must not appear as empty placeholders.
+
+## What we are not building next to this
+
+- A second storage backend, or SQLite "for demo."
+- Waterfalls reconstructed from summary statistics.
+- Decode on the webhook request path.
+- A Langfuse-shaped ingest shim (tempting for Vapi; a moving proprietary
+  API). First-class webhooks and OTLP win.
+- Tenant-uploaded plugins. Operator-installed wheels are trusted code,
+  not a sandbox.
+- Deepgram as a first-party plugin. `StreamSource` is declared so a tap
+  can land later without a core change.
+- Bland as a first-party plugin. The contract would accept it; it is
+  not in the committed set.
+
+Domain types and hangup reasons: [domain](reference/domain.md).
+Span conventions: [OTLP](reference/otlp.md).
+Tenancy and redaction: [security](reference/security.md).

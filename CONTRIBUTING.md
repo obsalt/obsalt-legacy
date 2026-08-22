@@ -1,4 +1,7 @@
 # Contributing
 
-See [docs/contributing.md](docs/contributing.md) for setup, the PR bar, and
-the roadmap. [docs/style.md](docs/style.md) is the naming and style contract.
+Setup, the PR bar, and how to add a source: [docs/developing.md](docs/developing.md).
+
+If you are trying to **use** obsalt with a live voice agent, start at the
+[README](README.md) and [docs/getting-started.md](docs/getting-started.md)
+instead.

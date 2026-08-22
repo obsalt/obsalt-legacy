@@ -1,8 +1,8 @@
 # obsalt
 
-Core package: domain model, plugin host, durable ingest, assembly, analysis,
-HTTP API, and UI. **Core ships no providers.** Install a source plugin such
-as `obsalt-vapi` or `obsalt-retell`.
+The core package: domain model, plugin host, durable ingest, assembly,
+analysis, HTTP API, and the web console. **Core ships no providers.**
+Install a source plugin such as `obsalt-vapi` or `obsalt-pipecat`.
 
 ```bash
 pip install "obsalt[vapi,retell]"
@@ -12,5 +12,6 @@ obsalt serve
 
 `obsalt demo` launches the same stack with a not-for-production banner.
 
-Plugins are trusted, operator-installed code. Start with the
+This is a **service** (plus a small `VoiceCall` tracer for custom agents),
+not an SDK that replaces your voice platform. Start at the
 [documentation index](../../docs/README.md).

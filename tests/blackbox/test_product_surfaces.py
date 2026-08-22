@@ -72,7 +72,7 @@ def test_rubric_put_increments_version_on_same_id() -> None:
     updated = client.put(
         f"/v1/rubrics/{rubric_id}",
         headers={"X-API-Key": "k"},
-        json={"name": "grounded-v2", "description": "stricter"},
+        json={"name": "grounded-stricter", "description": "stricter"},
     )
     assert updated.status_code == 200
     assert updated.json()["id"] == rubric_id

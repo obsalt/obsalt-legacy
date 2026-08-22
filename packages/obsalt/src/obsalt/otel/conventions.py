@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-# Span names (v2) — never interpolate turn index or tool name into the name.
+# Span names stay low-cardinality. Never interpolate turn index or tool name.
 SPAN_CALL = "call.lifecycle"
 SPAN_TURN = "turn"
 SPAN_STT = "stt.transcription"
@@ -134,8 +134,28 @@ def genai_audio_input_tokens(attrs: Mapping[str, object] | None) -> tuple[int | 
     return None, None
 
 
-def setup_tracing(*, otlp_endpoint: str | None = None, emit_pii: bool = False) -> None:
-    """Configure the process tracer. Default exporter strips obsalt.pii.*."""
+def traces_endpoint(otlp_endpoint: str) -> str:
+    """Accept a service origin or an already-complete traces URL."""
+
+    base = otlp_endpoint.rstrip("/")
+    if base.endswith("/v1/traces"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/traces"
+    return f"{base}/v1/traces"
+
+
+def setup_tracing(
+    *,
+    otlp_endpoint: str | None = None,
+    api_key: str | None = None,
+    emit_pii: bool = False,
+) -> None:
+    """Configure the process tracer. Default exporter strips ``obsalt.pii.*``.
+
+    ``otlp_endpoint`` may be the service origin (``http://localhost:8080``) or
+    the traces path. ``api_key`` is sent as ``X-API-Key``.
+    """
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
@@ -145,7 +165,8 @@ def setup_tracing(*, otlp_endpoint: str | None = None, emit_pii: bool = False) -
     if otlp_endpoint:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-        exporter = OTLPSpanExporter(endpoint=otlp_endpoint.rstrip("/") + "/v1/traces")
+        headers = {"X-API-Key": api_key} if api_key else None
+        exporter = OTLPSpanExporter(endpoint=traces_endpoint(otlp_endpoint), headers=headers)
     else:
         exporter = ConsoleSpanExporter()
     from obsalt.otel.export_policy import StripPiiSpanProcessor

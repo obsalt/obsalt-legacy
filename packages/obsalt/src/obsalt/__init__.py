@@ -1,8 +1,8 @@
-"""obsalt v2 — self-hosted call analytics and quality for AI voice agents.
+"""obsalt — self-hosted call analytics and quality for AI voice agents.
 
 Core ships no providers. Install obsalt-vapi, obsalt-retell, or another plugin.
 Plugins are trusted, operator-installed code discovered via the obsalt.plugins
-entry point. See docs/guides/write-a-plugin.md.
+entry point. See docs/plugins.md.
 """
 
 from obsalt._version import PLUGIN_API_VERSION, __version__
