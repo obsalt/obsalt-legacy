@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
+    GroundingKind,
     MeasurementPlacement,
     Metric,
     PipelineArchitecture,
@@ -16,6 +17,7 @@ from obsalt.domain.enums import (
 )
 from obsalt.domain.events import (
     CallObserved,
+    GroundingObserved,
     NormalizedEvent,
     StageObserved,
     ToolObserved,
@@ -48,7 +50,9 @@ class PipecatPlugin:
         source_format="pipecat.otlp",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.ANCHORED_DURATION}),
-        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.TTFA}),
+        provides=frozenset(
+            {Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.TTFA, Signal.GROUNDING_USER}
+        ),
         structurally_absent={},
         schema_source="Pipecat tracing (metrics.ttfb, turn.*, gen_ai.provider.name in code; gen_ai.system in docs)",
         schema_revision="2026-08-22",
@@ -92,16 +96,46 @@ class PipecatPlugin:
             turn_i = int(turn_index) if turn_index is not None else None
             if span.name == SPAN_TURN:
                 speaker = Speaker.AGENT if attrs.get("turn.speaker") == "agent" else Speaker.USER
-                yield TurnObserved(turn_index=turn_i or 0, speaker=speaker, started_at=started, ended_at=ended)
+                text = str(
+                    attrs.get("obsalt.pii.user_transcript")
+                    or attrs.get("obsalt.pii.agent_transcript")
+                    or attrs.get("input.value")
+                    or ""
+                )
+                yield TurnObserved(
+                    turn_index=turn_i or 0,
+                    speaker=speaker,
+                    text=text,
+                    started_at=started,
+                    ended_at=ended,
+                )
+                if speaker is Speaker.USER and text:
+                    yield GroundingObserved(
+                        kind=GroundingKind.USER_TEXT,
+                        content=text,
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="span.attributes.obsalt.pii.user_transcript",
+                    )
                 continue
             if span.name == SPAN_TOOL:
+                result = attrs.get("obsalt.pii.tool.result") or attrs.get("output.value")
+                args = attrs.get("obsalt.pii.tool.arguments") or attrs.get("input.value")
                 yield ToolObserved(
                     tool_id=str(attrs.get("tool.id") or attrs.get("gen_ai.tool.call.id") or span.span_id),
                     name=str(attrs.get("tool.name") or attrs.get("gen_ai.tool.name") or "tool"),
                     turn_index=turn_i,
                     started_at=started,
                     ended_at=ended,
+                    args=args if isinstance(args, dict) else ({"value": args} if args is not None else None),
+                    result=result,
                 )
+                if result not in (None, ""):
+                    yield GroundingObserved(
+                        kind=GroundingKind.TOOL_RESULT,
+                        content=str(result),
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="span.attributes.output.value",
+                    )
                 yield StageObserved(
                     stage=Stage.TOOL,
                     metric=Metric.DURATION,

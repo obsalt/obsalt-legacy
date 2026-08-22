@@ -217,8 +217,11 @@ def cmd_retain(_args: argparse.Namespace) -> int:
     settings = Settings()
     try:
         state = production_state(settings)
-    except Exception:
-        state = in_memory_state(settings)
+    except Exception as exc:
+        print("Could not connect to the durable stack.", file=sys.stderr)
+        print("Supported path: docker compose up -d && obsalt retain", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
     print(json.dumps(sweep(state), indent=2))
     return 0
 
@@ -230,8 +233,11 @@ def cmd_export(args: argparse.Namespace) -> int:
     settings = Settings()
     try:
         state = production_state(settings)
-    except Exception:
-        state = in_memory_state(settings)
+    except Exception as exc:
+        print("Could not connect to the durable stack.", file=sys.stderr)
+        print("Supported path: docker compose up -d && obsalt export", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
     dest = Path(args.dest)
     report = export_revisions(
         active_calls(state, args.org),

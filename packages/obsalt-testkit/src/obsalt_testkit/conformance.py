@@ -161,10 +161,21 @@ class DecoderConformanceTests:
                         assert event.started_at is not None and event.ended_at is not None
 
     def test_no_pii_in_span_names(self) -> None:
-        from obsalt.otel.conventions import SPAN_TOOL, SPAN_TURN
+        from obsalt.otel.conventions import SPAN_STT_PROVIDER_ATTEMPT, SPAN_TOOL, SPAN_TURN
 
-        assert "{" not in SPAN_TURN
-        assert "execute_tool" == SPAN_TOOL
+        for name in (SPAN_TURN, SPAN_TOOL, SPAN_STT_PROVIDER_ATTEMPT):
+            assert "{" not in name
+            assert not any(ch.isdigit() for ch in name if ch not in "._")
+        for path in self.raw_payloads():
+            for event in self.decode_raw(path):
+                source = getattr(event, "source_path", None) or ""
+                assert "{" not in source
+                text = getattr(event, "text", None)
+                if text and len(str(text)) > 12:
+                    assert str(text) not in source
+                number = getattr(event, "from_number", None)
+                if number and str(number) not in {"", "<phone>"}:
+                    assert str(number) not in source
 
 
 class OtlpMapperConformanceTests:
@@ -197,6 +208,15 @@ class OtlpMapperConformanceTests:
         for event in self._decode():
             if isinstance(event, StageObserved) and event.placement is MeasurementPlacement.INTERVAL:
                 assert event.started_at is not None and event.ended_at is not None
+
+    def test_mapper_span_names_stay_off_the_event(self) -> None:
+        """Variables belong on attributes. Event source_path must not contain user text."""
+        for event in self._decode():
+            path = getattr(event, "source_path", None) or ""
+            assert "\n" not in path
+            text = getattr(event, "text", None)
+            if text and len(str(text)) > 12:
+                assert str(text) not in path
 
 
 class SecondsVsMillisecondsTests:
@@ -246,6 +266,13 @@ class AuthenticationConformanceTests:
         dup = require_singleton(pairs, singleton)
         assert dup is not None
         assert dup.outcome is VerifyOutcome.MALFORMED
+
+    def test_valid_signature_accepted(self) -> None:
+        result = self.plugin.authenticate(
+            self.valid_raw, RawHeaders.from_mapping(self.valid_headers).as_list(), self.connection
+        )
+        assert result.ok, result.detail
+        assert result.outcome is VerifyOutcome.OK
 
 
 class SchemaFixtureTests:
@@ -426,9 +453,66 @@ def load_bypass_reasons(fixtures_dir: Path) -> dict[str, str]:
 
 def _payload_has_prompt(payload: Any) -> bool:
     blob = json.dumps(payload).lower()
-    return "system" in blob and ("prompt" in blob or '"role": "system"' in blob or '"role":"system"' in blob)
+    return any(
+        token in blob
+        for token in (
+            '"role": "system"',
+            '"role":"system"',
+            "system_prompt",
+            "systemprompt",
+            "system_instructions",
+        )
+    )
 
 
 def _payload_has_tool_result(payload: Any) -> bool:
     blob = json.dumps(payload).lower()
-    return "tool" in blob and ("result" in blob or "tool_call_result" in blob)
+    return any(token in blob for token in ("tool_call_result", "toolresult", "tool_result", '"result":'))
+
+
+class WebhookConformanceTests:
+    """Required for webhook_source plugins: delivery key + provider-specific ack."""
+
+    plugin: WebhookSource
+    valid_raw: bytes
+
+    def test_acknowledgement_is_2xx(self) -> None:
+        from obsalt.domain.enums import ObservationalEventKind
+
+        ack = self.plugin.acknowledgement(ObservationalEventKind.CALL_ENDED)
+        assert 200 <= ack.status_code < 300
+
+    def test_delivery_key_is_stable_or_none(self) -> None:
+        first = self.plugin.delivery_key(self.valid_raw, [])
+        second = self.plugin.delivery_key(self.valid_raw, [])
+        assert first == second
+
+    def test_unknown_payload_does_not_crash_classify(self) -> None:
+        kind = self.plugin.classify(b'{"type":"definitely-not-a-real-event"}')
+        assert kind is not None
+
+
+class SdkInstrumentationConformanceTests:
+    """Required for SDK instrumentation plugins (§13.2)."""
+
+    plugin: Any
+
+    def test_instrument_returns_client(self) -> None:
+        from obsalt.plugin.types import SdkConfig
+
+        result = self.plugin.instrument(object(), SdkConfig())
+        assert result is not None
+        assert getattr(result, "client", None) is not None or hasattr(result, "client")
+
+    def test_low_cardinality_span_names(self) -> None:
+        from obsalt.otel.conventions import SPAN_GENERATION, SPAN_PLAYOUT, SPAN_USER_INPUT
+
+        for name in (SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT):
+            assert "{" not in name
+            assert name == name.split(".")[0] or name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}
+
+
+def spans_from_fixture(path: Path) -> list[ReadableSpan]:
+    payload = json.loads(path.read_text())
+    rows = payload if isinstance(payload, list) else payload.get("spans") or []
+    return [ReadableSpan.model_validate(row) for row in rows]

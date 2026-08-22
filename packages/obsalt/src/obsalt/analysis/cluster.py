@@ -8,9 +8,12 @@ into semantic subclusters. Deterministic: sorted call ids, first-member centroid
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
+
+log = logging.getLogger("obsalt.analysis.cluster")
 
 from obsalt.domain.enums import HangupParty, HangupReason, Speaker
 from obsalt.domain.models import CallRevision
@@ -24,8 +27,21 @@ class MemoryHangupClusterStore:
     def __init__(self) -> None:
         self.by_org: dict[str, dict[str, Any]] = {}
 
-    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
-        payload = cluster_hangups(calls, generation)
+    def refresh(
+        self,
+        org_id: str,
+        calls: Sequence[CallRevision],
+        generation: str,
+        *,
+        embedder: LocalEmbedder | None = None,
+        similarity_threshold: float = 0.3,
+    ) -> dict[str, Any]:
+        payload = cluster_hangups(
+            calls,
+            generation,
+            embedder=embedder or LocalEmbedder(),
+            similarity_threshold=similarity_threshold,
+        )
         self.by_org[org_id] = payload
         return payload
 
@@ -45,8 +61,18 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
         super().__init__()
         self._client = client
 
-    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
-        payload = super().refresh(org_id, calls, generation)
+    def refresh(
+        self,
+        org_id: str,
+        calls: Sequence[CallRevision],
+        generation: str,
+        *,
+        embedder: LocalEmbedder | None = None,
+        similarity_threshold: float = 0.3,
+    ) -> dict[str, Any]:
+        payload = super().refresh(
+            org_id, calls, generation, embedder=embedder, similarity_threshold=similarity_threshold
+        )
         try:
             import json
 
@@ -84,7 +110,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
                     ],
                 )
         except Exception:
-            pass
+            log.warning("hangup_clusters insert failed for org %s generation %s", org_id, generation)
         return payload
 
     def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:
@@ -160,14 +186,11 @@ def cluster_hangups(
 
     clusters: list[dict[str, Any]] = []
     for (reason, party), members in sorted(grouped.items()):
-        subclusters = (
-            _embed_subclusters(members, embedder, similarity_threshold)
-            if embedder is not None
-            else [members]
-        )
+        used = embedder or LocalEmbedder()
+        subclusters = _embed_subclusters(members, used, similarity_threshold)
         for index, subset in enumerate(subclusters):
             ranked = sorted(subset, key=lambda call: (-_loss(call), call.call_id))
-            cluster_id = f"{reason}:{party}" if embedder is None else f"{reason}:{party}:{index:02d}"
+            cluster_id = f"{reason}:{party}:{index:02d}"
             top = ranked[0]
             clusters.append(
                 {
@@ -239,9 +262,21 @@ def _embed_subclusters(
 
 
 def _embed_texts(embedder: LocalEmbedder, texts: Sequence[str]) -> list[list[float]]:
+    if hasattr(embedder, "bag"):
+        return [list(embedder.bag(text)) for text in texts]
+    projector = getattr(embedder, "_project", None)
+    bag = getattr(embedder, "_bag", None)
+    if callable(projector) and bag is not None:
+        return [list(projector(bag.bag(text))) for text in texts]
     docs = [RedactedDocument(id=str(index), text=text) for index, text in enumerate(texts)]
-    vectors = asyncio.run(embedder.embed(docs))
-    return [list(item.values) for item in vectors]
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        vectors = asyncio.run(embedder.embed(docs))
+        return [list(item.values) for item in vectors]
+    if bag is not None:
+        return [list(bag.bag(text)) for text in texts]
+    raise RuntimeError("cannot embed while an event loop is running")
 
 
 def _dot(left: Sequence[float], right: Sequence[float]) -> float:

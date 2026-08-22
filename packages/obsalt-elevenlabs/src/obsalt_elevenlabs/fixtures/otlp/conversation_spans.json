@@ -1,0 +1,22 @@
+[
+  {
+    "name": "conversation",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "bbbbbbbbbbbbbbbb",
+    "start_unix_nano": 1755777600000000000,
+    "end_unix_nano": 1755777602000000000,
+    "attributes": {
+      "elevenlabs.conversation_id": "el-stock-1"
+    }
+  },
+  {
+    "name": "broken",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "cccccccccccccccc",
+    "start_unix_nano": 1755777603000000000,
+    "end_unix_nano": 1755777601000000000,
+    "attributes": {
+      "elevenlabs.conversation_id": "el-stock-1"
+    }
+  }
+]

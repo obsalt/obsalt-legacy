@@ -1,0 +1,65 @@
+[
+  {
+    "name": "turn",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "bbbbbbbbbbbbbbbb",
+    "start_unix_nano": 1755777600000000000,
+    "end_unix_nano": 1755777601200000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "gen_ai.provider.name": "pipecat",
+      "turn.index": 0,
+      "turn.speaker": "user",
+      "obsalt.pii.user_transcript": "I need a refund for order ORD-100"
+    }
+  },
+  {
+    "name": "stt.transcription",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "cccccccccccccccc",
+    "start_unix_nano": 1755777600000000000,
+    "end_unix_nano": 1755777600180000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "turn.index": 0,
+      "metrics.ttfb": 40.0
+    }
+  },
+  {
+    "name": "llm.inference",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "dddddddddddddddd",
+    "start_unix_nano": 1755777600200000000,
+    "end_unix_nano": 1755777600800000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "turn.index": 0
+    }
+  },
+  {
+    "name": "execute_tool",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "eeeeeeeeeeeeeeee",
+    "start_unix_nano": 1755777600810000000,
+    "end_unix_nano": 1755777600900000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "turn.index": 0,
+      "gen_ai.tool.name": "lookup_order",
+      "gen_ai.tool.call.id": "tool-1",
+      "output.value": "{\"status\":\"not_found\"}"
+    }
+  },
+  {
+    "name": "tts.synthesis",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "ffffffffffffffff",
+    "start_unix_nano": 1755777600910000000,
+    "end_unix_nano": 1755777601200000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "turn.index": 0,
+      "metrics.ttfb": 22.0
+    }
+  }
+]

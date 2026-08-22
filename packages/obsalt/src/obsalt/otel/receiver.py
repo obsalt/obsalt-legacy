@@ -55,6 +55,9 @@ def request_to_spans(req: ExportTraceServiceRequest) -> list[ReadableSpan]:
         for scope in resource_span.scope_spans:
             for span in scope.spans:
                 parent = span.parent_span_id.hex() if span.parent_span_id else None
+                attributes = {kv.key: _any_value(kv.value) for kv in span.attributes}
+                if len(attributes) > MAX_ATTRS:
+                    raise HTTPException(status_code=400, detail="attribute count exceeds limit")
                 spans.append(
                     ReadableSpan(
                         name=span.name,
@@ -63,7 +66,7 @@ def request_to_spans(req: ExportTraceServiceRequest) -> list[ReadableSpan]:
                         parent_span_id=parent,
                         start_unix_nano=span.start_time_unix_nano,
                         end_unix_nano=span.end_time_unix_nano,
-                        attributes={kv.key: _any_value(kv.value) for kv in span.attributes},
+                        attributes=attributes,
                         resource=resource,
                     )
                 )
@@ -74,6 +77,14 @@ def request_to_spans(req: ExportTraceServiceRequest) -> list[ReadableSpan]:
 
 def serialized_success() -> bytes:
     return ExportTraceServiceResponse().SerializeToString()
+
+
+def serialized_partial_success(*, rejected: int, error_message: str) -> bytes:
+    """Permanently invalid records. OTLP clients must not retry this response."""
+    response = ExportTraceServiceResponse()
+    response.partial_success.rejected_spans = int(rejected)
+    response.partial_success.error_message = error_message
+    return response.SerializeToString()
 
 
 def decompress_body(raw: bytes, encoding: str | None) -> bytes:

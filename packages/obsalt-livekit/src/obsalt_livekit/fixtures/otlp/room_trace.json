@@ -1,0 +1,24 @@
+[
+  {
+    "name": "inference",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "bbbbbbbbbbbbbbbb",
+    "start_unix_nano": 1755777600000000000,
+    "end_unix_nano": 1755777600500000000,
+    "attributes": {
+      "lk.room.name": "room-stock-1",
+      "gen_ai.conversation.id": "lk-stock-1",
+      "gen_ai.usage.audio.input_tokens": 42
+    }
+  },
+  {
+    "name": "tts",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "cccccccccccccccc",
+    "start_unix_nano": 1755777600500000000,
+    "end_unix_nano": 1755777600900000000,
+    "attributes": {
+      "lk.room.name": "room-stock-1"
+    }
+  }
+]

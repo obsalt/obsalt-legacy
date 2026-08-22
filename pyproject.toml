@@ -28,8 +28,12 @@ pythonpath = [
 ]
 addopts = "-q --strict-markers"
 markers = [
-  "integration: requires docker-compose services",
+  "integration: cross-component tests that stay on memory doubles",
   "conformance: plugin conformance kit",
+  "blackbox: HTTP API observed only through status codes and JSON",
+  "contract: OTLP, SSRF, and storage SQL contracts",
+  "unit: isolated function tests",
+  "property: assembler permutation and fold properties",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
 

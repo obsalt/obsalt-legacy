@@ -6,14 +6,16 @@ from datetime import UTC, date, datetime
 from obsalt._version import PLUGIN_API_VERSION
 from obsalt.domain.enums import (
     Capability,
+    GroundingKind,
     MeasurementPlacement,
     Metric,
     PipelineArchitecture,
     Provenance,
     Signal,
     Stage,
+    ToolStatus,
 )
-from obsalt.domain.events import CallObserved, NormalizedEvent, StageObserved
+from obsalt.domain.events import CallObserved, GroundingObserved, NormalizedEvent, StageObserved, ToolObserved
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
 from obsalt.plugin.types import PluginManifest, ReadableSpan
@@ -30,7 +32,7 @@ class LiveKitPlugin:
         source_format="livekit.otlp",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
-        provides=frozenset({Signal.STAGE_INTERVAL}),
+        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TOOL_RESULT}),
         structurally_absent={},
         schema_source="LiveKit lk.* and gen_ai.usage.input_audio_tokens (accepted alongside merged spec)",
         schema_revision="2026-08-22",
@@ -76,6 +78,7 @@ class LiveKitPlugin:
             source_path = f"span:{span.name}"
             if key:
                 source_path = f"span:{span.name}/{key}"
+            stage = _stage_for_span(span.name, attrs)
             yield StageObserved(
                 stage=stage,
                 metric=Metric.DURATION,
@@ -86,6 +89,31 @@ class LiveKitPlugin:
                 provenance=Provenance.PROVIDER_REPORTED,
                 source_path=source_path,
             )
+            result = attrs.get("obsalt.pii.tool.result") or attrs.get("output.value")
+            if stage is Stage.TOOL or result not in (None, ""):
+                yield ToolObserved(
+                    tool_id=str(attrs.get("gen_ai.tool.call.id") or span.span_id),
+                    name=str(attrs.get("gen_ai.tool.name") or attrs.get("lk.tool.name") or span.name),
+                    started_at=datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC),
+                    ended_at=datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC),
+                    status=ToolStatus.SUCCESS,
+                    result=result,
+                )
+                if result not in (None, ""):
+                    yield GroundingObserved(
+                        kind=GroundingKind.TOOL_RESULT,
+                        content=str(result),
+                        provenance=Provenance.PROVIDER_REPORTED,
+                        source_path="span.attributes.output.value",
+                    )
+            prompt = attrs.get("obsalt.pii.system_prompt") or attrs.get("gen_ai.system_instructions")
+            if prompt:
+                yield GroundingObserved(
+                    kind=GroundingKind.SYSTEM_PROMPT,
+                    content=str(prompt),
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path="span.attributes.gen_ai.system_instructions",
+                )
 
 
 def _stage_for_span(name: str, attrs: dict[str, object]) -> Stage:

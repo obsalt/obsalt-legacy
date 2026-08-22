@@ -80,3 +80,14 @@ def validate_destination(url: str, *, allow_http_localhost: bool = False) -> Non
             raise EgressDenied("HTTP destinations are not allowed")
         if not all(_is_loopback(ip) for ip in ips):
             raise EgressDenied("HTTP is only allowed for localhost")
+
+
+def validate_redirect(from_url: str, location: str, *, allow_http_localhost: bool = False) -> str:
+    """Re-resolve DNS after a redirect. Relative locations join against from_url."""
+    from urllib.parse import urljoin
+
+    if not location:
+        raise EgressDenied("empty redirect location")
+    resolved = urljoin(from_url, location)
+    validate_destination(resolved, allow_http_localhost=allow_http_localhost)
+    return resolved

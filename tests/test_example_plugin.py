@@ -17,6 +17,7 @@ from obsalt_testkit import (
     RestBackfillConformanceTests,
     SchemaFixtureTests,
     StreamSourceConformanceTests,
+    WebhookConformanceTests,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-example" / "src" / "obsalt_example" / "fixtures"
@@ -54,6 +55,11 @@ class TestExampleBackfill(RestBackfillConformanceTests):
         secrets={},
         settings={"backfill_items": [{"id": "bf-1", "hash": "h1", "ended_reason": "completed"}]},
     )
+
+
+class TestExampleWebhook(WebhookConformanceTests):
+    plugin = ExamplePlugin()
+    valid_raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
 
 
 class TestExampleAuth(AuthenticationConformanceTests):
