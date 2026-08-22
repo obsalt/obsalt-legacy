@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-gemini-live"
+version = "2.0.0"
+description = "Gemini Live SDK instrumentation and OTLP mapper for obsalt"
+requires-python = ">=3.11"
+dependencies = ["obsalt==2.0.0"]
+
+[project.entry-points."obsalt.plugins"]
+gemini_live = "obsalt_gemini_live.plugin:GeminiLivePlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]

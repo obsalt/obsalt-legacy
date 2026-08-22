@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}obsalt — quality{% endblock %}
+{% block content %}
+  {% set quality = quality|default(rollup|default({})) %}
+  {% set evals = quality.evals|default({}) %}
+  {% set baseline = quality.baseline|default({}) %}
+  {% set hallucinations = quality.hallucinations|default({}) %}
+  <h1>Quality</h1>
+  <p>Serving generation <code>{{ quality.as_of_generation|default(as_of_generation) }}</code>.</p>
+  <p class="muted">{{ quality.note|default("Missing output is never interpreted as a passing call. Baseline-sample statistics are separate from the trigger-biased review queue.") }}</p>
+  <p>Tier-2 spend: {{ spend_usd|default("—") }} / {{ budget_usd|default("—") }} USD</p>
+  <section class="panel">
+    <h2>Evals</h2>
+    <p>
+      Eligible {{ evals.eligible|default(0) }}
+      · completed {{ evals.completed|default(0) }}
+      · passed {{ evals.passed|default(0) }}
+      · failed {{ evals.failed|default(0) }}
+    </p>
+    <p class="muted">Unbiased baseline: completed {{ baseline.completed|default(0) }}, passed {{ baseline.passed|default(0) }}, failed {{ baseline.failed|default(0) }}</p>
+  </section>
+  <section class="panel">
+    <h2>Hallucination flags</h2>
+    <p>Count {{ hallucinations.count|default(0) }}</p>
+    {% for kind, n in (hallucinations.by_kind|default({})).items() %}
+      <div class="chip">{{ kind }} {{ n }}</div>
+    {% endfor %}
+  </section>
+  <section class="panel">
+    <h2>Review queue</h2>
+    <table>
+      <thead>
+        <tr><th>Call</th><th>Kind</th><th>State</th><th>Passed</th></tr>
+      </thead>
+      <tbody>
+        {% for item in quality.review_queue|default([]) %}
+        <tr>
+          <td><a href="/v1/ui/calls/{{ item.call_id }}">{{ item.call_id }}</a></td>
+          <td>{{ item.kind }}</td>
+          <td>{{ item.state }}</td>
+          <td>{{ item.passed }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4">Review queue is empty.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

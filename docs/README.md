@@ -1,47 +1,17 @@
-# Documentation
+# obsalt documentation
 
-obsalt records each voice call as an OpenTelemetry **trace** (where time went) and an **evidence** record (what was said). You run it yourself. You already have — or will add — an OTLP backend if you want waterfalls.
+This tree is obsalt **v2**. The load-bearing design is [rewrite-plan.md](rewrite-plan.md).
+These pages are the operator-facing cut of that plan.
 
-## Start here
-
-1. **[Choose a path](choose-a-path.md)** — hosted platform vs Pipecat / your loop. Do this before installing anything.
-2. **[What you can see](what-you-see.md)** — Grafana (fleet), `/v1/ui` (one call), HTTP API. Transcripts are not span attributes.
-3. **[Glossary](glossary.md)** — OTLP is a protocol. `VoiceCallTracer` is a Python class. `obsalt serve` is the HTTP server.
-4. **[Getting started](getting-started.md)** — `obsalt init`, first fixture, first instrumented turn.
-
-## Path A — hosted (Vapi / Retell / Bland)
-
-The vendor owns the audio loop. Point a webhook at `obsalt serve`.
-
-- [Providers](providers/index.md)
-- [Vapi](providers/vapi.md) · [Retell](providers/retell.md) · [Bland](providers/bland.md)
-- [Ingest](ingest.md)
-
-## Path B — custom agents (Pipecat / LiveKit)
-
-You own STT / LLM / TTS. Wrap the session with `VoiceCall`.
-
-- [Custom agents](custom-agents.md)
-- [Instrument an agent](instrumentation.md) — span API reference
-- [Native snapshots](providers/native.md) — the JSON packet
-- Pipecat observer: `obsalt.integrations.pipecat.ObsaltObserver`
-
-OpenAI Realtime event batches: [guide](providers/openai-realtime.md).
-
-## How it is put together
-
-| Page | Contents |
+| Guide | When |
 | --- | --- |
-| [Architecture](architecture.md) | Process hierarchy, traces vs evidence |
-| [Data model](data-model.md) | `CanonicalCall` |
-| [Data flow](data-flow.md) | Sequences for Path A and Path B |
-| [Trace model](trace-model.md) | Span tree, join keys, PII rules |
-| [Scenarios](scenarios.md) | Worked examples |
+| [Choose a path](choose-a-path.md) | Hosted webhook vs custom-agent OTLP |
+| [Getting started](getting-started.md) | Install, compose, ingest |
+| [Architecture](architecture.md) | Receive → decode → redact → assemble → analyze |
+| [Plugins](plugins.md) | Trusted operator-installed plugins, public contract |
+| [Providers](providers/index.md) | Vapi, Retell, ElevenLabs, Cartesia, SDK sources |
+| [HTTP API](api.md) | `/v1` surface |
+| [What you see](what-you-see.md) | Grafana vs obsalt UI |
+| [Glossary](glossary.md) | Terms |
 
-## Operate it
-
-| Page | Contents |
-| --- | --- |
-| [HTTP API](api.md) | Auth, ingest, lookup, search, rollups |
-| [Metrics and Grafana](grafana.md) | Prometheus vs Tempo vs Loki vs the per-call join view |
-| [Configuration](configuration.md) | `obsalt.toml`, env, production checklist |
+v0.1 docs (in-memory store, span synthesis, global webhook secrets) are obsolete.

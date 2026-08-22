@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{% block title %}obsalt{% endblock %}</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; color: #111; }
+    a { color: #0b57d0; }
+    header.site { background: #111; color: #fff; padding: 0.75rem 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; }
+    header.site a { color: #fff; text-decoration: none; }
+    header.site a.active { text-decoration: underline; }
+    header.site .brand { font-weight: 600; margin-right: 0.5rem; }
+    main.content { padding: 1.5rem 2rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #ddd; }
+    .panel { border: 1px solid #ddd; padding: 1rem; margin-bottom: 1rem; }
+    .chip { display: inline-block; background: #eef; padding: 0.15rem 0.4rem; margin: 0.1rem; font-size: 0.85rem; }
+    .absent { color: #888; }
+    .unsupported { color: #a60; }
+    .decode_failed { color: #a00; }
+    .redacted { color: #555; }
+    .muted { color: #666; font-size: 0.9rem; }
+    .detail { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    pre { white-space: pre-wrap; }
+    form.filters { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; align-items: end; }
+    form.filters label { display: flex; flex-direction: column; font-size: 0.85rem; }
+    nav.skip a { position: absolute; left: -999px; }
+    nav.skip a:focus { left: 1rem; top: 1rem; background: #fff; color: #111; padding: 0.25rem; }
+    {% block extra_css %}{% endblock %}
+  </style>
+</head>
+<body>
+  <nav class="skip"><a href="#main">Skip to content</a></nav>
+  <header class="site">
+    <span class="brand">obsalt</span>
+    {% set path = request.url.path if request is defined else "" %}
+    <a href="/v1/ui" class="{% if path == '/v1/ui' or path.startswith('/v1/ui/calls') %}active{% endif %}">Calls</a>
+    <a href="/v1/ui/latency" class="{% if path.startswith('/v1/ui/latency') %}active{% endif %}">Latency</a>
+    <a href="/v1/ui/hangups" class="{% if path.startswith('/v1/ui/hangups') %}active{% endif %}">Hangups</a>
+    <a href="/v1/ui/quality" class="{% if path.startswith('/v1/ui/quality') %}active{% endif %}">Quality</a>
+    <a href="/v1/ui/search" class="{% if path.startswith('/v1/ui/search') %}active{% endif %}">Search</a>
+    <a href="/v1/ui/settings" class="{% if path.startswith('/v1/ui/settings') %}active{% endif %}">Settings</a>
+    <a href="/v1/ui/login" class="{% if path.startswith('/v1/ui/login') %}active{% endif %}">Sign in</a>
+  </header>
+  <main id="main" class="content">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

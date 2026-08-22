@@ -1,0 +1,10 @@
+{
+  "schema_source": "https://elevenlabs.io/docs/eleven-agents/workflows/post-call-webhooks",
+  "schema_revision": "2026-08-22",
+  "fetched_at": "2026-08-22",
+  "units": {
+    "data.transcript[].time_in_call_secs": "whole seconds from call start (coarse message anchor, not a unix timestamp)",
+    "data.metadata.start_time_unix_secs": "unix seconds"
+  },
+  "auth": "ElevenLabs-Signature: t={unix},v0={hex}; HMAC-SHA256('{t}.{body}') with 30-minute two-sided window"
+}

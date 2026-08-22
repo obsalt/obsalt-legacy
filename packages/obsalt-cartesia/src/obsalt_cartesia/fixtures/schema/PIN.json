@@ -1,0 +1,11 @@
+{
+  "schema_source": "https://docs.cartesia.ai (Line webhooks, x-webhook-secret)",
+  "schema_revision": "2026-08-22",
+  "fetched_at": "2026-08-22",
+  "units": {
+    "turns[].started_at/ended_at": "ISO-8601 timestamps (real turn intervals)",
+    "turns[].stt_ttfb_ms": "milliseconds, unplaced",
+    "turns[].tts_ttfb_ms": "milliseconds, unplaced"
+  },
+  "auth": "x-webhook-secret: plain shared secret (weakest committed scheme; documented as such)"
+}

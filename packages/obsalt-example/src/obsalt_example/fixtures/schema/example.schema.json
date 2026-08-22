@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/example.schema.json",
+  "title": "ExampleCall",
+  "type": "object",
+  "required": ["call_id"],
+  "properties": {
+    "call_id": { "type": "string" },
+    "delivery_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "system_prompt": { "type": "string" },
+    "final": { "type": "boolean" },
+    "ended_reason": { "type": "string" },
+    "type": { "type": "string" },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "speaker": { "type": "string", "enum": ["user", "agent"] },
+          "text": { "type": "string" },
+          "started_at": { "type": "string" },
+          "ended_at": { "type": "string" },
+          "stt_ms": { "type": "number" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

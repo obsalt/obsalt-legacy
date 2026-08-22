@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt-example"
+version = "2.0.0"
+description = "Trivial obsalt plugin used to prove the public plugin API"
+requires-python = ">=3.11"
+dependencies = ["obsalt==2.0.0"]
+
+[project.entry-points."obsalt.plugins"]
+example = "obsalt_example.plugin:ExamplePlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt_example = ["fixtures/**/*"]

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}obsalt — hangups{% endblock %}
+{% block content %}
+  {% set rollup = rollup|default({}) %}
+  {% set clusters = clusters|default(rollup.clusters|default([])) %}
+  {% set as_of_generation = as_of_generation|default(rollup.as_of_generation|default('')) %}
+  <h1>Hangups</h1>
+  <p>Serving generation <code>{{ as_of_generation }}</code>.</p>
+  <p class="muted">Clusters of the active-revision set. Drill through to the call that lost the customer.</p>
+  {% for cluster in clusters %}
+    <section class="panel">
+      <h2>{{ cluster.reason }} / {{ cluster.party }} <span class="muted">({{ cluster.size }})</span></h2>
+      <p>Top call (loss {{ cluster.max_loss_score }}):
+        <a href="/v1/ui/calls/{{ cluster.top_call_id }}">{{ cluster.top_call_id }}</a>
+      </p>
+      {% if cluster.last_user_text %}
+        <p>Closing user text: {{ cluster.last_user_text }}</p>
+      {% endif %}
+      <details>
+        <summary>Drill-through call ids</summary>
+        <ul>
+          {% for call_id in cluster.call_ids %}
+            <li><a href="/v1/ui/calls/{{ call_id }}">{{ call_id }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    </section>
+  {% else %}
+    <p>No hangup clusters in this generation.</p>
+  {% endfor %}
+{% endblock %}

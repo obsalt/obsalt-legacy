@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}obsalt — search{% endblock %}
+{% block content %}
+  <h1>Search</h1>
+  <p class="muted">Hybrid lexical + vector over redacted transcripts. Results share tenant and structured filters.</p>
+  <form class="filters" method="get" action="/v1/ui/search">
+    <label>Query <input name="q" value="{{ q|default('') }}" /></label>
+    <label>Agent <input name="agent_id" value="{{ filters.agent_id|default('') if filters is defined else '' }}" /></label>
+    <label>Source <input name="source" value="{{ filters.source|default('') if filters is defined else '' }}" /></label>
+    <button type="submit">Search</button>
+  </form>
+  <table>
+    <thead>
+      <tr><th>Call</th><th>Agent</th><th>Source</th><th>Score</th></tr>
+    </thead>
+    <tbody>
+      {% for hit in results|default(items|default([])) %}
+      <tr>
+        <td><a href="/v1/ui/calls/{{ hit.call_id }}">{{ hit.call_id }}</a></td>
+        <td>{{ hit.agent_id }}</td>
+        <td>{{ hit.source }}</td>
+        <td>{{ hit.score }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">{% if q %}No matching calls.{% else %}Enter a query.{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

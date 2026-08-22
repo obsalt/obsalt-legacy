@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendored/cartesia/line_call_ended.schema.json",
+  "title": "CartesiaLineCallWebhook",
+  "description": "Vendored subset of Cartesia Line post-call webhook. Turn started_at/ended_at are real intervals; STT/TTS TTFBs are unplaced milliseconds. Pinned 2026-08-22.",
+  "type": "object",
+  "required": ["call_id"],
+  "properties": {
+    "id": { "type": "string" },
+    "call_id": { "type": "string" },
+    "agent_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "ended_at": { "type": "string" },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "speaker": { "type": "string", "enum": ["user", "agent"] },
+          "text": { "type": "string" },
+          "started_at": { "type": "string" },
+          "ended_at": { "type": "string" },
+          "stt_ttfb_ms": { "type": "number", "description": "Unplaced STT TTFB, milliseconds." },
+          "stt_ms": { "type": "number" },
+          "tts_ttfb_ms": { "type": "number", "description": "Unplaced TTS TTFB, milliseconds." },
+          "tts_ms": { "type": "number" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://obsalt.dev/vendored/vapi/end-of-call-report.schema.json",
+  "title": "VapiEndOfCallReport",
+  "description": "Vendored subset of Vapi ServerMessage end-of-call-report. Field names pinned 2026-08-22 from docs.vapi.ai PerformanceMetrics/TurnLatency/Call.",
+  "type": "object",
+  "required": ["message"],
+  "properties": {
+    "message": {
+      "type": "object",
+      "required": ["type", "call"],
+      "properties": {
+        "type": { "const": "end-of-call-report" },
+        "endedReason": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "endedAt": { "type": "string" },
+        "cost": { "type": "number" },
+        "call": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string" },
+            "type": { "type": "string" },
+            "assistantId": { "type": "string" },
+            "endedReason": { "type": "string" },
+            "startedAt": { "type": "string" },
+            "endedAt": { "type": "string" }
+          },
+          "additionalProperties": true
+        },
+        "assistant": { "type": "object", "additionalProperties": true },
+        "artifact": {
+          "type": "object",
+          "properties": {
+            "transcript": { "type": "string" },
+            "recordingUrl": { "type": "string" },
+            "messages": { "type": "array" },
+            "performanceMetrics": { "$ref": "#/$defs/PerformanceMetrics" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "TurnLatency": {
+      "type": "object",
+      "properties": {
+        "modelLatency": { "type": "number", "description": "Model latency for the first token, milliseconds." },
+        "voiceLatency": { "type": "number", "description": "Voice/TTS latency, milliseconds." },
+        "transcriberLatency": { "type": "number", "description": "Transcriber latency, milliseconds." },
+        "endpointingLatency": { "type": "number", "description": "Endpointing latency, milliseconds." },
+        "turnLatency": { "type": "number", "description": "Whole-turn latency, milliseconds." }
+      },
+      "additionalProperties": true
+    },
+    "PerformanceMetrics": {
+      "type": "object",
+      "properties": {
+        "turnLatencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TurnLatency" }
+        },
+        "modelLatencyAverage": { "type": "number" },
+        "voiceLatencyAverage": { "type": "number" },
+        "transcriberLatencyAverage": { "type": "number" },
+        "endpointingLatencyAverage": { "type": "number" },
+        "turnLatencyAverage": { "type": "number" },
+        "fromTransportLatencyAverage": { "type": "number" },
+        "toTransportLatencyAverage": { "type": "number" },
+        "numUserInterrupted": { "type": "number" },
+        "numAssistantInterrupted": { "type": "number" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

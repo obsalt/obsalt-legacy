@@ -1,0 +1,36 @@
+{
+  "type": "post_call_transcription",
+  "event_timestamp": 1755777600,
+  "data": {
+    "agent_id": "support-el",
+    "conversation_id": "el-conv-refund-1",
+    "status": "done",
+    "transcript": [
+      {
+        "role": "agent",
+        "message": "Thanks for calling. How can I help?",
+        "time_in_call_secs": 0
+      },
+      {
+        "role": "user",
+        "message": "I want a refund.",
+        "time_in_call_secs": 3
+      },
+      {
+        "role": "agent",
+        "message": "I can help with that. Goodbye.",
+        "time_in_call_secs": 8
+      }
+    ],
+    "metadata": {
+      "start_time_unix_secs": 1755777600,
+      "call_duration_secs": 22,
+      "cost": 42,
+      "termination_reason": "End of conversation"
+    },
+    "analysis": {
+      "call_successful": "success",
+      "transcript_summary": "Caller requested a refund."
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}obsalt — calls{% endblock %}
+{% block content %}
+  <h1>Calls</h1>
+  <p class="muted">Call analytics. Not a dashboard builder.</p>
+  {% set filters = filters|default({}) %}
+  <form class="filters" method="get" action="/v1/ui">
+    <label>Agent <input name="agent_id" value="{{ filters.agent_id|default('') }}" /></label>
+    <label>Hangup <input name="hangup_reason" value="{{ filters.hangup_reason|default('') }}" /></label>
+    <label>Source <input name="source" value="{{ filters.source|default('') }}" /></label>
+    <label>Flag <input name="flag" value="{{ filters.flag|default('') }}" /></label>
+    <button type="submit">Filter</button>
+  </form>
+  <table>
+    <thead>
+      <tr>
+        <th>Call</th>
+        <th>Agent</th>
+        <th>Source</th>
+        <th>Decoder</th>
+        <th>Fidelity</th>
+        <th>Hangup</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for call in calls %}
+      <tr>
+        <td><a href="/v1/ui/calls/{{ call.call_id }}">{{ call.call_id }}</a></td>
+        <td>{{ call.agent_id }}</td>
+        <td>{{ call.source }}</td>
+        <td>{{ call.decoder_version }}</td>
+        <td>{{ call.timeline_fidelity.value }}</td>
+        <td>{{ call.hangup.reason.value if call.hangup else "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No calls yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

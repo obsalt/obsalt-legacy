@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obsalt"
+version = "2.0.0"
+description = "Self-hosted call analytics and quality system for AI voice agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "obsalt" }]
+keywords = ["voice", "observability", "opentelemetry", "call-analytics"]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "pydantic>=2.9.0",
+  "pydantic-settings>=2.6.0",
+  "httpx>=0.27.0",
+  "jinja2>=3.1.4",
+  "python-multipart>=0.0.9",
+  "cryptography>=43.0.0",
+  "opentelemetry-api>=1.28.0",
+  "opentelemetry-sdk>=1.28.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.28.0",
+  "opentelemetry-proto>=1.28.0",
+  "opentelemetry-semantic-conventions>=0.49b0",
+  "psycopg[binary,pool]>=3.2.0",
+  "clickhouse-connect>=0.8.0",
+  "redis>=5.1.0",
+  "boto3>=1.35.0",
+  "prometheus-client>=0.21.0",
+  "jsonschema>=4.23.0",
+  "onnxruntime>=1.19.0",
+]
+
+[project.optional-dependencies]
+vapi = ["obsalt-vapi==2.0.0"]
+retell = ["obsalt-retell==2.0.0"]
+elevenlabs = ["obsalt-elevenlabs==2.0.0"]
+cartesia = ["obsalt-cartesia==2.0.0"]
+openai-realtime = ["obsalt-openai-realtime==2.0.0"]
+gemini-live = ["obsalt-gemini-live==2.0.0"]
+pipecat = ["obsalt-pipecat==2.0.0"]
+livekit = ["obsalt-livekit==2.0.0"]
+providers = ["obsalt-providers-all==2.0.0"]
+grpc = ["grpcio>=1.66.0"]
+dev = [
+  "pytest>=8.3.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+  "hypothesis>=6.112.0",
+  "types-jsonschema>=4.23.0",
+  "types-redis>=4.6.0",
+]
+
+[project.scripts]
+obsalt = "obsalt.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/coder-with-a-bushido/obsalt"
+Documentation = "https://github.com/coder-with-a-bushido/obsalt/blob/main/docs/README.md"
+
+[project.entry-points."obsalt.plugins"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+obsalt = ["py.typed", "store/sql/*.sql", "ui/templates/*.html", "ui/static/*"]
