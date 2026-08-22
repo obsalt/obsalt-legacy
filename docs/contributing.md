@@ -25,7 +25,7 @@ Useful commands:
 | `make install` | Editable install of core, testkit, and first-party plugins |
 | `make lint` | `ruff check` + `ruff format --check` |
 | `make format` | Apply Ruff |
-| `make typecheck` | Strict mypy on core, testkit, example, vapi, retell. Informational in CI until the existing backlog is cleared. |
+| `make typecheck` | Strict mypy on core, testkit, example, vapi, retell. CI runs it and warns; it does not fail the workflow until the backlog is cleared. |
 | `make test` | Full pytest |
 | `make test-unit` | `pytest -m unit` |
 | `obsalt parse FILE --provider vapi` | Decode a payload without ingesting it |

@@ -43,7 +43,6 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,12 +57,14 @@ jobs:
           python -m pip install -U pip
           python -m pip install -r requirements-dev.txt
       - name: mypy
+        id: mypy
+        continue-on-error: true
         run: mypy
-      - name: Note
-        if: failure()
-        run: >
-          echo "Strict mypy is informational until the existing backlog is
-          cleared. Lint and tests remain the required gates."
+      - name: Informational
+        run: |
+          if [ "${{ steps.mypy.outcome }}" = "failure" ]; then
+            echo "::warning::Strict mypy still has a pre-existing backlog. Lint and tests are the required gates."
+          fi
 
   test:
     name: Test (Python ${{ matrix.python-version }})
