@@ -592,6 +592,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             state.key_directory.rotate(org, old, new_key, overlap_seconds=overlap)
         scopes = state.keys.get(old, (org, frozenset(KeyScope)))[1]
         state.keys[new_key] = (org, scopes)
+        state.key_roles[new_key] = _role_for_key(state, old, scopes)
         state.key_expiry[old] = utcnow() + timedelta(seconds=overlap)
         return {"key": new_key, "overlap_seconds": overlap}
 
@@ -818,7 +819,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         except HTTPException:
             return _render(request, "login.html", {"org": None, "error": "invalid API key"})
         response = RedirectResponse("/v1/ui", status_code=303)
-        cookie = sign_session(org, state.settings.session_secret, role=_role_for_scopes(scopes))
+        cookie = sign_session(org, state.settings.session_secret, role=_role_for_key(state, key, scopes))
         info = read_session(cookie, state.settings.session_secret)
         response.set_cookie(
             "obsalt_session",
@@ -1047,19 +1048,28 @@ def _authorize(state: AppState, key: str | None, scope: KeyScope, action: str) -
     org, scopes = _lookup_key(state, key)
     if scope not in scopes and KeyScope.ADMIN not in scopes:
         raise HTTPException(status_code=403, detail="insufficient scope")
-    if not allowed(_role_for_scopes(scopes), action):
+    if not allowed(_role_for_key(state, key, scopes), action):
         raise HTTPException(status_code=403, detail="insufficient role")
     return org
 
 
 def _role_for_scopes(scopes: frozenset[KeyScope]) -> Role:
-    if scopes >= frozenset(KeyScope):
-        return Role.OWNER
     if KeyScope.ADMIN in scopes:
         return Role.ADMIN
     if KeyScope.ANALYZE in scopes:
         return Role.ANALYST
     return Role.REVIEWER
+
+
+def _role_for_key(state: AppState, key: str | None, scopes: frozenset[KeyScope]) -> Role:
+    """Owner vs admin cannot be told apart from the four key scopes alone (§11.1)."""
+
+    stored = getattr(state, "key_roles", {}).get(key) if key else None
+    if stored is not None:
+        return stored
+    if key and key == getattr(state.settings, "bootstrap_api_key", None):
+        return Role.OWNER
+    return _role_for_scopes(scopes)
 
 
 def _load_evidence(state: AppState, org: str, rev: object, ref: str) -> tuple[bytes | None, str]:
@@ -1105,7 +1115,7 @@ def _ui_principal(request: Request, state: AppState) -> tuple[str, Role] | None:
             org, scopes = _lookup_key(state, api_key)
             if KeyScope.READ not in scopes and KeyScope.ADMIN not in scopes:
                 return None
-            return org, _role_for_scopes(scopes)
+            return org, _role_for_key(state, api_key, scopes)
         except HTTPException:
             return None
     return None

@@ -62,7 +62,7 @@ def _dead_air(call: CallRevision) -> float | None:
     timed = [turn for turn in call.turns if turn.started_at or turn.ended_at]
     timed.sort(key=lambda turn: turn.started_at or turn.ended_at or turn.started_at)
     widest = 0.0
-    for prev, nxt in zip(timed, timed[1:]):
+    for prev, nxt in zip(timed, timed[1:], strict=False):
         prev_end = prev.ended_at or prev.started_at
         nxt_start = nxt.started_at or nxt.ended_at
         if prev_end is None or nxt_start is None:

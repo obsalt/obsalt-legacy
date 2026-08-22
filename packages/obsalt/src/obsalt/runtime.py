@@ -64,6 +64,7 @@ class AppState:
     deletion_store: Any = None
     user_store: Any = None
     backups: list[dict[str, Any]] = field(default_factory=list)
+    key_roles: dict[str, Role] = field(default_factory=dict)
     key_expiry: dict[str, Any] = field(default_factory=dict)
     deletion_completions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -108,6 +109,7 @@ def in_memory_state(
         pointers=MemoryPointerStore(),
         sink=MemoryRevisionSink(),
         keys={api_key: (org_id, frozenset(KeyScope))},
+        key_roles={api_key: Role.OWNER},
         rollup_generation=new_id(),
         search=MemorySearchIndex(),
         traces=MemoryTraceAssembler(),
@@ -210,6 +212,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         review_store=PostgresReviewStore(conn),
         deletion_store=PostgresDeletionStore(conn, inbox),
         user_store=_production_users(PostgresUserStore(conn), org_id),
+        key_roles={settings.bootstrap_api_key: Role.OWNER} if settings.bootstrap_api_key else {},
     )
 
 
