@@ -10,7 +10,6 @@ from obsalt.ingest.receive import receive_webhook
 from obsalt.query import active_calls
 from obsalt.worker.drain import drain_once
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.conftest import VAPI_FIXTURES, vapi_headers, vapi_state
 
 

@@ -18,7 +18,6 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.worker.process import MemoryRevisionSink, process_normalized_events
-
 from tests.conftest import fidelity_declaration
 
 

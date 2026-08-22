@@ -11,7 +11,6 @@ from obsalt.runtime import AppState
 from obsalt.testing.fakes import MemoryInbox, MemoryObjectStore, MemoryResolver
 from obsalt.worker.process import MemoryRevisionSink
 from obsalt_example.plugin import ExamplePlugin
-
 from tests.conftest import EXAMPLE_FIXTURES, api_client, example_headers, example_state
 
 

@@ -15,7 +15,6 @@ from obsalt.search.index import MemorySearchIndex
 from obsalt.util import utcnow
 from obsalt.worker.drain import drain_once
 from obsalt_example.plugin import ExamplePlugin
-
 from tests.conftest import EXAMPLE_FIXTURES, example_headers, example_state
 
 

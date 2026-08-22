@@ -17,7 +17,6 @@ from obsalt.worker.process import MemoryRevisionSink, process_envelope
 from obsalt_example.plugin import ExamplePlugin
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
-
 from tests.conftest import (
     EXAMPLE_FIXTURES,
     RETELL_FIXTURES,

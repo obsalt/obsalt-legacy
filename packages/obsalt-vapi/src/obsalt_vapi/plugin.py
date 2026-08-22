@@ -286,6 +286,7 @@ class VapiPlugin:
                     "tool_observed",
                     "outcome_observed",
                     "aggregate_observed",
+                    "grounding_observed",
                 ]
             )
 
@@ -330,7 +331,11 @@ class VapiPlugin:
 
         messages = artifact.get("messages") or message.get("messages") or []
         if isinstance(messages, list):
-            yield from _turns_and_tools(messages, call_started if isinstance(call_started, datetime) else None)
+            yield from _turns_and_tools(
+                messages,
+                call_started if isinstance(call_started, datetime) else None,
+                emit_user_grounding=event_type == "end-of-call-report",
+            )
 
         yield from _latency(message, artifact)
         ended_reason = as_str(message.get("endedReason")) or as_str(call_obj.get("endedReason"))
@@ -424,7 +429,12 @@ def _message_anchor(raw: dict, call_started: datetime | None) -> tuple[datetime 
     return parse_datetime(raw.get("time")), "artifact.messages[].time"
 
 
-def _turns_and_tools(messages: list, call_started: datetime | None = None) -> Iterable[NormalizedEvent]:
+def _turns_and_tools(
+    messages: list,
+    call_started: datetime | None = None,
+    *,
+    emit_user_grounding: bool = False,
+) -> Iterable[NormalizedEvent]:
     turn_index = 0
     pending: dict[str, str] = {}
     user_texts: list[str] = []
@@ -506,7 +516,7 @@ def _turns_and_tools(messages: list, call_started: datetime | None = None) -> It
         if speaker is Speaker.USER and text:
             user_texts.append(text)
         turn_index += 1
-    if user_texts:
+    if emit_user_grounding and user_texts:
         yield GroundingObserved(
             kind=GroundingKind.USER_TEXT,
             content="\n".join(user_texts),

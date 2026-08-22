@@ -7,14 +7,20 @@ from datetime import UTC, datetime
 from obsalt.assemble.assembler import Assembler
 from obsalt.assemble.facts import stamp_event
 from obsalt.assemble.timeline import timeline_view
-from obsalt.domain.enums import MeasurementPlacement, Metric, PipelineArchitecture, Provenance, Speaker, Stage
+from obsalt.domain.enums import (
+    MeasurementPlacement,
+    Metric,
+    PipelineArchitecture,
+    Provenance,
+    Speaker,
+    Stage,
+)
 from obsalt.domain.events import CallObserved, StageObserved, TurnObserved
 from obsalt.otel.conventions import SPAN_GENERATION, SPAN_PLAYOUT, SPAN_STT, SPAN_USER_INPUT
 from obsalt.otel.s2s import decode_s2s_spans
 from obsalt.plugin.types import ReadableSpan
 from obsalt_livekit.plugin import LiveKitPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
-
 from tests.conftest import fidelity_declaration
 
 

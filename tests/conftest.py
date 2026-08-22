@@ -58,7 +58,7 @@ def provider_state(
     resolver.add(
         ConnectionConfig(
             org_id=org_id,
-            provider=getattr(plugin, "name"),
+            provider=plugin.name,
             connection_id="c1",
             ingest_key_hash="",
             secrets=secrets,

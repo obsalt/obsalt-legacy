@@ -36,7 +36,8 @@
       "turn_observed",
       "stage_observed",
       "aggregate_observed",
-      "tool_observed"
+      "tool_observed",
+      "grounding_observed"
     ]
   },
   {
