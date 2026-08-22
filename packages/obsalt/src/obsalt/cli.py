@@ -61,6 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--provider", required=True)
     record.add_argument("--out", default=None)
     record.set_defaults(func=cmd_record_golden)
+    drift = sub.add_parser("schema-drift", help="Compare a vendored plugin schema to a refetched copy")
+    drift.add_argument("--fixtures", required=True)
+    drift.add_argument("--remote", default=None, help="Optional JSON file of the refetched vendor schema")
+    drift.set_defaults(func=cmd_schema_drift)
+    retain = sub.add_parser("retain", help="Sweep expired raw blobs and print the replay horizon")
+    retain.set_defaults(func=cmd_retain)
+    export = sub.add_parser("export", help="Export active-call revisions to a Parquet/JSONL manifest")
+    export.add_argument("--org", required=True)
+    export.add_argument("--dest", required=True)
+    export.set_defaults(func=cmd_export)
     version = sub.add_parser("version")
     version.set_defaults(func=lambda _a: (print(__version__) or 0))
     return parser
@@ -160,6 +170,46 @@ def cmd_record_golden(args: argparse.Namespace) -> int:
     dest.write_text(json.dumps(events, indent=2) + "\n")
     print(f"wrote {dest}")
     print("Review the golden diff before committing.")
+    return 0
+
+
+def cmd_schema_drift(args: argparse.Namespace) -> int:
+    from obsalt.ops.schema_drift import compare_vendored
+
+    remote = json.loads(Path(args.remote).read_text()) if args.remote else None
+    report = compare_vendored(Path(args.fixtures), remote)
+    print(json.dumps(report, indent=2))
+    return 1 if report.get("diverged") else 0
+
+
+def cmd_retain(_args: argparse.Namespace) -> int:
+    from obsalt.ops.retention import sweep_raw
+
+    settings = Settings()
+    try:
+        state = production_state(settings)
+    except Exception:
+        state = in_memory_state(settings)
+    print(json.dumps(sweep_raw(state), indent=2))
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from obsalt.ops.parquet import export_revisions
+    from obsalt.query import active_calls
+
+    settings = Settings()
+    try:
+        state = production_state(settings)
+    except Exception:
+        state = in_memory_state(settings)
+    dest = Path(args.dest)
+    report = export_revisions(
+        active_calls(state, args.org),
+        dest,
+        as_of_generation=state.rollup_generation,
+    )
+    print(json.dumps(report, indent=2))
     return 0
 
 

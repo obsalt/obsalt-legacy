@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     llm_monthly_budget_usd: float = 0.0
     baseline_sample_rate: float = 0.0
+    judge_base_url: str | None = None
+    judge_api_key: str | None = None
+    judge_model: str = "gpt-4.1-mini"
+    embedder_onnx_path: str | None = None
 
     def insecure_defaults(self) -> bool:
         return (

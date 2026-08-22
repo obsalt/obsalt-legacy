@@ -21,6 +21,9 @@ class MemoryObjectStore:
     def delete(self, key: str) -> None:
         self.blobs.pop(key, None)
 
+    def list_keys(self, prefix: str = "") -> list[str]:
+        return [key for key in self.blobs if key.startswith(prefix)]
+
 
 class MemoryInbox:
     def __init__(self) -> None:

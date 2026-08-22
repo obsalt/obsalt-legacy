@@ -6,11 +6,14 @@ ingest acknowledgement.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind
 from obsalt.ingest.receive import Inbox, ObjectStore, ReceiveLimits, object_key_for
-from obsalt.plugin.types import RawEnvelope, TombstoneHints
+from obsalt.otel.span_identity import SpanIdentityIndex
+from obsalt.otel.span_identity import otlp_delivery_key as span_delivery_key
+from obsalt.plugin.types import RawEnvelope, ReadableSpan, TombstoneHints
 from obsalt.util import new_id, sha256_bytes, utcnow
 
 
@@ -22,10 +25,10 @@ class OtlpReceiveResult:
     status_code: int = 200
 
 
-def otlp_delivery_key(org_id: str, raw: bytes) -> str:
-    """Identical exporter retries of the same batch share this key."""
+def otlp_delivery_key(org_id: str, raw: bytes, spans: Sequence[ReadableSpan] | None = None) -> str:
+    """Identical exporter retries share this key. Prefer per-span identity (§6.2)."""
 
-    return f"otlp:{org_id}:{sha256_bytes(raw)}"
+    return span_delivery_key(org_id, raw, spans)
 
 
 def receive_otlp_batch(
@@ -39,6 +42,8 @@ def receive_otlp_batch(
     limits: ReceiveLimits | None = None,
     compressed_size: int | None = None,
     source_call_id: str | None = None,
+    spans: Sequence[ReadableSpan] | None = None,
+    span_index: SpanIdentityIndex | None = None,
 ) -> OtlpReceiveResult:
     limits = limits or ReceiveLimits()
     if compressed_size is not None and compressed_size > limits.compressed_bytes:
@@ -50,8 +55,12 @@ def receive_otlp_batch(
     if inbox.is_tombstoned(org_id, hints):
         return OtlpReceiveResult(envelope=None, rejected="tombstoned", status_code=200)
 
+    if span_index is not None and spans:
+        for span in spans:
+            span_index.observe(org_id, span)
+
     content_sha = sha256_bytes(raw)
-    delivery = otlp_delivery_key(org_id, raw)
+    delivery = otlp_delivery_key(org_id, raw, spans)
     key = object_key_for(org_id, "otlp", delivery, content_sha)
     objects.put(key, raw, content_type=content_type)
 

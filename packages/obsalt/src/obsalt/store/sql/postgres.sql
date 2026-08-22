@@ -179,6 +179,24 @@ CREATE TABLE IF NOT EXISTS otlp_forward_outbox (
     delivered_at TIMESTAMPTZ
 );
 
+CREATE TABLE IF NOT EXISTS otlp_span_identities (
+    org_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    span_id TEXT NOT NULL,
+    content_fingerprint TEXT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, trace_id, span_id)
+);
+
+CREATE TABLE IF NOT EXISTS quality_reviews (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs(id),
+    call_id TEXT NOT NULL,
+    agree BOOLEAN NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS webhook_outbox (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
@@ -211,4 +229,5 @@ ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT 
 ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
 ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS mapper_name TEXT;
 ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS unrooted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS late_after_finalize BOOLEAN NOT NULL DEFAULT FALSE;
 

@@ -165,11 +165,16 @@ def process_normalized_events(
                 envelope_sequence=index,
             )
         )
+    # Stamp the privacy token from the unredacted number. Redaction replaces
+    # from_number with "<phone>" before the revision is persisted (T5 / §12.3).
+    caller = _caller_token_from_events(org_id, stamped)
     redacted = redact_events(stamped)
     persist_evidence_blobs(redacted.events, objects, org_id)
     assembler = Assembler(declaration, decoder_version=decoder_version, processing_run_id=run_id)
     expected = pointers.get(org_id, call_id)
     previous = sink.get(org_id, call_id, expected) if expected else None
+    if caller is None and previous is not None:
+        caller = previous.caller_token
     prior = events_from_revision(previous) if previous is not None else []
     merged = [*prior, *redacted.events]
     candidate = assembler.assemble(org_id, call_id, source, merged, rooted=rooted)
@@ -205,9 +210,11 @@ def process_normalized_events(
             [*current_events, *redacted.events],
             rooted=rooted,
         )
+        _stamp_caller_token(rebuilt, caller or (current.caller_token if current else None))
         sink.write(rebuilt)
         return rebuilt
 
+    _stamp_caller_token(candidate, caller)
     sink.write(candidate)
     result = promote(
         pointers,
@@ -230,6 +237,23 @@ def drain_inbox(state: object, *, limit: int = 32) -> int:
     from obsalt.worker.drain import drain_once
 
     return drain_once(state, limit=limit)
+
+
+def _stamp_caller_token(revision: CallRevision, token: str | None) -> None:
+    if revision.caller_token or not token:
+        return
+    revision.caller_token = token
+
+
+def _caller_token_from_events(org_id: str, events: Iterable[NormalizedEvent]) -> str | None:
+    from obsalt.privacy.caller import DEFAULT_PEPPER, caller_token
+
+    for event in events:
+        if isinstance(event, CallObserved):
+            number = event.from_number
+            if number and number != "<phone>":
+                return caller_token(org_id, number, DEFAULT_PEPPER)
+    return None
 
 
 def _source_call_id(events: Iterable[NormalizedEvent]) -> str | None:

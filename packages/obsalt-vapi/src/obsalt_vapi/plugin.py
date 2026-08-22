@@ -47,6 +47,9 @@ from obsalt.domain.events import (
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.plugin.fieldmap import FieldMap, Ts
 from obsalt.plugin.types import (
+    BackfillCursor,
+    BackfillItem,
+    BackfillPage,
     ConnectionConfig,
     PluginManifest,
     RawEnvelope,
@@ -81,13 +84,13 @@ class VapiPlugin:
     API_VERSION = PLUGIN_API_VERSION
     name = "vapi"
     display_name = "Vapi"
-    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION})
+    capabilities = frozenset({Capability.WEBHOOK_SOURCE, Capability.AUTHENTICATION, Capability.REST_BACKFILL})
     singleton_headers = frozenset(
         {b"x-vapi-secret", b"authorization", b"x-vapi-signature", b"x-vapi-timestamp"}
     )
     decoder_version = "vapi/3"
     manifest = PluginManifest(
-        secret_fields=frozenset({"legacy_secret", "bearer_token", "hmac_secret", "oauth_token"}),
+        secret_fields=frozenset({"legacy_secret", "bearer_token", "hmac_secret", "oauth_token", "api_key"}),
         config_schema={
             "type": "object",
             "properties": {
@@ -328,6 +331,66 @@ class VapiPlugin:
             )
         if event_type == "end-of-call-report" or ended_reason:
             yield CallFinalized(reason="provider")
+
+    def scan(self, cfg: ConnectionConfig, cursor: BackfillCursor) -> BackfillPage:
+        """List Vapi calls. Without an API key this is an empty, retention-truncated page."""
+        api_key = cfg.secrets.get("api_key")
+        if not api_key:
+            return BackfillPage(items=[], next_cursor=None, truncated_by_retention=True)
+        try:
+            import httpx
+            from obsalt.egress import validate_destination
+
+            url = "https://api.vapi.ai/call"
+            validate_destination(url)
+            params: dict[str, str] = {}
+            if cursor.token:
+                params["cursor"] = cursor.token
+            response = httpx.get(url, headers={"Authorization": f"Bearer {api_key}"}, params=params, timeout=20.0)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return BackfillPage(items=[], next_cursor=None, truncated_by_retention=True)
+        rows = payload if isinstance(payload, list) else payload.get("data") or payload.get("calls") or []
+        items = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            entity = as_str(row.get("id")) or ""
+            if not entity:
+                continue
+            items.append(
+                BackfillItem(
+                    upstream_entity_id=entity,
+                    content_hash=sha256_bytes(json.dumps(row, sort_keys=True).encode()),
+                    upstream_revision=as_str(row.get("updatedAt") or row.get("endedAt")),
+                    payload=row,
+                )
+            )
+        next_token = None
+        if isinstance(payload, dict):
+            next_token = as_str((payload.get("metadata") or {}).get("nextCursor") or payload.get("nextCursor"))
+        return BackfillPage(
+            items=items,
+            next_cursor=BackfillCursor(token=next_token) if next_token else None,
+        )
+
+    def hydrate(self, cfg: ConnectionConfig, item: BackfillItem) -> RawEnvelope:
+        from obsalt.util import utcnow
+
+        body = json.dumps({"message": {"type": "end-of-call-report", **item.payload}}).encode()
+        digest = sha256_bytes(body)
+        return RawEnvelope(
+            envelope_id=item.upstream_entity_id,
+            org_id=cfg.org_id,
+            provider=self.name,
+            connection_id=cfg.connection_id,
+            object_key=f"org/{cfg.org_id}/backfill/{item.upstream_entity_id}",
+            delivery_key=f"{cfg.connection_id}:{item.upstream_entity_id}:{item.content_hash or digest}",
+            content_sha256=digest,
+            body=body,
+            received_at=utcnow(),
+        )
 
 
 def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:

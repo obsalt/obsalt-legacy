@@ -166,12 +166,34 @@ class ExamplePlugin:
 
     def scan(self, cfg: ConnectionConfig, cursor: BackfillCursor) -> BackfillPage:
         """Example RestBackfill. Identity is (connection, upstream_entity_id, content_hash)."""
-        return BackfillPage(items=[], next_cursor=None, truncated_by_retention=False)
+        raw_items = cfg.settings.get("backfill_items") or []
+        items = []
+        for row in raw_items:
+            if not isinstance(row, dict):
+                continue
+            entity = str(row.get("id") or row.get("upstream_entity_id") or "")
+            if not entity:
+                continue
+            items.append(
+                BackfillItem(
+                    upstream_entity_id=entity,
+                    content_hash=str(row.get("hash") or row.get("content_hash") or "x"),
+                    payload=row,
+                )
+            )
+        return BackfillPage(items=items, next_cursor=None, truncated_by_retention=False)
 
     def hydrate(self, cfg: ConnectionConfig, item: BackfillItem) -> RawEnvelope:
         from obsalt.util import sha256_bytes, utcnow
 
-        body = b"{}"
+        payload = item.payload if isinstance(item.payload, dict) else {}
+        body = json.dumps(
+            {
+                "call_id": item.upstream_entity_id,
+                "final": True,
+                "ended_reason": payload.get("ended_reason") or "completed",
+            }
+        ).encode()
         return RawEnvelope(
             envelope_id=item.upstream_entity_id,
             org_id=cfg.org_id,
@@ -186,17 +208,22 @@ class ExamplePlugin:
 
     async def frames(self, cfg: ConnectionConfig) -> AsyncIterator[RawEnvelope]:
         """Example StreamSource. Deepgram is additive against this contract."""
-        if False:  # pragma: no cover — example never emits; real taps yield RawEnvelopes
-            yield RawEnvelope(
-                envelope_id="x",
-                org_id=cfg.org_id,
-                provider=self.name,
-                connection_id=cfg.connection_id,
-                object_key="k",
-                delivery_key="d",
-                content_sha256="x",
-                body=b"{}",
-            )
+        if not cfg.settings.get("emit_example_frame"):
+            return
+        from obsalt.util import sha256_bytes, utcnow
+
+        body = b'{"call_id":"stream-1","final":true,"ended_reason":"completed"}'
+        yield RawEnvelope(
+            envelope_id="example-stream-1",
+            org_id=cfg.org_id,
+            provider=self.name,
+            connection_id=cfg.connection_id,
+            object_key=f"org/{cfg.org_id}/stream/example-stream-1",
+            delivery_key="example-stream-1",
+            content_sha256=sha256_bytes(body),
+            body=body,
+            received_at=utcnow(),
+        )
 
 
 

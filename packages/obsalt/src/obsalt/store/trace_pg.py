@@ -8,7 +8,7 @@ from typing import Any
 from psycopg.types.json import Json
 
 from obsalt.domain.events import NormalizedEvent, parse_normalized_event
-from obsalt.otel.trace_assembly import MemoryTraceAssembler, TraceRecord, _from_nano, is_root_span
+from obsalt.otel.trace_assembly import MemoryTraceAssembler, TraceRecord
 from obsalt.plugin.types import ReadableSpan
 from obsalt.util import utcnow
 
@@ -31,20 +31,13 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
     ) -> TraceRecord:
         now = now or utcnow()
         trace_id = spans[0].trace_id if spans else "unknown"
-        record = self._load(org_id, trace_id)
-        if record is None:
-            record = TraceRecord(org_id=org_id, trace_id=trace_id, first_seen_at=now)
-        if mapper_name:
-            record.mapper_name = mapper_name
-        record.events.extend(events)
-        for span in spans:
-            if is_root_span(span):
-                record.rooted = True
-                ended = _from_nano(span.end_unix_nano) if span.end_unix_nano else None
-                if ended is not None and (record.root_ended_at is None or ended > record.root_ended_at):
-                    record.root_ended_at = ended
+        existing = self._load(org_id, trace_id)
+        if existing is not None:
+            self.records[(org_id, trace_id)] = existing
+        record = super().ingest(
+            org_id, spans, events, now=now, mapper_name=mapper_name
+        )
         self._save(record)
-        self.records[(org_id, trace_id)] = record
         return record
 
     def due(
@@ -69,9 +62,9 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         rows = self._conn.execute(
             """
             SELECT org_id, trace_id, first_seen_at, rooted, root_ended_at, call_id,
-                   events, finalized_at, mapper_name, unrooted
+                   events, finalized_at, mapper_name, unrooted, late_after_finalize
             FROM trace_assemblies
-            WHERE finalized_at IS NULL
+            WHERE finalized_at IS NULL OR late_after_finalize = TRUE
             """
         ).fetchall()
         for row in rows:
@@ -85,7 +78,7 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         row = self._conn.execute(
             """
             SELECT org_id, trace_id, first_seen_at, rooted, root_ended_at, call_id,
-                   events, finalized_at, mapper_name, unrooted
+                   events, finalized_at, mapper_name, unrooted, late_after_finalize
             FROM trace_assemblies
             WHERE org_id = %s AND trace_id = %s
             """,
@@ -103,9 +96,9 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
             """
             INSERT INTO trace_assemblies (
                 org_id, trace_id, first_seen_at, rooted, root_ended_at, call_id,
-                events, finalized_at, mapper_name, unrooted
+                events, finalized_at, mapper_name, unrooted, late_after_finalize
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (org_id, trace_id) DO UPDATE SET
                 rooted = EXCLUDED.rooted,
                 root_ended_at = EXCLUDED.root_ended_at,
@@ -113,7 +106,8 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
                 events = EXCLUDED.events,
                 finalized_at = EXCLUDED.finalized_at,
                 mapper_name = EXCLUDED.mapper_name,
-                unrooted = EXCLUDED.unrooted
+                unrooted = EXCLUDED.unrooted,
+                late_after_finalize = EXCLUDED.late_after_finalize
             """,
             (
                 record.org_id,
@@ -126,6 +120,7 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
                 utcnow() if record.finalized else None,
                 record.mapper_name,
                 record.unrooted,
+                record.late_after_finalize,
             ),
         )
 
@@ -144,4 +139,5 @@ def _record_from_row(row: dict[str, Any]) -> TraceRecord:
         finalized=row.get("finalized_at") is not None,
         unrooted=bool(row.get("unrooted")),
         mapper_name=row.get("mapper_name"),
+        late_after_finalize=bool(row.get("late_after_finalize")),
     )

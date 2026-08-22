@@ -7,13 +7,15 @@ import secrets as secretsmod
 from dataclasses import dataclass, field
 from typing import Any
 
-from obsalt.analysis.contributions import MemoryRollupStore
+from obsalt.analysis.contributions import ClickHouseRollupStore, MemoryRollupStore
+from obsalt.analysis.judge import judge_from_settings
 from obsalt.assemble.promote import MemoryPointerStore, RevisionPointerStore
 from obsalt.config import Settings
 from obsalt.domain.enums import KeyScope
 from obsalt.domain.models import Rubric
 from obsalt.ingest.receive import ConnectionResolver, Inbox, ObjectStore
 from obsalt.otel.forward_queue import MemoryForwardQueue
+from obsalt.otel.span_identity import SpanIdentityIndex
 from obsalt.otel.trace_assembly import MemoryTraceAssembler
 from obsalt.plugin.host import LoadedPlugin, discover_plugins
 from obsalt.plugin.types import ConnectionConfig
@@ -49,6 +51,11 @@ class AppState:
     forward_queue: Any = None
     rollups: Any = None
     worker_id: str = "worker"
+    span_identities: Any = None
+    reviews: list[dict[str, Any]] = field(default_factory=list)
+    webhook_outbox: list[dict[str, Any]] = field(default_factory=list)
+    judge: Any = None
+    rubric_store: Any = None
 
 
 def in_memory_state(
@@ -96,6 +103,8 @@ def in_memory_state(
         traces=MemoryTraceAssembler(),
         forward_queue=MemoryForwardQueue(),
         rollups=MemoryRollupStore(),
+        span_identities=SpanIdentityIndex(),
+        judge=judge_from_settings(settings),
     )
 
 
@@ -112,6 +121,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         PostgresKeyDirectory,
         PostgresPointerStore,
         PostgresResolver,
+        PostgresRubricStore,
         PostgresSearchDocuments,
         apply_schema,
         connect,
@@ -170,8 +180,24 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         search=PostgresSearchDocuments(conn),
         traces=PostgresTraceAssembler(conn),
         forward_queue=PostgresForwardQueue(conn, objects),
-        rollups=MemoryRollupStore(),
+        rollups=_production_rollups(sink),
+        span_identities=_production_span_index(conn),
+        judge=judge_from_settings(settings),
+        rubric_store=PostgresRubricStore(conn),
     )
+
+
+def _production_rollups(sink: Any) -> MemoryRollupStore:
+    client = getattr(sink, "_client", None)
+    if client is None:
+        return MemoryRollupStore()
+    return ClickHouseRollupStore(client)
+
+
+def _production_span_index(conn: Any) -> SpanIdentityIndex:
+    from obsalt.otel.span_identity import PostgresSpanIdentityIndex
+
+    return PostgresSpanIdentityIndex(conn)
 
 
 def create_connection(

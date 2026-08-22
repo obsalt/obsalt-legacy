@@ -38,6 +38,61 @@ def in_range(call: CallRevision, start: datetime, end: datetime) -> bool:
     return start <= ts <= end
 
 
+def matches_call_filters(
+    rev: CallRevision,
+    *,
+    agent_id: str | None = None,
+    outcome: str | None = None,
+    source: str | None = None,
+    latency_ms: float | None = None,
+    flag: str | None = None,
+    eval_result: str | None = None,
+    analysis: list[Any] | None = None,
+) -> bool:
+    if agent_id and rev.agent_id != agent_id:
+        return False
+    if source and rev.source != source:
+        return False
+    if outcome:
+        hangup = rev.hangup.reason.value if rev.hangup else None
+        if hangup != outcome and rev.status.value != outcome:
+            return False
+    if latency_ms is not None:
+        values = [item.value_ms for item in rev.stage_measurements]
+        if not values or max(values) < latency_ms:
+            return False
+    rows = analysis or []
+    if flag:
+        flags = _flag_kinds(rows)
+        if flag not in flags:
+            return False
+    if eval_result:
+        passed = _eval_passed(rows)
+        if eval_result == "pass" and passed is not True:
+            return False
+        if eval_result == "fail" and passed is not False:
+            return False
+    return True
+
+
+def _flag_kinds(rows: list[Any]) -> set[str]:
+    kinds: set[str] = set()
+    for row in rows:
+        payload = row.payload if hasattr(row, "payload") else {}
+        for item in payload.get("flags") or payload.get("candidates") or payload.get("claims") or []:
+            if isinstance(item, dict) and item.get("kind"):
+                kinds.add(str(item["kind"]))
+    return kinds
+
+
+def _eval_passed(rows: list[Any]) -> bool | None:
+    for row in rows:
+        payload = row.payload if hasattr(row, "payload") else {}
+        if "passed" in payload:
+            return bool(payload.get("passed"))
+    return None
+
+
 def call_list_item(rev: CallRevision) -> dict[str, Any]:
     return {
         "id": rev.call_id,
