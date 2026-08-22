@@ -8,7 +8,8 @@ def timeline_view(call: CallRevision) -> dict[str, object]:
     """Backend view-model: stage waterfalls only from INTERVAL measurements."""
 
     intervals = [m for m in call.stage_measurements if _is_interval(m)]
-    unplaced = [m for m in call.stage_measurements if not _is_interval(m)]
+    anchored = [m for m in call.stage_measurements if _is_anchored(m)]
+    unplaced = [m for m in call.stage_measurements if not _is_interval(m) and not _is_anchored(m)]
     return {
         "call_id": call.call_id,
         "revision": call.revision,
@@ -25,6 +26,7 @@ def timeline_view(call: CallRevision) -> dict[str, object]:
             for t in call.turns
         ],
         "stage_intervals": [_measure(m) for m in intervals],
+        "anchored_stage_chips": [_measure(m) for m in anchored],
         "unplaced_stage_chips": [_measure(m) for m in unplaced],
         "aggregates": [
             {
@@ -49,6 +51,10 @@ def _is_interval(measurement: StageMeasurement) -> bool:
         and measurement.started_at is not None
         and measurement.ended_at is not None
     )
+
+
+def _is_anchored(measurement: StageMeasurement) -> bool:
+    return measurement.placement is MeasurementPlacement.ANCHORED_DURATION and measurement.started_at is not None
 
 
 def _measure(measurement: StageMeasurement) -> dict[str, object]:

@@ -18,6 +18,26 @@ from obsalt.plugin.types import RedactedDocument
 from obsalt.search.hybrid import LocalEmbedder
 
 
+class MemoryHangupClusterStore:
+    """Materialized hangup clusters. Refreshed on promotion, not per pageview."""
+
+    def __init__(self) -> None:
+        self.by_org: dict[str, dict[str, Any]] = {}
+
+    def refresh(self, org_id: str, calls: Sequence[CallRevision], generation: str) -> dict[str, Any]:
+        payload = cluster_hangups(calls, generation)
+        self.by_org[org_id] = payload
+        return payload
+
+    def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:
+        payload = self.by_org.get(org_id)
+        if payload is None:
+            return None
+        if generation is not None and payload.get("as_of_generation") != generation:
+            return None
+        return payload
+
+
 def cluster_hangups(
     calls: Sequence[CallRevision],
     as_of_generation: str = "",

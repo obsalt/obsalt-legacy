@@ -46,7 +46,7 @@ def _client() -> TestClient:
 def test_health_and_plugins() -> None:
     client = _client()
     assert client.get("/health").json()["status"] == "ok"
-    names = [p["name"] for p in client.get("/v1/plugins").json()["items"]]
+    names = [p["name"] for p in client.get("/v1/plugins", headers={"X-API-Key": "k"}).json()["items"]]
     assert "example" in names
 
 

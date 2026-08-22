@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind
 from obsalt.ingest.receive import Inbox, ObjectStore, ReceiveLimits, object_key_for
@@ -44,6 +45,7 @@ def receive_otlp_batch(
     source_call_id: str | None = None,
     spans: Sequence[ReadableSpan] | None = None,
     span_index: SpanIdentityIndex | None = None,
+    leases: Any | None = None,
 ) -> OtlpReceiveResult:
     limits = limits or ReceiveLimits()
     if compressed_size is not None and compressed_size > limits.compressed_bytes:
@@ -55,9 +57,12 @@ def receive_otlp_batch(
     if inbox.is_tombstoned(org_id, hints):
         return OtlpReceiveResult(envelope=None, rejected="tombstoned", status_code=200)
 
+    conflict = False
     if span_index is not None and spans:
         for span in spans:
-            span_index.observe(org_id, span)
+            outcome = span_index.observe(org_id, span)
+            if outcome == "conflict":
+                conflict = True
 
     content_sha = sha256_bytes(raw)
     delivery = otlp_delivery_key(org_id, raw, spans)
@@ -80,4 +85,23 @@ def receive_otlp_batch(
         body=raw,
     )
     stored, created = inbox.accept(envelope, tombstone_hints=hints)
+    if conflict:
+        stored.state = EnvelopeState.FAILED
+        drop = getattr(inbox, "drop_outbox", None)
+        if callable(drop):
+            drop(stored.envelope_id)
+        failures = getattr(inbox, "failures", None)
+        if isinstance(failures, dict):
+            failures[stored.envelope_id] = "span identity conflict"
+        return OtlpReceiveResult(
+            envelope=stored,
+            created=created,
+            rejected="span identity conflict",
+            status_code=409,
+        )
+    if leases is not None:
+        try:
+            leases.notify(stored.envelope_id)
+        except Exception:
+            pass
     return OtlpReceiveResult(envelope=stored, created=created, status_code=200)

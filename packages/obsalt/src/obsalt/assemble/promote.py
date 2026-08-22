@@ -43,6 +43,9 @@ class RevisionPointerStore:
     def delete(self, org_id: str, call_id: str) -> None:
         raise NotImplementedError
 
+    def frontier(self, org_id: str, call_id: str) -> frozenset[str]:
+        return frozenset()
+
 
 class MemoryPointerStore(RevisionPointerStore):
     def __init__(self) -> None:
@@ -75,6 +78,9 @@ class MemoryPointerStore(RevisionPointerStore):
     def delete(self, org_id: str, call_id: str) -> None:
         self._ptrs.pop((org_id, call_id), None)
         self._frontiers.pop((org_id, call_id), None)
+
+    def frontier(self, org_id: str, call_id: str) -> frozenset[str]:
+        return self._frontiers.get((org_id, call_id), frozenset())
 
 
 def promote(

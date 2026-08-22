@@ -33,6 +33,8 @@ class MemoryInbox:
         self.outbox: list[str] = []
         self.failures: dict[str, str] = {}
         self.leased: set[str] = set()
+        self.attempts: dict[str, int] = {}
+        self.dlq: list[dict[str, str]] = []
 
     def tombstone(self, org_id: str, hints: TombstoneHints) -> None:
         self.tombstones.append((org_id, hints))
@@ -108,6 +110,15 @@ class MemoryInbox:
         if envelope is not None:
             envelope.state = EnvelopeState.FAILED
         self.leased.discard(envelope_id)
+        self.attempts[envelope_id] = self.attempts.get(envelope_id, 0) + 1
+        if self.attempts[envelope_id] >= 8:
+            self.dlq.append({"envelope_id": envelope_id, "error": error})
+            if envelope_id in self.outbox:
+                self.outbox.remove(envelope_id)
+            from obsalt.metrics import dlq_inserts_total
+
+            dlq_inserts_total.inc()
+            return
         if envelope_id not in self.outbox:
             self.outbox.append(envelope_id)
 
@@ -116,6 +127,11 @@ class MemoryInbox:
 
     def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
         return [envelope for envelope in self.by_id.values() if envelope.org_id == org_id]
+
+    def drop_outbox(self, envelope_id: str) -> None:
+        if envelope_id in self.outbox:
+            self.outbox.remove(envelope_id)
+        self.leased.discard(envelope_id)
 
     def requeue(self, envelope_id: str) -> None:
         envelope = self.by_id.get(envelope_id)

@@ -10,7 +10,7 @@
     "agent_id": "support-agent",
     "agent_version": null,
     "direction": "inbound",
-    "from_number": null,
+    "from_number": "+15551230001",
     "to_number": null,
     "started_at": "2026-08-21T12:00:00Z",
     "ended_at": "2026-08-21T12:02:10Z",
@@ -94,14 +94,14 @@
     "turn_index": 0,
     "speaker": "agent",
     "text": "Thanks for calling. How can I help?",
-    "started_at": "2025-08-21T12:00:00.400000Z",
-    "ended_at": "2025-08-21T12:00:02.200000Z",
+    "started_at": "2026-08-21T12:00:00.400000Z",
+    "ended_at": "2026-08-21T12:00:02.200000Z",
     "confidence": null,
     "interrupted": false,
     "provenance_by_field": {
       "started_at": {
         "provenance": "provider_reported",
-        "source_path": "artifact.messages[].time",
+        "source_path": "artifact.messages[].secondsFromStart",
         "derivation": null
       },
       "text": {
@@ -121,14 +121,14 @@
     "turn_index": 1,
     "speaker": "user",
     "text": "I want a refund for my order.",
-    "started_at": "2025-08-21T12:00:03Z",
-    "ended_at": "2025-08-21T12:00:05.100000Z",
+    "started_at": "2026-08-21T12:00:03Z",
+    "ended_at": "2026-08-21T12:00:05.100000Z",
     "confidence": 0.92,
     "interrupted": false,
     "provenance_by_field": {
       "started_at": {
         "provenance": "provider_reported",
-        "source_path": "artifact.messages[].time",
+        "source_path": "artifact.messages[].secondsFromStart",
         "derivation": null
       },
       "text": {
@@ -148,7 +148,7 @@
     "tool_id": "tool-lookup-1",
     "name": "lookup_order",
     "turn_index": 2,
-    "started_at": "2025-08-21T12:00:05.400000Z",
+    "started_at": "2026-08-21T12:00:05.400000Z",
     "ended_at": null,
     "status": "pending",
     "args": {
@@ -161,6 +161,11 @@
       "name": {
         "provenance": "provider_reported",
         "source_path": "artifact.messages.toolCalls",
+        "derivation": null
+      },
+      "started_at": {
+        "provenance": "provider_reported",
+        "source_path": "artifact.messages[].secondsFromStart",
         "derivation": null
       }
     }
@@ -205,14 +210,14 @@
     "turn_index": 2,
     "speaker": "agent",
     "text": "I've processed a refund for order ORD-99999 totaling $48.50.",
-    "started_at": "2025-08-21T12:00:06.200000Z",
-    "ended_at": "2025-08-21T12:00:09.600000Z",
+    "started_at": "2026-08-21T12:00:06.200000Z",
+    "ended_at": "2026-08-21T12:00:09.600000Z",
     "confidence": null,
     "interrupted": false,
     "provenance_by_field": {
       "started_at": {
         "provenance": "provider_reported",
-        "source_path": "artifact.messages[].time",
+        "source_path": "artifact.messages[].secondsFromStart",
         "derivation": null
       },
       "text": {
@@ -232,14 +237,14 @@
     "turn_index": 3,
     "speaker": "user",
     "text": "That number is wrong. This is useless. Goodbye.",
-    "started_at": "2025-08-21T12:00:10.100000Z",
-    "ended_at": "2025-08-21T12:00:12.500000Z",
+    "started_at": "2026-08-21T12:00:10.100000Z",
+    "ended_at": "2026-08-21T12:00:12.500000Z",
     "confidence": null,
     "interrupted": false,
     "provenance_by_field": {
       "started_at": {
         "provenance": "provider_reported",
-        "source_path": "artifact.messages[].time",
+        "source_path": "artifact.messages[].secondsFromStart",
         "derivation": null
       },
       "text": {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from obsalt._version import PLUGIN_API_VERSION
 from obsalt.crypto.primitives import (
@@ -258,11 +258,13 @@ class VapiPlugin:
             direction = CallDirection.INBOUND
         elif "outbound" in call_type.lower():
             direction = CallDirection.OUTBOUND
+        call_started = mapped.get("started_at") or parse_datetime(call_obj.get("startedAt"))
         yield CallObserved(
             source_call_id=source_call_id,
             agent_id=as_str(mapped.get("agent_id")) or "unknown",
             direction=direction,
-            started_at=mapped.get("started_at") or parse_datetime(call_obj.get("startedAt")),
+            from_number=as_str(dig(call_obj, "customer", "number")),
+            started_at=call_started,
             ended_at=mapped.get("ended_at") or parse_datetime(call_obj.get("endedAt")),
             cost=as_float(mapped.get("cost")),
             architecture=PipelineArchitecture.CASCADE,
@@ -314,7 +316,7 @@ class VapiPlugin:
 
         messages = artifact.get("messages") or message.get("messages") or []
         if isinstance(messages, list):
-            yield from _turns_and_tools(messages)
+            yield from _turns_and_tools(messages, call_started if isinstance(call_started, datetime) else None)
 
         yield from _latency(message, artifact)
         ended_reason = as_str(message.get("endedReason")) or as_str(call_obj.get("endedReason"))
@@ -393,7 +395,16 @@ class VapiPlugin:
         )
 
 
-def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:
+def _message_anchor(raw: dict, call_started: datetime | None) -> tuple[datetime | None, str]:
+    """Prefer secondsFromStart + call start (plan §5.1). Fall back to epoch ``time``."""
+
+    seconds_from_start = as_float(raw.get("secondsFromStart"))
+    if call_started is not None and seconds_from_start is not None:
+        return call_started + timedelta(seconds=seconds_from_start), "artifact.messages[].secondsFromStart"
+    return parse_datetime(raw.get("time")), "artifact.messages[].time"
+
+
+def _turns_and_tools(messages: list, call_started: datetime | None = None) -> Iterable[NormalizedEvent]:
     turn_index = 0
     pending: dict[str, str] = {}
     user_texts: list[str] = []
@@ -401,6 +412,7 @@ def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:
         if not isinstance(raw, dict):
             continue
         role = as_str(raw.get("role")) or ""
+        started, started_path = _message_anchor(raw, call_started)
         if role in {"tool_calls", "tool_call", "function"} or raw.get("toolCalls") or raw.get("toolCallList"):
             for item in raw.get("toolCalls") or raw.get("toolCallList") or []:
                 if not isinstance(item, dict):
@@ -414,11 +426,12 @@ def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:
                     tool_id=tool_id,
                     name=name,
                     turn_index=turn_index,
-                    started_at=parse_datetime(raw.get("time")),
+                    started_at=started,
                     status=ToolStatus.PENDING,
                     args=args,
                     provenance_by_field={
-                        "name": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages.toolCalls")
+                        "name": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages.toolCalls"),
+                        "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path=started_path),
                     },
                 )
             continue
@@ -448,11 +461,8 @@ def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:
             continue
         text = as_str(raw.get("message")) or as_str(raw.get("content")) or ""
         duration_s = as_float(raw.get("duration"))
-        started = parse_datetime(raw.get("time"))
         ended = None
         if started is not None and duration_s is not None:
-            from datetime import timedelta
-
             ended = started + timedelta(seconds=duration_s)
         conf = None
         words = raw.get("words") if isinstance(raw.get("words"), list) else []
@@ -469,7 +479,7 @@ def _turns_and_tools(messages: list) -> Iterable[NormalizedEvent]:
             confidence=conf,
             interrupted=bool(raw.get("interrupted")),
             provenance_by_field={
-                "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages[].time"),
+                "started_at": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path=started_path),
                 "text": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="artifact.messages[].message"),
             },
         )

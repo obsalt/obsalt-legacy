@@ -62,10 +62,10 @@ def _sql_statements(script: str) -> list[str]:
     return statements
 
 
-def _embed_sync(text: str, dim: int = 256) -> list[float]:
+def _embed_sync(text: str, dim: int = 256, onnx_path: str | None = None) -> list[float]:
     from obsalt.search.hybrid import OnnxEmbedder
 
-    embedder = OnnxEmbedder(dim=dim)
+    embedder = OnnxEmbedder(dim=dim, model_path=onnx_path) if onnx_path else OnnxEmbedder(dim=dim)
     return embedder._project(embedder._bag.bag(text))
 
 
@@ -329,13 +329,29 @@ class PostgresInbox:
                 UPDATE outbox
                 SET leased_until = NULL,
                     lease_owner = NULL,
-                    available_at = now() + interval '5 seconds' * LEAST(attempts, 10),
+                    attempts = attempts + 1,
+                    available_at = now() + interval '5 seconds' * LEAST(attempts + 1, 10),
                     last_error = %s
                 WHERE envelope_id = %s
-                RETURNING envelope_id
+                RETURNING envelope_id, attempts
                 """,
                 (error, envelope_id),
             ).fetchone()
+            attempts = int(updated["attempts"]) if updated else 0
+            if attempts >= 8:
+                self._conn.execute("DELETE FROM outbox WHERE envelope_id = %s", (envelope_id,))
+                self._conn.execute(
+                    """
+                    INSERT INTO decode_dlq (envelope_id, org_id, error)
+                    SELECT envelope_id, org_id, %s FROM raw_envelopes WHERE envelope_id = %s
+                    ON CONFLICT (envelope_id) DO UPDATE SET error = EXCLUDED.error
+                    """,
+                    (error, envelope_id),
+                )
+                from obsalt.metrics import dlq_inserts_total
+
+                dlq_inserts_total.inc()
+                return
             if updated is None:
                 self._conn.execute(
                     """
@@ -345,6 +361,10 @@ class PostgresInbox:
                     """,
                     (error, envelope_id),
                 )
+
+    def drop_outbox(self, envelope_id: str) -> None:
+        with self._conn.transaction():
+            self._conn.execute("DELETE FROM outbox WHERE envelope_id = %s", (envelope_id,))
 
     def get_by_id(self, envelope_id: str) -> RawEnvelope | None:
         row = self._conn.execute(
@@ -547,6 +567,16 @@ class PostgresPointerStore(RevisionPointerStore):
         ).fetchone()
         return row["revision"] if row else None
 
+    def frontier(self, org_id: str, call_id: str) -> frozenset[str]:
+        row = self._conn.execute(
+            "SELECT fact_frontier FROM active_calls WHERE org_id = %s AND call_id = %s",
+            (org_id, call_id),
+        ).fetchone()
+        if row is None:
+            return frozenset()
+        values = row["fact_frontier"] or []
+        return frozenset(str(item) for item in values)
+
     def list_org(self, org_id: str) -> list[tuple[str, str]]:
         rows = self._conn.execute(
             """
@@ -711,21 +741,24 @@ class PostgresAuditLog:
 
 
 class PostgresSearchDocuments:
-    def __init__(self, conn: PgConn) -> None:
+    def __init__(self, conn: PgConn, *, onnx_path: str | None = None) -> None:
         self._conn = conn
+        self._onnx_path = onnx_path
 
     def upsert_revision(self, revision: CallRevision, *, index_version: str = "1") -> None:
         body = " ".join(turn.text for turn in revision.turns)
-        embedding = _embed_sync(body)
+        embedding = _embed_sync(body, onnx_path=self._onnx_path)
         literal = "[" + ",".join(str(v) for v in embedding) + "]"
+        hangup = revision.hangup.reason.value if revision.hangup else None
         with self._conn.transaction():
             self._conn.execute(
                 """
                 INSERT INTO search_documents (
-                    org_id, call_id, revision, body, tsv, embedding, index_version, agent_id, started_at
+                    org_id, call_id, revision, body, tsv, embedding, index_version,
+                    agent_id, started_at, source, hangup_reason
                 )
                 VALUES (
-                    %s, %s, %s, %s, to_tsvector('simple', %s), %s::vector, %s, %s, %s
+                    %s, %s, %s, %s, to_tsvector('simple', %s), %s::vector, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (org_id, call_id) DO UPDATE SET
                     revision = EXCLUDED.revision,
@@ -734,7 +767,9 @@ class PostgresSearchDocuments:
                     embedding = EXCLUDED.embedding,
                     index_version = EXCLUDED.index_version,
                     agent_id = EXCLUDED.agent_id,
-                    started_at = EXCLUDED.started_at
+                    started_at = EXCLUDED.started_at,
+                    source = EXCLUDED.source,
+                    hangup_reason = EXCLUDED.hangup_reason
                 """,
                 (
                     revision.org_id,
@@ -746,6 +781,8 @@ class PostgresSearchDocuments:
                     index_version,
                     revision.agent_id,
                     revision.started_at,
+                    revision.source,
+                    hangup,
                 ),
             )
 
@@ -767,7 +804,9 @@ class PostgresSearchDocuments:
 
         filters = filters or {}
         agent_id = filters.get("agent_id")
-        qvec = _embed_sync(q or " ")
+        source = filters.get("source")
+        hangup_reason = filters.get("hangup_reason")
+        qvec = _embed_sync(q or " ", onnx_path=self._onnx_path)
         literal = "[" + ",".join(str(v) for v in qvec) + "]"
         rows = self._conn.execute(
             """
@@ -777,8 +816,10 @@ class PostgresSearchDocuments:
             FROM search_documents
             WHERE org_id = %s
               AND (%s IS NULL OR agent_id = %s)
+              AND (%s IS NULL OR source = %s)
+              AND (%s IS NULL OR hangup_reason = %s)
             """,
-            (q or "", literal, org_id, agent_id, agent_id),
+            (q or "", literal, org_id, agent_id, agent_id, source, source, hangup_reason, hangup_reason),
         ).fetchall()
         lexical_ids = [
             row["call_id"]

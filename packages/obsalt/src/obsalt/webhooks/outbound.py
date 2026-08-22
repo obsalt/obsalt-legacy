@@ -80,19 +80,35 @@ def deliver(
 
 
 def emit_call_finalized(state: Any, revision: Any) -> None:
-    """Enqueue call.finalized once. Drain delivers with retries; never a second logical event."""
+    emit_standard_event(state, revision, "call.finalized")
+
+
+def emit_standard_event(
+    state: Any,
+    revision: Any,
+    event_type: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Enqueue one Standard Webhooks event. Stable id; never a second logical event."""
+    if event_type not in STANDARD_EVENTS and event_type != "*":
+        return
     dests = list(getattr(state, "webhook_destinations", None) or [])
     if not dests:
         return
     payload = {
-        "type": "call.finalized",
+        "type": event_type,
         "schema_version": SCHEMA_VERSION,
         "org_id": revision.org_id,
         "call_id": revision.call_id,
         "revision": revision.revision,
         "source": revision.source,
     }
-    event_id = f"call.finalized:{revision.org_id}:{revision.call_id}:{revision.revision}"
+    if extra:
+        payload.update(extra)
+    suffix = extra.get("kind") if extra else None
+    event_id = f"{event_type}:{revision.org_id}:{revision.call_id}:{revision.revision}"
+    if suffix:
+        event_id = f"{event_id}:{suffix}"
     outbox = getattr(state, "webhook_outbox", None)
     if outbox is None:
         state.webhook_outbox = []
@@ -103,7 +119,7 @@ def emit_call_finalized(state: Any, revision: Any) -> None:
         if dest.get("org_id") and dest["org_id"] != revision.org_id:
             continue
         event = dest.get("event_type") or dest.get("event") or "call.finalized"
-        if event not in {"call.finalized", "*"}:
+        if event not in {event_type, "*"}:
             continue
         outbox.append(
             {

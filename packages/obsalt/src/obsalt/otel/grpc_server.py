@@ -30,10 +30,11 @@ async def serve_otlp_grpc(state: Any, *, port: int) -> Any:
             if org is None:
                 await context.abort(grpc.StatusCode.UNAUTHENTICATED, "ingest key required")
                 return trace_service_pb2.ExportTraceServiceResponse()
-            for span in spans:
-                asserted = (span.resource or {}).get("obsalt.org")
-                if asserted and str(asserted) != org:
-                    await context.abort(grpc.StatusCode.PERMISSION_DENIED, "resource cannot choose org")
+            from obsalt.otel.tenancy import reject_tenant_assertions
+
+            denied = reject_tenant_assertions(spans, org)
+            if denied:
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, denied)
             result = receive_otlp_batch(
                 org_id=org,
                 raw=raw,
@@ -46,9 +47,12 @@ async def serve_otlp_grpc(state: Any, *, port: int) -> Any:
                 ),
                 spans=spans,
                 span_index=getattr(state, "span_identities", None),
+                leases=getattr(state, "leases", None),
             )
             if result.status_code == 413:
-                await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, result.rejected or "too large")
+                await context.abort(grpc.StatusCode.UNAVAILABLE, result.rejected or "too large")
+            if result.status_code == 409:
+                await context.abort(grpc.StatusCode.FAILED_PRECONDITION, result.rejected or "conflict")
             return trace_service_pb2.ExportTraceServiceResponse()
 
     server = aio.server()
@@ -67,6 +71,10 @@ def _org_from_metadata(context: Any, state: Any) -> str | None:
     if not key:
         return None
     found = state.keys.get(str(key))
+    if found is None and getattr(state, "key_directory", None) is not None:
+        record = state.key_directory.lookup(str(key))
+        if record is not None:
+            return record.org_id
     if found is None:
         return None
     return found[0]

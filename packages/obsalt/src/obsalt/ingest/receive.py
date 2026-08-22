@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from obsalt.crypto.primitives import require_singleton
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind, VerifyOutcome
@@ -94,6 +94,7 @@ def receive_webhook(
     inbox: Inbox,
     limits: ReceiveLimits | None = None,
     compressed_size: int | None = None,
+    leases: Any | None = None,
 ) -> ReceiveResult:
     limits = limits or ReceiveLimits()
     if compressed_size is not None and compressed_size > limits.compressed_bytes:
@@ -162,6 +163,11 @@ def receive_webhook(
             rejected="tombstoned",
         )
     ack = plugin.acknowledgement(kind)
+    if leases is not None:
+        try:
+            leases.notify(stored.envelope_id)
+        except Exception:
+            log.warning("lease notify failed; postgres outbox remains authoritative")
     return ReceiveResult(response=ack, envelope=stored, created=created)
 
 

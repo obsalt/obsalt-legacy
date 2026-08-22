@@ -41,6 +41,7 @@ class TraceRecord:
     unrooted: bool = False
     mapper_name: str | None = None
     late_after_finalize: bool = False
+    caller_token: str | None = None
 
 
 class MemoryTraceAssembler:
@@ -75,7 +76,14 @@ class MemoryTraceAssembler:
             record.late_after_finalize = True
             if record.unrooted and any(is_root_span(span) for span in spans):
                 record.unrooted = False
-        record.events.extend(events)
+        from obsalt.domain.events import CallObserved
+        from obsalt.privacy.caller import DEFAULT_PEPPER, caller_token
+        from obsalt.redact.choke import redact_events
+
+        for event in events:
+            if isinstance(event, CallObserved) and event.from_number and event.from_number != "<phone>":
+                record.caller_token = caller_token(org_id, event.from_number, DEFAULT_PEPPER)
+        record.events.extend(redact_events(events).events)
         for span in spans:
             if is_root_span(span):
                 record.rooted = True
