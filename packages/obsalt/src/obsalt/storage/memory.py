@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from obsalt.crypto.keys import hash_ingest_key
 from obsalt.ingest.receive import Tombstoned
 from obsalt.plugin.protocol import ConnectionConfig, RawEnvelope
 
@@ -34,7 +35,10 @@ class MemoryResolver:
         self.connections = connections
 
     def resolve(self, provider: str, ingest_key: str) -> ConnectionConfig | None:
-        return self.connections.get((provider, ingest_key))
+        hit = self.connections.get((provider, ingest_key))
+        if hit is not None:
+            return hit
+        return self.connections.get((provider, hash_ingest_key(ingest_key)))
 
 
 class MemoryInbox:
@@ -43,6 +47,7 @@ class MemoryInbox:
         self.by_delivery: dict[tuple[str, str], str] = {}
         self.tombstones: list[dict[str, Any]] = []
         self.outbox: list[str] = []
+        self.assembled: dict[str, int] = {}
 
     def add_tombstone(self, **hints: Any) -> None:
         self.tombstones.append(hints)
@@ -70,3 +75,16 @@ class MemoryInbox:
         self.by_delivery[key] = envelope.envelope_id
         self.outbox.append(envelope.envelope_id)
         return envelope.envelope_id, True
+
+    def get(self, envelope_id: str) -> RawEnvelope | None:
+        return self.envelopes.get(envelope_id)
+
+    def claim(self, limit: int = 32) -> list[str]:
+        claimed = self.outbox[:limit]
+        self.outbox = self.outbox[limit:]
+        return claimed
+
+    def mark_assembled(self, envelope_id: str, revision: int) -> None:
+        self.assembled[envelope_id] = revision
+        if envelope_id in self.outbox:
+            self.outbox = [item for item in self.outbox if item != envelope_id]

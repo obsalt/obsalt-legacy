@@ -13,12 +13,12 @@ from obsalt_testkit.conformance import DecoderConformanceTests, UnitsConformance
 
 
 class TestRetellDecoder(DecoderConformanceTests):
-    plugin = RetellPlugin
+    plugin_cls = RetellPlugin
     fixtures_dir = Path(str(files("obsalt_retell") / "fixtures"))
 
 
 class TestRetellUnits(UnitsConformanceTests):
-    plugin = RetellPlugin
+    plugin_cls = RetellPlugin
     seconds_payload = (Path(str(files("obsalt_retell") / "fixtures" / "raw" / "call_ended.json"))).read_bytes()
     field_path = "words.start"
     expected_ms = 300.0  # 0.4s to 0.7s

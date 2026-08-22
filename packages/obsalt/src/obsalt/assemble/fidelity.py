@@ -34,7 +34,7 @@ ASSEMBLER_VERSION = "obsalt-assemble/1"
 _STAGE_TO_SIGNAL = {
     "stt": Signal.STT_DURATION,
     "llm": Signal.LLM_DURATION,
-    "tts": TTS := Signal.TTS_DURATION,
+    "tts": Signal.TTS_DURATION,
     "e2e": Signal.E2E_DURATION,
     "ttfa": Signal.TTFA,
     "endpointing": Signal.ENDPOINTING,

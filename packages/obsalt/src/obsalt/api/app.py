@@ -1,21 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from obsalt._version import __version__
-from obsalt.api.auth import current_principal, require_scope
+from obsalt.analysis.hallucination import candidate_claims, detect
+from obsalt.analysis.judge import HeuristicJudge
+from obsalt.analysis.tier2 import judge_rubric, should_run_tier2
+from obsalt.api.auth import require_scope
+from obsalt.api.sessions import SESSION_COOKIE, dump_session, load_session
 from obsalt.assemble.timeline import timeline_view
 from obsalt.config import Settings
 from obsalt.ingest.otlp import handle_otlp_http
 from obsalt.plugin.protocol import ConnectionConfig
 from obsalt.runtime import ApiPrincipal, Runtime
-from obsalt.search.hybrid import lexical_rank, reciprocal_rank_fusion
+from obsalt.search.hybrid import hybrid_search
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "ui" / "templates"))
 
@@ -37,6 +42,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             "status": "ok",
             "plugins": sorted(runtime.host.plugins),
             "plugin_errors": runtime.host.errors,
+            "durable": runtime.durable is not None,
         }
 
     @app.get("/metrics")
@@ -44,7 +50,12 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/v1/ingest/{provider}/{ingest_key}")
-    async def ingest(provider: str, ingest_key: str, request: Request) -> Response:
+    async def ingest(
+        provider: str,
+        ingest_key: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+    ) -> Response:
         raw = await request.body()
         headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in request.headers.items()]
         result = runtime.receive.handle(
@@ -53,9 +64,8 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             raw=raw,
             headers=headers,
         )
-        # Decode in-process for the functional product; workers lease from outbox in compose.
         if result.envelope_id and result.state and result.state.value == "queued":
-            _try_decode(runtime, provider, result.envelope_id, raw)
+            background_tasks.add_task(runtime.process_envelope, result.envelope_id, raw)
         return Response(
             content=result.response.body,
             status_code=result.response.status_code,
@@ -103,6 +113,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         call_id: str, ref: str, principal: ApiPrincipal = Depends(require_scope("read"))
     ) -> dict[str, Any]:
         revision = _call_or_404(runtime, principal.org_id, call_id)
+        blob = runtime.get_blob(principal.org_id, ref)
+        if blob is not None:
+            return {"ref": ref, "call_id": revision.call_id, "text": blob}
         for item in revision.evidence:
             if item.content_ref == ref or item.uri == ref:
                 return item.model_dump(mode="json")
@@ -115,8 +128,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             (rev.call_id, rev.revision, " ".join(t.text or "" for t in rev.turns))
             for rev in runtime.list_calls(principal.org_id)
         ]
-        lexical = lexical_rank(query, docs)
-        fused = reciprocal_rank_fusion([lexical])
+        fused = hybrid_search(query, docs)
         return {"hits": [h.__dict__ for h in fused[:20]]}
 
     @app.get("/v1/latency")
@@ -164,6 +176,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
                         "name": tool.name,
                         "status": tool.status.value,
                         "duration_ms": tool.duration_ms,
+                        "duration_label": (
+                            None if tool.duration_ms is not None else "not reported"
+                        ),
                     }
                 )
         return {"as_of_generation": runtime.rollup_generation, "items": rows}
@@ -179,16 +194,59 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
                     "call_id": call_id,
                     "revision": revision,
                     "results": [r.model_dump(mode="json") for r in results],
+                    "executions": [
+                        ex.model_dump(mode="json")
+                        for key, ex in runtime.executions.items()
+                        if key[0] == org and key[1] == call_id and key[2] == revision
+                    ],
                 }
             )
-        return {"items": items}
+        return {"items": items, "note": "missing output is never a passing call"}
 
     @app.post("/v1/calls/{call_id}/analyze")
     def request_analyze(
         call_id: str, principal: ApiPrincipal = Depends(require_scope("analyze"))
     ) -> dict[str, Any]:
         revision = _call_or_404(runtime, principal.org_id, call_id)
-        return {"call_id": revision.call_id, "revision": revision.revision, "state": "pending"}
+        state = should_run_tier2(
+            manual=True,
+            budget_remaining=runtime.budget_remaining(principal.org_id),
+        )
+        if state.value == "budget_blocked":
+            return {"call_id": revision.call_id, "revision": revision.revision, "state": state.value}
+        transcript = " ".join(t.text or "" for t in revision.turns)
+        grounding = [
+            runtime.get_blob(principal.org_id, item.content_ref) or ""
+            for item in revision.grounding
+        ]
+        grounding = [g for g in grounding if g]
+        judge = HeuristicJudge()
+        execution, analysis = asyncio.run(
+            judge_rubric(
+                revision,
+                rubric_id="manual",
+                rubric_version="1",
+                rubric_body="Score the call. Fail if the agent invents facts.",
+                judge=judge,
+                judge_version=judge.version,
+                prompt_version="manual/1",
+                transcript=transcript,
+                grounding=grounding,
+            )
+        )
+        hall_exec, hall_results = asyncio.run(
+            detect(revision, judge=judge, transcript=transcript, grounding=grounding)
+        )
+        key = (revision.org_id, revision.call_id, revision.revision)
+        runtime.analysis.setdefault(key, []).extend([analysis, *hall_results])
+        runtime.executions[(revision.org_id, revision.call_id, revision.revision, "eval.manual")] = execution
+        runtime.executions[(revision.org_id, revision.call_id, revision.revision, "hallucination")] = hall_exec
+        return {
+            "call_id": revision.call_id,
+            "revision": revision.revision,
+            "state": execution.state.value,
+            "candidates": candidate_claims(revision.turns),
+        }
 
     @app.get("/v1/rubrics")
     def list_rubrics(principal: ApiPrincipal = Depends(require_scope("read"))) -> dict[str, Any]:
@@ -221,7 +279,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
                     "id": cfg.connection_id,
                     "provider": cfg.provider,
                     "settings": cfg.settings,
-                    "secret_fields": sorted(cfg.credentials),
+                    "secret_fields_configured": sorted(cfg.credentials),
                 }
             )
         return {"items": items}
@@ -230,11 +288,9 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
     def create_connection(
         body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))
     ) -> dict[str, Any]:
-        ingest_key = str(body.get("ingest_key") or "")
-        if not ingest_key:
-            from obsalt.crypto.keys import new_ingest_key
+        from obsalt.crypto.keys import new_ingest_key
 
-            ingest_key = new_ingest_key()
+        ingest_key = str(body.get("ingest_key") or new_ingest_key())
         cfg = ConnectionConfig(
             org_id=principal.org_id,
             provider=str(body["provider"]),
@@ -247,7 +303,8 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
 
     @app.post("/v1/replay")
     def replay(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
-        return {"accepted": True, "filter": body}
+        count = runtime.replay_org(principal.org_id, provider=body.get("provider"))
+        return {"accepted": True, "replayed": count, "filter": body}
 
     @app.post("/v1/backfill")
     def backfill(body: dict[str, Any], principal: ApiPrincipal = Depends(require_scope("admin"))) -> dict[str, Any]:
@@ -259,6 +316,7 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
         kind = body.get("kind")
         if kind == "call" and body.get("call_id"):
             runtime.calls.pop((principal.org_id, body["call_id"]), None)
+            runtime.active.pop((principal.org_id, body["call_id"]), None)
             runtime.inbox.add_tombstone(org_id=principal.org_id, source_call_id=body.get("source_call_id"))
         return {"status": "accepted", "undoable": False}
 
@@ -274,20 +332,50 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             {"version": __version__, "demo": runtime.settings.demo},
         )
 
+    @app.get("/v1/ui/login", response_class=HTMLResponse)
+    def ui_login(request: Request, error: str | None = None) -> HTMLResponse:
+        return TEMPLATES.TemplateResponse(request, "login.html", {"error": error})
+
+    @app.post("/v1/ui/login")
+    def ui_login_post(api_key: str = Form(...)) -> Response:
+        principal = runtime.authenticate_api_key(api_key)
+        if principal is None:
+            return RedirectResponse("/v1/ui/login?error=invalid", status_code=303)
+        token = dump_session(
+            runtime.settings.session_secret,
+            {"org_id": principal.org_id, "scope": principal.scope, "role": principal.role},
+        )
+        response = RedirectResponse("/v1/ui/calls", status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=14 * 24 * 3600,
+        )
+        return response
+
     @app.get("/v1/ui/calls", response_class=HTMLResponse)
     def ui_calls(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
-        principal = _optional_principal(runtime, x_api_key)
-        org = principal.org_id if principal else next(iter({k[0] for k in runtime.calls}), "demo")
+        org, _principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
         calls = runtime.list_calls(org)
         return TEMPLATES.TemplateResponse(request, "calls.html", {"calls": calls, "org_id": org})
 
     @app.get("/v1/ui/calls/{call_id}", response_class=HTMLResponse)
-    def ui_call(request: Request, call_id: str) -> HTMLResponse:
-        org = next((org for (org, cid) in runtime.calls if cid == call_id), None)
+    def ui_call(
+        request: Request,
+        call_id: str,
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> HTMLResponse:
+        org, _principal = _ui_org(runtime, request, x_api_key)
         if org is None:
-            raise HTTPException(status_code=404, detail="not found")
+            return RedirectResponse("/v1/ui/login", status_code=303)
         revision = runtime.get_revision(org, call_id)
-        assert revision is not None
+        if revision is None:
+            raise HTTPException(status_code=404, detail="not found")
         return TEMPLATES.TemplateResponse(
             request,
             "call_detail.html",
@@ -298,7 +386,90 @@ def create_app(runtime: Runtime | None = None, settings: Settings | None = None)
             },
         )
 
+    @app.get("/v1/ui/latency", response_class=HTMLResponse)
+    def ui_latency(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+        org, principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
+        data = latency(principal or ApiPrincipal(org_id=org, scope="read", kind="session"))
+        return TEMPLATES.TemplateResponse(request, "latency.html", data)
+
+    @app.get("/v1/ui/hangups", response_class=HTMLResponse)
+    def ui_hangups(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+        org, principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
+        data = hangups(principal or ApiPrincipal(org_id=org, scope="read", kind="session"))
+        return TEMPLATES.TemplateResponse(request, "hangups.html", data)
+
+    @app.get("/v1/ui/quality", response_class=HTMLResponse)
+    def ui_quality(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+        org, principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
+        data = quality(principal or ApiPrincipal(org_id=org, scope="read", kind="session"))
+        return TEMPLATES.TemplateResponse(request, "quality.html", data)
+
+    @app.get("/v1/ui/search", response_class=HTMLResponse)
+    def ui_search(
+        request: Request,
+        q: str = "",
+        x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    ) -> HTMLResponse:
+        org, _principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
+        docs = [
+            (rev.call_id, rev.revision, " ".join(t.text or "" for t in rev.turns))
+            for rev in runtime.list_calls(org)
+        ]
+        hits = hybrid_search(q, docs) if q else []
+        return TEMPLATES.TemplateResponse(request, "search.html", {"q": q, "hits": hits})
+
+    @app.get("/v1/ui/settings", response_class=HTMLResponse)
+    def ui_settings(request: Request, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> HTMLResponse:
+        org, _principal = _ui_org(runtime, request, x_api_key)
+        if org is None:
+            return RedirectResponse("/v1/ui/login", status_code=303)
+        connections = [
+            {"id": cfg.connection_id, "provider": cfg.provider, "settings": cfg.settings}
+            for cfg in runtime.connections.values()
+            if cfg.org_id == org
+        ]
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                "plugins": runtime.host.inventory(),
+                "connections": connections,
+                "trusted_operator_installed": True,
+            },
+        )
+
     return app
+
+
+def _ui_org(
+    runtime: Runtime, request: Request, token: str | None
+) -> tuple[str | None, ApiPrincipal | None]:
+    principal = _optional_principal(runtime, token)
+    if principal is None:
+        cookie = request.cookies.get(SESSION_COOKIE)
+        if cookie:
+            payload = load_session(runtime.settings.session_secret, cookie)
+            if payload:
+                principal = ApiPrincipal(
+                    org_id=str(payload.get("org_id")),
+                    scope=str(payload.get("scope") or "read"),
+                    kind="session",
+                    role=str(payload.get("role") or "analyst"),
+                )
+    if principal:
+        return principal.org_id, principal
+    if runtime.settings.demo:
+        orgs = {key[0] for key in runtime.calls} or {"demo"}
+        return next(iter(orgs)), None
+    return None, None
 
 
 def _optional_principal(runtime: Runtime, token: str | None) -> ApiPrincipal | None:
@@ -332,34 +503,13 @@ def _call_list_item(revision: Any) -> dict[str, Any]:
     }
 
 
-def _pct(values: list[float]) -> dict[str, float | None]:
+def _pct(values: list[float]) -> dict[str, float | int | bool | None]:
     if not values:
-        return {"p50": None, "p95": None, "count": 0}
+        return {"p50": None, "p95": None, "count": 0, "approx": True}
     ordered = sorted(values)
+
     def at(p: float) -> float:
         idx = min(len(ordered) - 1, int(round((p / 100) * (len(ordered) - 1))))
         return ordered[idx]
+
     return {"p50": at(50), "p95": at(95), "count": len(ordered), "approx": True}
-
-
-def _try_decode(runtime: Runtime, provider: str, envelope_id: str, raw: bytes) -> None:
-    from obsalt.plugin.protocol import RawEnvelope
-    from obsalt.workers.decode import decode_envelope
-
-    envelope = runtime.inbox.envelopes.get(envelope_id)
-    if envelope is None:
-        return
-    loaded = envelope.model_copy(update={"body": raw})
-    try:
-        plugin = runtime.host.webhook(provider)
-    except Exception:
-        return
-    try:
-        revision = decode_envelope(
-            loaded,
-            plugin=plugin,
-            declaration=runtime.host.get(provider).fidelity,
-        )
-    except Exception:
-        return
-    runtime.store_revision(revision)

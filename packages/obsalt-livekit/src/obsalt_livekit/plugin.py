@@ -48,12 +48,28 @@ class LiveKitPlugin:
             call_id = call_id or attrs.get("gen_ai.conversation.id") or attrs.get("lk.room.name")
             start, end = getattr(span, "start_time", None), getattr(span, "end_time", None)
             if start is not None and end is not None:
+                from datetime import datetime, timezone
+
+                def _as_dt(value: Any):
+                    if value is None:
+                        return None
+                    if isinstance(value, datetime):
+                        return value
+                    ns = float(value)
+                    if ns > 1e14:
+                        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
+                    return datetime.fromtimestamp(ns, tz=timezone.utc)
+
                 events.append(
                     StageObserved(
                         stage=Stage.E2E,
                         metric=Metric.DURATION,
-                        value_ms=(end - start) / 1_000_000.0,
+                        value_ms=(float(end) - float(start)) / 1_000_000.0
+                        if float(end) - float(start) > 10_000
+                        else (float(end) - float(start)) * 1000.0,
                         placement=MeasurementPlacement.INTERVAL,
+                        started_at=_as_dt(start),
+                        ended_at=_as_dt(end),
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path="lk.span",
                     )

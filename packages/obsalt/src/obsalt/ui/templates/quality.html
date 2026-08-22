@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Quality — obsalt{% endblock %}
+{% block body %}
+<h1>Quality</h1>
+<p>Eval results and hallucination flags. Missing output is never a pass.</p>
+{% for item in items %}
+<div class="panel">
+  <h2><a href="/v1/ui/calls/{{ item.call_id }}">{{ item.call_id }}</a> · revision {{ item.revision }}</h2>
+  <table>
+    <thead>
+      <tr><th>Kind</th><th>Passed</th><th>Score</th><th>Label</th><th>Rationale</th></tr>
+    </thead>
+    <tbody>
+    {% for result in item.results %}
+      <tr>
+        <td>{{ result.kind }}</td>
+        <td>
+          {% if result.passed is none %}missing (never a pass)
+          {% elif result.passed %}pass
+          {% else %}fail{% endif %}
+        </td>
+        <td>{% if result.score is not none %}{{ result.score }}{% endif %}</td>
+        <td>{{ result.label or "" }}</td>
+        <td>{{ result.rationale or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endblock %}

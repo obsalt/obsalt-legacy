@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Latency — obsalt{% endblock %}
+{% block body %}
+<h1>Latency</h1>
+<p>as of generation <code>{{ as_of_generation }}</code></p>
+<p>Provider aggregates are <strong>never mixed</strong> into sample percentiles.</p>
+<p>A waterfall is not drawn from these numbers. Durations without timestamps are measurements, not span positions.</p>
+
+<div class="panel">
+  <h2>Sample percentiles</h2>
+  <table>
+    <thead>
+      <tr><th>Stage</th><th>P50</th><th>P95</th><th>Count</th><th>Approx</th></tr>
+    </thead>
+    <tbody>
+    {% for stage, stats in sample_percentiles.items() %}
+      <tr>
+        <td>{{ stage }}</td>
+        <td>{% if stats.p50 is not none %}{{ stats.p50 }}{% endif %}</td>
+        <td>{% if stats.p95 is not none %}{{ stats.p95 }}{% endif %}</td>
+        <td>{{ stats.count }}</td>
+        <td>{% if stats.approx %}approx{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Provider aggregates</h2>
+  <p>Stored separately from samples. Never entered into sample-derived percentile rollups.</p>
+  <table>
+    <thead>
+      <tr><th>Call</th><th>Stage</th><th>Statistic</th><th>Value (ms)</th><th>Source path</th></tr>
+    </thead>
+    <tbody>
+    {% for row in provider_aggregates %}
+      <tr>
+        <td><a href="/v1/ui/calls/{{ row.call_id }}">{{ row.call_id }}</a></td>
+        <td>{{ row.stage }}</td>
+        <td>{{ row.statistic }}</td>
+        <td>{{ row.value_ms }}</td>
+        <td><code>{{ row.source_path or "" }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

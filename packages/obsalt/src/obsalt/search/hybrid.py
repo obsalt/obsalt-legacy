@@ -56,3 +56,36 @@ def lexical_rank(query: str, documents: list[tuple[str, int, str]]) -> list[Sear
             hits.append(SearchHit(call_id, revision, score, text[:280], "lexical"))
     hits.sort(key=lambda h: h.score, reverse=True)
     return hits
+
+
+def vector_rank(
+    query_vec: list[float],
+    documents: list[tuple[str, int, str, list[float]]],
+) -> list[SearchHit]:
+    from obsalt.search.embedder import cosine
+
+    hits: list[SearchHit] = []
+    for call_id, revision, text, vec in documents:
+        score = cosine(query_vec, vec)
+        if score > 0:
+            hits.append(SearchHit(call_id, revision, score, text[:280], "vector"))
+    hits.sort(key=lambda h: h.score, reverse=True)
+    return hits
+
+
+def hybrid_search(
+    query: str,
+    documents: list[tuple[str, int, str]],
+) -> list[SearchHit]:
+    from obsalt.plugin.protocol import RedactedDocument
+    from obsalt.search.embedder import NgramEmbedder, ngram_vector
+
+    lexical = lexical_rank(query, documents)
+    embedder = NgramEmbedder()
+    query_vec = ngram_vector(query)
+    catalog = [
+        (call_id, revision, text, embedder.embed_sync([RedactedDocument(document_id=call_id, text=text)])[0].values)
+        for call_id, revision, text in documents
+    ]
+    vector = vector_rank(query_vec, catalog)
+    return reciprocal_rank_fusion([lexical, vector])

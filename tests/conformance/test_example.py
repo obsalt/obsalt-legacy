@@ -8,5 +8,5 @@ from obsalt_testkit.conformance import DecoderConformanceTests
 
 
 class TestExampleDecoder(DecoderConformanceTests):
-    plugin = ExamplePlugin
+    plugin_cls = ExamplePlugin
     fixtures_dir = Path(str(files("obsalt_example") / "fixtures"))

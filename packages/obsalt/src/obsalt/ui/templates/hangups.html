@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Hangups — obsalt{% endblock %}
+{% block body %}
+<h1>Hangups</h1>
+<p>as of generation <code>{{ as_of_generation }}</code></p>
+<p>Clusters by why the call ended. Drill through to the call that lost the customer.</p>
+{% for key, call_ids in clusters.items() %}
+<div class="panel">
+  <h2>{{ key }}</h2>
+  <ul>
+    {% for call_id in call_ids %}
+      <li><a href="/v1/ui/calls/{{ call_id }}">{{ call_id }}</a></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endfor %}
+{% endblock %}

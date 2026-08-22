@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 from obsalt.auth.primitives import hmac_hex
@@ -51,7 +52,7 @@ def test_vapi_legacy_secret_accepts() -> None:
 
 def test_retell_real_signature() -> None:
     body = b'{"event":"call_ended","call":{"call_id":"c1"}}'
-    ts = "1755777600000"
+    ts = str(int(time.time() * 1000))
     sig = hmac_hex("api-key", body + ts.encode())
     header = f"v={ts},d={sig}".encode()
     cfg = ConnectionConfig(org_id="o", provider="retell", connection_id="c", credentials={"api_key": "api-key"})
@@ -59,7 +60,6 @@ def test_retell_real_signature() -> None:
         RetellPlugin(),
         connections={("retell", "k"): cfg},
     )
-    svc.now = lambda: datetime.fromtimestamp(1755777600, tz=timezone.utc)
     result = svc.handle(provider="retell", ingest_key="k", raw=body, headers=[(b"x-retell-signature", header)])
     assert result.verify and result.verify.ok
     assert result.response.status_code == 204

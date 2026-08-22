@@ -55,6 +55,9 @@ from obsalt.domain.fieldmap import FieldMap, Ts, as_float, as_str
 from obsalt.domain.identity import canonical_json, content_hash
 from obsalt.domain.time import ms_from_seconds, parse_datetime
 from obsalt.plugin.protocol import (
+    BackfillCursor,
+    BackfillItem,
+    BackfillPage,
     ConnectionConfig,
     FidelityDeclaration,
     PluginManifest,
@@ -274,6 +277,23 @@ class VapiPlugin:
 
     def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse:
         return WebhookResponse(status_code=200, body=b'{"received":true}')
+
+    def scan(self, cfg: ConnectionConfig, cursor: BackfillCursor) -> BackfillPage:
+        _ = cfg
+        return BackfillPage(items=[], next_cursor=cursor if cursor.token else None)
+
+    def hydrate(self, cfg: ConnectionConfig, item: BackfillItem) -> RawEnvelope:
+        _ = cfg
+        return RawEnvelope(
+            envelope_id=item.upstream_entity_id,
+            org_id="",
+            provider="vapi",
+            connection_id="",
+            object_key="",
+            body=None,
+            delivery_key=f"backfill:{item.upstream_entity_id}",
+            received_at="1970-01-01T00:00:00+00:00",
+        )
 
     def decode(self, envelope: RawEnvelope) -> Iterable[NormalizedEvent]:
         if not envelope.body:

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Settings — obsalt{% endblock %}
+{% block body %}
+<h1>Settings</h1>
+<p>Plugins are trusted, operator-installed code, not a sandbox.</p>
+<p>trusted_operator_installed: <code>{{ trusted_operator_installed }}</code></p>
+
+<div class="panel">
+  <h2>Retention</h2>
+  <p>Defaults: raw 30d, evidence 90d, aggregates 400d.</p>
+  <p>Raw blobs are unredacted by definition. They are encrypted at rest, short-lived, and excluded from normal read paths.</p>
+</div>
+
+<div class="panel">
+  <h2>Plugins</h2>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Display</th><th>API</th><th>Capabilities</th><th>Module</th></tr>
+    </thead>
+    <tbody>
+    {% for plugin in plugins %}
+      <tr>
+        <td>{{ plugin.name }}</td>
+        <td>{{ plugin.display_name }}</td>
+        <td>{{ plugin.api_version }}</td>
+        <td>{{ plugin.capabilities | join(", ") }}</td>
+        <td><code>{{ plugin.module }}</code></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>Connections</h2>
+  <p>Secrets are never returned after creation.</p>
+  <table>
+    <thead>
+      <tr><th>Id</th><th>Provider</th><th>Settings</th></tr>
+    </thead>
+    <tbody>
+    {% for conn in connections %}
+      <tr>
+        <td>{{ conn.id }}</td>
+        <td>{{ conn.provider }}</td>
+        <td>
+          {% for key, value in conn.settings.items() %}
+            <div><code>{{ key }}</code> {{ value }}</div>
+          {% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

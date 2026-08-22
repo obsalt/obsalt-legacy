@@ -64,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     plugins = sub.add_parser("plugins")
     plugins.set_defaults(func=cmd_plugins)
 
+    worker = sub.add_parser("worker", help="Lease outbox work and decode/assemble")
+    worker.set_defaults(func=cmd_worker)
+
     parse = sub.add_parser("parse")
     parse.add_argument("path")
     parse.add_argument("--provider", required=True)
@@ -144,7 +147,7 @@ def cmd_demo(_args: argparse.Namespace) -> int:
     print(f"  api_key     {creds['api_key']}")
     print(f"  ingest_key  {creds['ingest_key']}")
     print("  banner      NOT FOR PRODUCTION")
-    uvicorn.run(lambda: _app(runtime, settings), factory=True, host=settings.host, port=settings.port)
+    uvicorn.run(_app(runtime, settings), host=settings.host, port=settings.port)
     return 0
 
 
@@ -155,8 +158,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print(f"obsalt {__version__}")
     print(f"  listen  http://{host}:{port}")
     print("  store   postgres + clickhouse + object storage (compose is the supported path)")
-    uvicorn.run("obsalt.api:create_app", factory=True, host=host, port=port)
+    try:
+        runtime = Runtime.create_durable(settings)
+    except Exception as exc:
+        print(f"  durable store unavailable: {exc}")
+        print("  Use `docker compose up` or `obsalt demo` (not for production).")
+        print("  There is no Postgres-only or SQLite production mode.")
+        return 1
+    uvicorn.run(_app(runtime, settings), host=host, port=port)
     return 0
+
+
+def cmd_worker(_args: argparse.Namespace) -> int:
+    settings = Settings()
+    try:
+        runtime = Runtime.create_durable(settings)
+        print("obsalt worker — durable spine")
+    except Exception as exc:
+        print(f"durable store unavailable ({exc}); worker refusing to run against memory")
+        return 1
+    import time
+
+    while True:
+        processed = runtime.drain_outbox()
+        time.sleep(0.25 if processed == 0 else 0)
 
 
 def _app(runtime: Runtime, settings: Settings):
@@ -169,7 +194,7 @@ def _normalize(argv: Sequence[str] | None) -> list[str]:
     args = list(argv) if argv is not None else sys.argv[1:]
     if args and args[0] in {"-h", "--help", "--version", "-V"}:
         return args
-    commands = {"serve", "demo", "init", "doctor", "plugins", "parse", "version"}
+    commands = {"serve", "demo", "init", "doctor", "plugins", "parse", "version", "worker"}
     if not args or args[0].startswith("-"):
         return ["serve", *args]
     if args[0] not in commands:

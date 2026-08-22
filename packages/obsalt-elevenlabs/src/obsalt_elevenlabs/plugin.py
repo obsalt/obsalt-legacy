@@ -34,7 +34,7 @@ from obsalt.domain.events import (
     StageObserved,
     TurnObserved,
 )
-from obsalt.domain.fieldmap import as_str
+from obsalt.domain.fieldmap import as_float, as_str
 from obsalt.domain.time import parse_datetime
 from obsalt.plugin.protocol import (
     ConnectionConfig,
@@ -146,13 +146,18 @@ class ElevenLabsPlugin:
             )
         ]
         user_bits = []
+        meta = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        call_started = parse_datetime(data.get("start_time_unix_secs") or meta.get("start_time_unix_secs"))
         for i, item in enumerate(data.get("transcript") or []):
             if not isinstance(item, dict):
                 continue
             role = as_str(item.get("role")) or "agent"
             speaker = Speaker.USER if role in {"user"} else Speaker.AGENT
             text = as_str(item.get("message") or item.get("text")) or ""
-            started = parse_datetime(item.get("time_in_call_secs"))
+            offset = as_float(item.get("time_in_call_secs"))
+            started = None
+            if call_started is not None and offset is not None:
+                started = call_started + timedelta(seconds=offset)
             events.append(
                 TurnObserved(
                     turn_index=i,

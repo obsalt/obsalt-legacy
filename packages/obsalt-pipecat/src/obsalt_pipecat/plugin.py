@@ -59,12 +59,15 @@ class PipecatPlugin:
             name = getattr(span, "name", "") or ""
             stage = _stage_from(name, attrs)
             if stage and start is not None and end is not None:
+                started, ended = _as_dt(start), _as_dt(end)
                 events.append(
                     StageObserved(
                         stage=stage,
                         metric=Metric.DURATION,
-                        value_ms=(end - start) / 1_000_000.0,
+                        value_ms=_span_ms(start, end),
                         placement=MeasurementPlacement.INTERVAL,
+                        started_at=started,
+                        ended_at=ended,
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path=f"span:{name}",
                     )
@@ -79,6 +82,24 @@ class PipecatPlugin:
                 ),
             )
         return events
+
+
+def _span_ms(start: float, end: float) -> float:
+    delta = float(end) - float(start)
+    return delta / 1_000_000.0 if delta > 10_000 else delta * 1000.0
+
+
+def _as_dt(value: Any):
+    from datetime import datetime, timezone
+
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    ns = float(value)
+    if ns > 1e14:
+        return datetime.fromtimestamp(ns / 1e9, tz=timezone.utc)
+    return datetime.fromtimestamp(ns, tz=timezone.utc)
 
 
 def _stage_from(name: str, attrs: dict[str, Any]) -> Stage | None:

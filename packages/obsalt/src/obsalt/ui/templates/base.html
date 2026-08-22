@@ -11,16 +11,25 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { border-bottom: 1px solid #ddd; text-align: left; padding: 0.4rem 0.5rem; vertical-align: top; }
     .banner { background: #fff3cd; border: 1px solid #e6c200; padding: 0.6rem 0.8rem; margin-bottom: 1rem; }
+    .banner.error { background: #fdecea; border-color: #c5221f; }
     .panel { background: #fff; border: 1px solid #ddd; padding: 0.8rem; margin: 1rem 0; }
     .chip { display: inline-block; background: #eef; border-radius: 999px; padding: 0.1rem 0.5rem; margin: 0.1rem; font-size: 0.85rem; }
     nav a { margin-right: 1rem; }
+    form { margin: 1rem 0; }
+    label { display: block; margin: 0.4rem 0 0.2rem; }
+    input, select, textarea { padding: 0.3rem 0.4rem; }
+    button, input[type="submit"] { padding: 0.3rem 0.6rem; }
   </style>
 </head>
 <body>
 <nav>
-  <a href="/v1/ui">obsalt</a>
+  <a href="/v1/ui">Home</a>
   <a href="/v1/ui/calls">Calls</a>
-  <a href="/docs">API</a>
+  <a href="/v1/ui/latency">Latency</a>
+  <a href="/v1/ui/hangups">Hangups</a>
+  <a href="/v1/ui/quality">Quality</a>
+  <a href="/v1/ui/search">Search</a>
+  <a href="/v1/ui/settings">Settings</a>
 </nav>
 {% block body %}{% endblock %}
 </body>

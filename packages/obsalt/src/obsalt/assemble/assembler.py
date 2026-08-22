@@ -60,13 +60,19 @@ def stamp_events(
     decoder_version: str,
     processing_run_id: str,
     envelope_sequence: int = 0,
+    source_call_id: str | None = None,
 ) -> list[NormalizedEvent]:
+    materialized = list(events)
+    inferred = source_call_id
+    for event in materialized:
+        if isinstance(event, CallObserved) and event.source_call_id:
+            inferred = event.source_call_id
+            break
     stamped: list[NormalizedEvent] = []
-    for event in events:
+    for event in materialized:
         payload = event.model_dump()
-        source_call_id = _source_call_id(event, payload)
-        if source_call_id:
-            payload["call_key"] = call_key_for(org_id, source, source_call_id)
+        if inferred:
+            payload["call_key"] = call_key_for(org_id, source, inferred)
         payload["org_id"] = org_id
         payload["envelope_id"] = envelope_id
         payload["decoder_version"] = decoder_version
@@ -76,12 +82,6 @@ def stamp_events(
             payload["fact_id"] = _default_fact_id(event, source)
         stamped.append(type(event).model_validate(payload))
     return stamped
-
-
-def _source_call_id(event: NormalizedEvent, payload: dict[str, Any]) -> str | None:
-    if isinstance(event, CallObserved):
-        return event.source_call_id
-    return None
 
 
 def _default_fact_id(event: NormalizedEvent, source: str) -> str:
@@ -256,6 +256,7 @@ def fold_events(
                     index=event.turn_index,
                     speaker=event.speaker,
                     text=event.text,
+                    text_ref=content_hash(event.text) if event.text else None,
                     started_at=event.started_at,
                     ended_at=event.ended_at,
                     interrupted=event.interrupted,
@@ -314,8 +315,8 @@ def fold_events(
             )
         elif isinstance(event, OutcomeObserved):
             hangup = Hangup(
-                reason=event.reason or HangupReason.UNKNOWN if event.reason else HangupReason.UNKNOWN,
-                party=event.party or HangupParty.UNKNOWN if event.party else HangupParty.UNKNOWN,
+                reason=event.reason or HangupReason.UNKNOWN,
+                party=event.party or HangupParty.UNKNOWN,
                 provider_code=event.provider_code,
                 provenance=event.provenance_by_field.get("provider_code", Provenance.PROVIDER_REPORTED),
                 source_path=event.source_path,

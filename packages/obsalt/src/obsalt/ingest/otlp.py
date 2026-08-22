@@ -5,12 +5,18 @@ from __future__ import annotations
 import gzip
 import json
 import zlib
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from fastapi import Request
 from fastapi.responses import Response
 
+from obsalt.assemble.assembler import fold_events, stamp_events
+from obsalt.domain.events import CallObserved
 from obsalt.domain.identity import content_hash, sha256_bytes
+from obsalt.otel.mappers import decode_spans, span_from_mapping
+from obsalt.plugin.protocol import RawEnvelope
 
 MAX_BODY = 8 * 1024 * 1024
 
@@ -51,13 +57,83 @@ async def handle_otlp_http(request: Request, runtime: Any) -> Response:
 
     key = f"raw/{org}/otlp/{sha256_bytes(body)[:32]}"
     runtime.objects.put(key, body, headers={"content-type": content_type})
-    # Durable forwarding identity is (org, trace, span, content_fingerprint)
+    envelope_id = str(uuid4())
+    envelope = RawEnvelope(
+        envelope_id=envelope_id,
+        org_id=org,
+        provider="otlp",
+        connection_id="otlp",
+        object_key=key,
+        body=body,
+        delivery_key=f"otlp:{org}:{sha256_bytes(body)[:24]}",
+        received_at=datetime.now(timezone.utc).isoformat(),
+    )
+    try:
+        stored_id, _created = runtime.inbox.accept(
+            envelope,
+            delivery_key=envelope.delivery_key,
+            tombstone_hints={"org_id": org},
+        )
+    except Exception:
+        stored_id = envelope_id
+        runtime.inbox.envelopes[envelope_id] = envelope
+    views = [span_from_mapping(span) for span in spans]
+    events = decode_spans(runtime.host, views)
+    calls: dict[str, list[Any]] = {}
+    pending: list[Any] = []
+    for event in events:
+        if isinstance(event, CallObserved) and event.source_call_id:
+            calls.setdefault(event.source_call_id, []).append(event)
+        else:
+            pending.append(event)
+    if not calls and pending:
+        calls["unrooted"] = pending
+        pending = []
+    for source_call_id, group in calls.items():
+        stream = group + pending
+        stamped = stamp_events(
+            stream,
+            org_id=org,
+            source=_source_name(views),
+            envelope_id=stored_id,
+            decoder_version="otlp/1",
+            processing_run_id=stored_id,
+            source_call_id=source_call_id if source_call_id != "unrooted" else None,
+        )
+        if source_call_id == "unrooted":
+            continue
+        revision = fold_events(
+            stamped,
+            org_id=org,
+            source=_source_name(views),
+            source_call_id=source_call_id,
+            processing_run_id=stored_id,
+            allow_unrooted=False,
+        )
+        existing = runtime.get_revision(org, revision.call_id)
+        if existing:
+            revision = revision.model_copy(update={"revision": existing.revision + 1})
+            runtime.store_revision(revision, expected=existing.revision)
+        else:
+            runtime.store_revision(revision, expected=None)
     _ = content_hash
     return Response(
         status_code=200,
         content=_partial(rejected=False),
         media_type="application/x-protobuf" if content_type.endswith("protobuf") else "application/json",
     )
+
+
+def _source_name(views: list[Any]) -> str:
+    for view in views:
+        attrs = getattr(view, "attributes", {}) or {}
+        if attrs.get("obsalt.source"):
+            return str(attrs["obsalt.source"])
+        if any(str(k).startswith("lk.") for k in attrs):
+            return "livekit"
+        if attrs.get("gen_ai.provider.name") == "pipecat" or attrs.get("metrics.ttfb") is not None:
+            return "pipecat"
+    return "otlp"
 
 
 def _inflate(raw: bytes, encoding: str) -> bytes:
@@ -104,6 +180,8 @@ def _spans_from_protobuf(body: bytes) -> list[dict[str, Any]]:
                         "spanId": span.span_id.hex(),
                         "parentSpanId": span.parent_span_id.hex() if span.parent_span_id else "",
                         "name": span.name,
+                        "startTimeUnixNano": span.start_time_unix_nano,
+                        "endTimeUnixNano": span.end_time_unix_nano,
                         "attributes": {kv.key: _proto_value(kv.value) for kv in span.attributes},
                         "_resource": resource_attrs,
                     }

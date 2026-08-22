@@ -18,7 +18,7 @@ from obsalt_testkit.schema import FixtureSuite, validate_raw_fixtures
 
 
 class DecoderConformanceTests:
-    plugin: ClassVar[Any]
+    plugin_cls: ClassVar[Any]
     fixtures_dir: ClassVar[Path]
     org_id: ClassVar[str] = "org-conformance"
 
@@ -28,14 +28,14 @@ class DecoderConformanceTests:
 
     @pytest.fixture
     def plugin(self) -> Any:
-        inst = self.plugin
+        inst = self.plugin_cls
         return inst() if isinstance(inst, type) else inst
 
     def _envelope(self, raw: bytes, name: str = "raw") -> RawEnvelope:
         return RawEnvelope(
             envelope_id=name,
             org_id=self.org_id,
-            provider=getattr(self.plugin if not isinstance(self.plugin, type) else self.plugin(), "name", "example"),
+            provider=getattr(self.plugin_cls if not isinstance(self.plugin_cls, type) else self.plugin_cls(), "name", "example"),
             connection_id="c1",
             object_key="k",
             body=raw,
@@ -166,13 +166,14 @@ class DecoderConformanceTests:
 class UnitsConformanceTests:
     """Dedicated seconds-vs-milliseconds assertions."""
 
-    plugin: ClassVar[Any]
+    plugin_cls: ClassVar[Any]
     seconds_payload: ClassVar[bytes]
     field_path: ClassVar[str]
     expected_ms: ClassVar[float]
 
     def test_seconds_are_not_read_as_milliseconds(self) -> None:
-        plugin = self.plugin() if isinstance(self.plugin, type) else self.plugin
+        inst = self.plugin_cls
+        plugin = inst() if isinstance(inst, type) else inst
         envelope = RawEnvelope(
             envelope_id="units",
             org_id="org",
@@ -195,20 +196,24 @@ class UnitsConformanceTests:
 
 
 class AuthConformanceTests:
-    plugin: ClassVar[Any]
+    plugin_cls: ClassVar[Any]
     valid_headers: ClassVar[list[tuple[bytes, bytes]]]
     valid_body: ClassVar[bytes]
     secret_field: ClassVar[str]
     secret: ClassVar[str]
 
+    def _plugin(self) -> Any:
+        inst = self.plugin_cls
+        return inst() if isinstance(inst, type) else inst
+
     def test_missing_credential_fails_closed(self) -> None:
-        plugin = self.plugin() if isinstance(self.plugin, type) else self.plugin
+        plugin = self._plugin()
         cfg = ConnectionConfig(org_id="o", provider=plugin.name, connection_id="c", credentials={})
         result = plugin.authenticate(self.valid_body, self.valid_headers, cfg)
         assert result.outcome.value == "missing_credential"
 
     def test_bad_signature_rejected(self) -> None:
-        plugin = self.plugin() if isinstance(self.plugin, type) else self.plugin
+        plugin = self._plugin()
         cfg = ConnectionConfig(
             org_id="o",
             provider=plugin.name,
@@ -219,7 +224,7 @@ class AuthConformanceTests:
         assert result.outcome.value in {"bad_signature", "malformed"}
 
     def test_valid_signature_accepted(self) -> None:
-        plugin = self.plugin() if isinstance(self.plugin, type) else self.plugin
+        plugin = self._plugin()
         cfg = ConnectionConfig(
             org_id="o",
             provider=plugin.name,

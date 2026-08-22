@@ -10,7 +10,8 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 from obsalt.assemble.assembler import fold_events, stamp_events
-from obsalt.domain.events import CallObserved, NormalizedEvent
+from obsalt.domain.events import CallObserved, GroundingObserved, NormalizedEvent, ToolObserved, TurnObserved
+from obsalt.domain.identity import content_hash
 from obsalt.domain.models import CallRevision
 from obsalt.plugin.protocol import FidelityDeclaration, RawEnvelope, RedactionPolicy
 from obsalt.redact.default import DefaultRedactor
@@ -26,6 +27,7 @@ def decode_envelope(
     policy: RedactionPolicy | None = None,
     processing_run_id: str | None = None,
     revision: int = 1,
+    blobs: dict[str, str] | None = None,
 ) -> CallRevision:
     raw_events = list(plugin.decode(envelope))  # type: ignore[attr-defined]
     run_id = processing_run_id or str(uuid4())
@@ -36,8 +38,11 @@ def decode_envelope(
         envelope_id=envelope.envelope_id,
         decoder_version=getattr(plugin, "DECODER_VERSION", envelope.provider + "/1"),
         processing_run_id=run_id,
+        source_call_id=source_call_id,
     )
     redacted = (redactor or DefaultRedactor()).redact(stamped, policy or RedactionPolicy())
+    if blobs is not None:
+        blobs.update(_extract_blobs(redacted.events))
     call_id = source_call_id or _infer_source_call_id(redacted.events)
     if not call_id:
         raise ValueError("decoder produced no CallObserved.source_call_id")
@@ -51,6 +56,23 @@ def decode_envelope(
         declaration=declaration,
         decoder_version=getattr(plugin, "DECODER_VERSION", envelope.provider + "/1"),
     )
+
+
+def _extract_blobs(events: Iterable[NormalizedEvent]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for event in events:
+        if isinstance(event, TurnObserved) and event.text:
+            out[content_hash(event.text)] = event.text
+        elif isinstance(event, GroundingObserved) and event.content:
+            out[content_hash(event.content)] = event.content
+        elif isinstance(event, ToolObserved):
+            if event.args is not None:
+                raw = event.args if isinstance(event.args, str) else str(event.args)
+                out[content_hash(raw)] = raw
+            if event.result is not None:
+                raw = event.result if isinstance(event.result, str) else str(event.result)
+                out[content_hash(raw)] = raw
+    return out
 
 
 def _infer_source_call_id(events: Iterable[NormalizedEvent]) -> str | None:

@@ -4,7 +4,7 @@ import json
 from collections.abc import Iterable
 from datetime import date
 
-from obsalt.auth.primitives import constant_time_eq, require_secret
+from obsalt.auth.primitives import constant_time_eq, require_secret, singleton_or_reject
 from obsalt.domain.enums import (
     Capability,
     CallDirection,
@@ -91,10 +91,11 @@ class ExamplePlugin:
         missing = require_secret(cfg.credentials.get("shared_secret"), name="shared_secret")
         if missing:
             return missing
-        values = [v for k, v in headers if k.lower() == b"x-example-secret"]
-        if not values:
-            return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing x-example-secret")
-        if not constant_time_eq(values[0].decode("latin-1"), cfg.credentials["shared_secret"]):
+        value, err = singleton_or_reject(headers, b"x-example-secret")
+        if err:
+            return err
+        assert value is not None
+        if not constant_time_eq(value.decode("latin-1"), cfg.credentials["shared_secret"]):
             return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE, detail="shared secret mismatch")
         return VerifyResult(outcome=VerifyOutcome.OK)
 

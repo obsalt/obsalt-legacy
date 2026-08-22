@@ -12,7 +12,7 @@ from obsalt_vapi.plugin import VapiPlugin
 
 
 class TestVapiDecoder(DecoderConformanceTests):
-    plugin = VapiPlugin
+    plugin_cls = VapiPlugin
     fixtures_dir = Path(str(files("obsalt_vapi") / "fixtures"))
 
 
