@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "obsalt"
-version = "2.0.0"
+version = "0.0.0"
 description = "Self-hosted call analytics and quality system for AI voice agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,15 +35,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vapi = ["obsalt-vapi==2.0.0"]
-retell = ["obsalt-retell==2.0.0"]
-elevenlabs = ["obsalt-elevenlabs==2.0.0"]
-cartesia = ["obsalt-cartesia==2.0.0"]
-openai-realtime = ["obsalt-openai-realtime==2.0.0"]
-gemini-live = ["obsalt-gemini-live==2.0.0"]
-pipecat = ["obsalt-pipecat==2.0.0"]
-livekit = ["obsalt-livekit==2.0.0"]
-providers = ["obsalt-providers-all==2.0.0"]
+vapi = ["obsalt-vapi==0.0.0"]
+retell = ["obsalt-retell==0.0.0"]
+elevenlabs = ["obsalt-elevenlabs==0.0.0"]
+cartesia = ["obsalt-cartesia==0.0.0"]
+openai-realtime = ["obsalt-openai-realtime==0.0.0"]
+gemini-live = ["obsalt-gemini-live==0.0.0"]
+pipecat = ["obsalt-pipecat==0.0.0"]
+livekit = ["obsalt-livekit==0.0.0"]
+providers = ["obsalt-providers-all==0.0.0"]
 grpc = ["grpcio>=1.66.0"]
 dev = [
   "pytest>=8.3.0",

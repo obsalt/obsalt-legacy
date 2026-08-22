@@ -1,41 +1,85 @@
 # obsalt
 
-Self-hosted **call analytics and quality** for AI voice agents.
+Self-hosted call analytics and quality for live AI voice agents.
 
-obsalt is the system you open when a call went wrong, and the system a product
-owner opens to ask which agent is losing customers. It owns the call record and
-the analysis on top of it. Traces still go to your OpenTelemetry backend.
-obsalt does not try to be a better Tempo.
+obsalt is a **service you run**. It is not a SaaS, not an agent builder, and
+not a better Grafana. You install it next to your voice stack. Live calls
+flow in. You open a console when one of them went wrong — or when you want
+to know which agent is losing customers.
 
-```
-Hosted platform  ──signed webhook──►  obsalt  ──OTLP forward──►  Grafana / Tempo / Datadog
-Custom agent     ──OTLP───────────►
-```
+Three pieces ship together:
 
-## What it does
-
-| Capability | What you actually get |
+| Piece | What it is |
 | --- | --- |
-| **Latency breakdown** | Native pipeline stages, isolated per call. P50/P95 per agent. No invented waterfall for speech-to-speech systems. |
-| **Hangup analyzer** | Clusters by why the call ended. Surfaces the call that lost the customer. |
-| **Hallucination detection** | Flags agent claims not grounded in prompt, knowledge, tool results, or the caller. |
-| **Function-call telemetry** | Every tool: success rate, retries, payload shape, time-to-tool. |
-| **Custom evals** | Quality rubrics in plain English, judged by an LLM against sampled calls. |
-| **Semantic search** | Find calls by meaning. "Customers asking about refunds" works. |
+| **Service** | HTTP API + worker. Receives calls, stores them, scores them. |
+| **Console** | The web UI at `/v1/ui`. Call list, join view, hangups, evals, search. |
+| **`VoiceCall`** | A thin tracer you import **only** if you own the agent process. |
 
-## What it is not
+Providers are **plugins**. Core ships none. You install `obsalt-vapi` or
+`obsalt-pipecat` the same way you install any other Python package.
 
-- Not a general APM. Infrastructure correlation stays in Grafana / Tempo / Datadog.
-- Not a testing or simulation platform. obsalt observes production.
-- Not a dashboard builder. It ships the views the six capabilities need.
-- Not a prompt-management or agent-building tool.
+```
+Hosted platform (Vapi, Retell, …)  --signed webhook-->  obsalt service
+Your agent (Pipecat, LiveKit, …)   --OTLP traces----->       |
+                                                              +--> console  /v1/ui
+                                                              +--> your Tempo / Grafana
+                                                              +--> HTTP API  /v1/*
+```
 
-## Who it is for
+## Architecture
 
-1. Teams on one hosted platform (Vapi, Retell, ElevenLabs, Cartesia) who want a
-   call console they own, with analysis the provider dashboard does not do.
-2. Teams building custom agents (Pipecat, LiveKit, OpenAI Realtime, Gemini Live)
-   who want voice-aware analysis and still keep spans in their existing backend.
+A call enters as raw bytes. Nothing provider-facing waits on analysis.
+Decode happens in a worker. The console reads a complete, immutable
+revision — never a half-built guess.
+
+```mermaid
+flowchart LR
+  subgraph live ["Live voice stack"]
+    H["Hosted platform"]
+    A["Your agent process"]
+  end
+
+  subgraph obsalt ["obsalt, on your machines"]
+    IN["Ingest<br/>webhook + OTLP"]
+    W["Worker<br/>decode → redact → assemble"]
+    UI["Console + HTTP API"]
+  end
+
+  H -->|"POST /v1/ingest/{provider}/{key}"| IN
+  A -->|"POST /v1/traces"| IN
+  IN --> W --> UI
+```
+
+Under the hood: Postgres (inbox, keys, the "which revision is live" pointer),
+ClickHouse (immutable call facts), object storage (raw payloads, short-lived),
+Redis (lease accelerator only). There is no SQLite mode. `docker compose up`
+is the supported path.
+
+The rule that keeps the product honest: **a timeline bar is drawn only when
+we have real start and end timestamps.** Hosted platforms often send
+durations without clocks. Those become chips, not invented waterfalls. The
+console says so.
+
+Full internals: [Architecture](docs/architecture.md).
+
+## Two ways to connect a live agent
+
+Pick **one** per call. Mixing a webhook and OTLP on the same conversation
+gives you two partial records that do not join.
+
+| You already run | How it connects | What you install | Guide |
+| --- | --- | --- | --- |
+| **Vapi, Retell, ElevenLabs, Cartesia** | They POST a signed webhook at you | `obsalt-vapi` / `obsalt-retell` / … | [Connect a hosted platform](docs/connect-hosted.md) |
+| **Pipecat, LiveKit, OpenAI Realtime, Gemini Live** | Your process emits OTLP | `obsalt-pipecat` / `obsalt-livekit` / … | [Connect your own agent](docs/connect-custom.md) |
+
+Hosted platforms do not push standard OTLP to an arbitrary collector. Their
+webhook is the path that exists. Custom agents have real clocks; those
+spans can draw a waterfall, and they still get forwarded to your existing
+backend.
+
+**What data you will actually see** — including the provider-by-provider
+gaps — is in [The console](docs/console.md). Read that before you expect a
+stage waterfall from Vapi.
 
 ## 60-second start
 
@@ -48,64 +92,48 @@ obsalt init
 obsalt serve
 ```
 
-Open http://localhost:8080/v1/ui. Local bootstrap uses `OBSALT_BOOTSTRAP_API_KEY`
-(default `dev-key`). Change it before any network-exposed deploy.
+In another terminal: `obsalt worker`.
 
-Connect a hosted provider, then point that provider at:
+Open http://localhost:8080/v1/ui and sign in with `dev-key`. That bootstrap
+key is fine on localhost. Change `OBSALT_BOOTSTRAP_API_KEY` before anything
+is reachable from a network you do not trust.
 
-```
-POST /v1/ingest/{provider}/{ingest_key}
-```
+Then connect a real agent — [hosted](docs/connect-hosted.md) or
+[your own](docs/connect-custom.md) — place one call, and open it in the
+console. If a latency number is a chip instead of a bar, that is the
+product working.
 
-`ingest_key` is a per-connection secret. Each tenant has its own credentials.
-Decode runs in a worker. The webhook acknowledgement does not wait on analysis.
-
-Full walkthrough: [Getting started](docs/guides/getting-started.md).
-Which ingest path to use: [Choose a path](docs/guides/choose-a-path.md).
-
-## Two ingest paths
-
-| You run | obsalt receives | Guide |
-| --- | --- | --- |
-| Vapi, Retell, ElevenLabs, Cartesia | Signed webhook | [Hosted webhook](docs/guides/hosted-webhook.md) |
-| Pipecat, LiveKit, OpenAI Realtime, Gemini Live | OTLP from the process | [Custom agent](docs/guides/custom-agent.md) |
-
-Hosted platforms do not push standard OTLP to an arbitrary collector. Their
-webhook is the ingest path that exists. Custom agents have real clocks; their
-spans are forwarded with identity preserved.
-
-A stage waterfall is drawn only from measurements with real start and end
-timestamps. Vapi and Retell stage durations are stored as unplaced measurements
-and shown as chips — never as invented span positions.
+Walkthrough: [Getting started](docs/getting-started.md).
 
 ## Documentation
 
-| I am… | Start here |
+| I want to… | Go here |
 | --- | --- |
-| Evaluating the product | [Product spec](docs/product.md) |
-| Installing or operating it | [Getting started](docs/guides/getting-started.md) · [Operate](docs/guides/operate.md) |
-| Connecting a provider | [Choose a path](docs/guides/choose-a-path.md) |
-| Understanding the system | [Architecture](docs/architecture.md) · [Storage](docs/storage.md) |
-| Writing a plugin | [Write a plugin](docs/guides/write-a-plugin.md) |
-| Contributing | [Contributing](docs/contributing.md) · [Style](docs/style.md) |
+| Run it on my machine | [Getting started](docs/getting-started.md) |
+| Point Vapi / Retell / ElevenLabs / Cartesia at it | [Connect a hosted platform](docs/connect-hosted.md) |
+| Point my Pipecat / LiveKit / Realtime / Gemini agent at it | [Connect your own agent](docs/connect-custom.md) |
+| Know what I will see, provider by provider | [The console](docs/console.md) |
+| Understand the insides | [Architecture](docs/architecture.md) |
+| Call the HTTP API | [HTTP API](docs/api.md) |
+| Run it for real | [Operate](docs/ops.md) |
+| Write a provider plugin | [Write a plugin](docs/plugins.md) |
+| Change this repo | [Developing](docs/developing.md) |
 
-The full index is [docs/README.md](docs/README.md).
+The map of the whole tree is [docs/README.md](docs/README.md).
 
 ## Repository
 
 ```
-packages/obsalt            core: domain, ingest, assembly, analysis, API, UI
+packages/obsalt            service: domain, ingest, assembly, analysis, API, UI
 packages/obsalt-testkit    conformance tests for plugin authors
 packages/obsalt-*          first-party source plugins (not bundled into core)
 tests/                     unit / integration / blackbox / contract / conformance
-docs/                      product, architecture, guides, reference
+docs/                      start here after this README
 ```
-
-Core ships **no** providers. Install the plugins you need:
 
 ```bash
 pip install "obsalt[vapi,retell]"
-# or everything first-party:
+# or every first-party plugin:
 pip install obsalt-providers-all
 ```
 
@@ -117,12 +145,7 @@ make test-unit          # fast path
 make ci                 # lint + typecheck + full tests
 ```
 
-## Status
-
-v2.0. Clean rewrite; no compatibility with the unreleased v0.1 in-memory
-prototype. Bland is not a committed first-party plugin. Deepgram is designed
-for via `StreamSource` and is not implemented. Production-release drills
-(restore-from-raw, delete-by-caller through backups, 1M-call load) are
-documented and exercisable; they are the remaining release gate.
+This product is unreleased. Packaging versions exist so extras resolve;
+they are not a public release number.
 
 License: Apache-2.0

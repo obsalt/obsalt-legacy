@@ -1,5 +1,8 @@
 # CLI
 
+The `obsalt` command. Product walkthroughs live in
+[getting started](../getting-started.md); this page is the flag list.
+
 ```
 obsalt [-V] <command>
 ```
@@ -16,7 +19,7 @@ obsalt [-V] <command>
 | `schema-drift [--all] [--remote FILE]` | Compare vendored schema pins |
 | `retain` | Sweep expired raw, transcript, and aggregate data |
 | `export --org ORG --dest DIR` | Parquet / JSONL manifest of active revisions |
-| `version` | Print `2.0.0` |
+| `version` | Print the packaging version |
 
 `serve --in-memory` exists for tests. It is forbidden in production and
 prints a warning. `obsalt serve` without the compose stack exits 2 and

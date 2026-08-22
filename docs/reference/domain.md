@@ -69,7 +69,7 @@ Notes:
 - **Analysis is associated, not embedded.** `AnalysisExecution` and
   `AnalysisResult` rows are keyed by call revision, analyzer/rubric
   version, and prompt/model version. The call revision remains immutable
-  while users can see that it failed rubric v1 and passed v2.
+  while users can see that it failed one rubric version and passed a later one.
 
 `call_id` is `uuid5(OBSALT_NAMESPACE, f"{org_id}:{source}:{source_call_id}")`.
 
@@ -105,7 +105,7 @@ delivery of an event stream folds to the same candidate revision.
 
 ## Hangup taxonomy
 
-Provider-agnostic, carried forward from v0.1 and kept stable:
+Provider-agnostic hangup reasons. Keep this list stable:
 `user_hangup`, `agent_hangup`, `transfer`, `voicemail`, `inactivity`,
 `silence_timeout`, `max_duration`, `busy`, `no_answer`, `dial_failed`,
 `error_stt`, `error_llm`, `error_tts`, `error_tool`, `error_telephony`,

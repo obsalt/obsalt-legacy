@@ -3,7 +3,7 @@
 Native stages are user_input / generation / playout. Cascade STT/LLM/TTS stages
 do not exist on these sources and must never be emitted, even as empty rows.
 Barge-in is taken only from explicit interruption signals, never from the
-heuristic "any user speech after an agent turn" (v0.1 100% false positive).
+heuristic "any user speech after an agent turn" — that is a false positive.
 """
 
 from __future__ import annotations

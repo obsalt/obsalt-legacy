@@ -85,7 +85,8 @@ search, and delivery have per-org quotas and fair queues.
 High-cardinality attribute promotion requires an explicit budget.
 
 Plugins receive a join deadline. Exception wrapping is not a sandbox.
-Tenant-installable plugins are out of v2 scope.
+Tenant-installable plugins are out of scope. Operator-installed wheels
+are trusted code, not a sandbox.
 
 ## Reliability signals
 

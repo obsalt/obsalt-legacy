@@ -1,4 +1,4 @@
-"""Foreign convention mappers: OpenInference and OpenLLMetry (§8.1, Phase 3).
+"""Foreign convention mappers: OpenInference and OpenLLMetry.
 
 Priority is below first-party source mappers (obsalt.*, Pipecat, LiveKit, ElevenLabs)
 so a more specific plugin always wins. Core ships conventions, not providers.

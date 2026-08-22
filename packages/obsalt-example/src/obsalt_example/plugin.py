@@ -45,7 +45,7 @@ from obsalt.plugin.types import (
 
 
 class ExamplePlugin:
-    """Minimal webhook source for the Phase 0 exit criterion."""
+    """Minimal webhook source used by tests and as a plugin template."""
 
     API_VERSION = PLUGIN_API_VERSION
     name = "example"

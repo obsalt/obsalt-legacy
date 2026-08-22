@@ -57,7 +57,7 @@ Low-cardinality. Variable data belongs on attributes.
 | `stt.provider.fallback.azure` | `stt.provider_attempt` | `stt.provider="azure"`, `stt.fallback=true` |
 | `llm.tool_call.create_booking` | `execute_tool` | `gen_ai.tool.name="create_booking"` |
 
-See [ADR-0007](../decisions.md#adr-0007--low-cardinality-otlp-span-names).
+How to emit these from an agent: [Connect your own agent](../connect-custom.md).
 
 ## PII
 
@@ -90,7 +90,7 @@ metrics export alongside: `voice.call.duration`, `voice.stage.duration`
 **Provider aggregate latency is exported as metrics, not spans.** Vapi's
 `turnLatencyAverage` and Retell's `p50/p95/p99` become labelled gauges /
 distribution summaries distinct from obsalt-computed histograms. They do
-not become span widths. This is T1 in practice.
+not become span widths. A waterfall bar still requires real clocks.
 
 ## Vocabulary
 
