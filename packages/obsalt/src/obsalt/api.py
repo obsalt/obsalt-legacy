@@ -40,7 +40,14 @@ from obsalt.query import (
     search_calls,
     tools_rollup,
 )
-from obsalt.runtime import AppState, bump_generation, create_connection, in_memory_state
+from obsalt.runtime import (
+    AppState,
+    add_spend,
+    bump_generation,
+    create_connection,
+    in_memory_state,
+    spend_for,
+)
 from obsalt.security.authz import allowed
 from obsalt.security.sessions import check_csrf, read_session, sign_session
 from obsalt.util import new_id
@@ -144,7 +151,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         raw = await request.body()
         ct = content_type.split(";")[0].strip()
         try:
-            req = await asyncio.to_thread(parse_otlp_request, ct, raw, content_encoding)
+            req = await asyncio.to_thread(
+                parse_otlp_request,
+                ct,
+                raw,
+                content_encoding,
+                expanded_bytes=settings.expanded_body_limit,
+            )
         except HTTPException as exc:
             if exc.status_code == 415:
                 raise
@@ -290,9 +303,16 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         org = _authorize(state, x_api_key, KeyScope.READ, "search.read")
         body = await request.json()
         query = str(body.get("q") or "")
+        start = body.get("start")
+        end = body.get("end")
+        if not start or not end:
+            raise HTTPException(status_code=400, detail="start and end are required")
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00")) if isinstance(start, str) else start
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end
         filters = {k: body.get(k) for k in ("agent_id", "source", "hangup_reason") if body.get(k)}
+        calls = [c for c in active_calls(state, org) if in_range(c, start_dt, end_dt)]
         items = search_calls(
-            active_calls(state, org),
+            calls,
             query,
             index=state.search,
             org_id=org,
@@ -362,7 +382,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     async def analyze(call_id: str, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
         org = _authorize(state, x_api_key, KeyScope.ANALYZE, "calls.analyze")
         rev = _active(state, org, call_id)
-        if state.spend_usd >= state.settings.llm_monthly_budget_usd > 0:
+        if spend_for(state, org) >= state.settings.llm_monthly_budget_usd > 0:
             execution = AnalysisExecution(
                 call_id=call_id,
                 revision=rev.revision,
@@ -380,15 +400,15 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             manual=True,
             baseline_sample_rate=state.settings.baseline_sample_rate,
             budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=state.spend_usd,
+            spend_usd=spend_for(state, org),
             judge=state.judge,
         )
         cost = float((result.payload or {}).get("cost_usd") or 0.0)
         if cost:
-            state.spend_usd += cost
+            total = add_spend(state, org, cost)
             from obsalt.metrics import tier2_spend_usd
 
-            tier2_spend_usd.labels(org_id=org).set(state.spend_usd)
+            tier2_spend_usd.labels(org_id=org).set(total)
         writer = getattr(state.sink, "write_analysis", None)
         existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
         if writer is not None:
@@ -915,7 +935,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             {
                 "quality": data,
                 "org": org,
-                "spend_usd": state.spend_usd,
+                "spend_usd": spend_for(state, org) if org else 0.0,
                 "budget_usd": state.settings.llm_monthly_budget_usd,
             },
         )
@@ -983,7 +1003,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         form = await request.form()
         _require_csrf(request, state, str(form.get("csrf") or request.headers.get("x-csrf-token") or ""))
         rev = _active(state, org, call_id)
-        if state.spend_usd >= state.settings.llm_monthly_budget_usd > 0:
+        if spend_for(state, org) >= state.settings.llm_monthly_budget_usd > 0:
             return RedirectResponse(f"/v1/ui/calls/{call_id}", status_code=303)
         from obsalt.analysis.tier2 import run_tier2
 
@@ -994,7 +1014,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             manual=True,
             baseline_sample_rate=state.settings.baseline_sample_rate,
             budget_usd=state.settings.llm_monthly_budget_usd or float("inf"),
-            spend_usd=state.spend_usd,
+            spend_usd=spend_for(state, org),
         )
         writer = getattr(state.sink, "write_analysis", None)
         existing = getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])

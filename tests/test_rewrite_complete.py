@@ -253,3 +253,104 @@ def test_cli_exposes_worker() -> None:
     args = parser.parse_args(["worker", "--once"])
     assert args.command == "worker"
     assert args.once is True
+
+
+def test_search_requires_time_range() -> None:
+    client, _state = _client()
+    missing = client.post("/v1/search", headers={"X-API-Key": "dev-key"}, json={"q": "refund"})
+    assert missing.status_code == 400
+    ok = client.post(
+        "/v1/search",
+        headers={"X-API-Key": "dev-key"},
+        json={"q": "refund", "start": "2020-01-01T00:00:00Z", "end": "2030-01-01T00:00:00Z"},
+    )
+    assert ok.status_code == 200
+
+
+def test_unrooted_revision_drops_root_owned_fields() -> None:
+    from datetime import date
+
+    from obsalt.assemble.assembler import Assembler
+    from obsalt.domain.enums import (
+        CallStatus,
+        HangupParty,
+        HangupReason,
+        MeasurementPlacement,
+        PipelineArchitecture,
+        Signal,
+    )
+    from obsalt.domain.events import CallObserved, OutcomeObserved
+    from obsalt.domain.models import FidelityDeclaration
+
+    declaration = FidelityDeclaration(
+        source_format="test",
+        possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
+        possible_placements=frozenset(MeasurementPlacement),
+        provides=frozenset({Signal.TURN_INTERVAL}),
+        structurally_absent={},
+        schema_source="test",
+        schema_revision="1",
+        verified_at=date(2026, 8, 22),
+    )
+    assembler = Assembler(declaration, decoder_version="t/1", processing_run_id="r")
+    ended = datetime(2026, 8, 22, 12, 5, tzinfo=UTC)
+    revision = assembler.assemble(
+        "acme",
+        "c1",
+        "example",
+        [
+            CallObserved(source_call_id="s1", agent_id="support", ended_at=ended, cost=1.5),
+            OutcomeObserved(
+                provider_code="user_hangup",
+                reason=HangupReason.USER_HANGUP,
+                party=HangupParty.USER,
+                ended_at=ended,
+            ),
+        ],
+        rooted=False,
+    )
+    assert revision.status is CallStatus.UNROOTED
+    assert revision.ended_at is None
+    assert revision.hangup is None
+    assert revision.cost is None
+    assert revision.agent_id == "unknown"
+
+
+def test_deletion_purges_queues() -> None:
+    from obsalt.domain.enums import EnvelopeState
+    from obsalt.otel.forward_queue import ForwardJob
+    from obsalt.plugin.types import RawEnvelope
+
+    state = in_memory_state()
+    envelope = RawEnvelope(
+        envelope_id="e-del",
+        org_id="dev",
+        provider="example",
+        connection_id="c1",
+        object_key="org/dev/raw/example/gone/sha",
+        delivery_key="d-del",
+        content_sha256="x",
+        source_call_id="gone",
+    )
+    state.inbox.accept(envelope, tombstone_hints=TombstoneHints())
+    state.inbox.dlq.append({"envelope_id": "e-del", "error": "x"})
+    state.webhook_outbox.append({"org_id": "dev", "call_id": "gone", "event_type": "call.finalized"})
+    state.forward_queue.enqueue(
+        ForwardJob(job_id="j1", org_id="dev", object_key="org/dev/raw/otlp/gone", content_type="application/json", raw=b"{}")
+    )
+    apply_deletion(state, org_id="dev", call_id="gone", source_call_id="gone")
+    assert envelope.state is EnvelopeState.TOMBSTONED
+    assert envelope.envelope_id not in state.inbox.outbox
+    assert not any(row.get("envelope_id") == "e-del" for row in state.inbox.dlq)
+    assert not any(item.get("call_id") == "gone" for item in state.webhook_outbox)
+    assert not any(getattr(job, "job_id", None) == "j1" for job in state.forward_queue.pending)
+
+
+def test_spend_is_per_org() -> None:
+    from obsalt.runtime import add_spend, spend_for
+
+    state = in_memory_state()
+    add_spend(state, "dev", 1.25)
+    add_spend(state, "other", 9.0)
+    assert spend_for(state, "dev") == 1.25
+    assert spend_for(state, "other") == 9.0

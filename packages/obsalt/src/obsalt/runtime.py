@@ -43,6 +43,7 @@ class AppState:
     destinations: list[dict[str, str]] = field(default_factory=list)
     webhook_destinations: list[dict[str, Any]] = field(default_factory=list)
     spend_usd: float = 0.0
+    spend_by_org: dict[str, float] = field(default_factory=dict)
     rollup_generation: str = "gen-0"
     connections_plaintext: dict[str, str] = field(default_factory=dict)
     leases: Any = None
@@ -187,6 +188,7 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         keys[settings.bootstrap_api_key] = (org_id, frozenset(KeyScope))
 
     generation_store = PostgresGenerationStore(conn)
+    rubric_store = PostgresRubricStore(conn)
     return AppState(
         settings=settings,
         plugins=plugins,
@@ -205,7 +207,8 @@ def production_state(settings: Settings, plugins: list[LoadedPlugin] | None = No
         rollups=_production_rollups(sink),
         span_identities=_production_span_index(conn),
         judge=judge_from_settings(settings),
-        rubric_store=PostgresRubricStore(conn),
+        rubric_store=rubric_store,
+        rubrics=_load_rubrics(rubric_store, org_id),
         hangup_clusters=ClickHouseHangupClusterStore(sink._client),
         generation_store=generation_store,
         webhook_store=PostgresWebhookStore(conn, master_key=settings.master_key.encode()),
@@ -321,3 +324,26 @@ def _memory_users(org_id: str) -> Any:
 def _production_users(store: Any, org_id: str) -> Any:
     store.upsert(org_id, "owner@local", Role.OWNER)
     return store
+
+
+def _load_rubrics(store: Any, org_id: str) -> dict[str, Any]:
+    lister = getattr(store, "list", None)
+    if not callable(lister):
+        return {}
+    return {item.id: item for item in lister(org_id)}
+
+
+def spend_for(state: AppState, org_id: str) -> float:
+    by_org = getattr(state, "spend_by_org", None)
+    if isinstance(by_org, dict) and by_org:
+        return float(by_org.get(org_id, 0.0))
+    return float(getattr(state, "spend_usd", 0.0) or 0.0)
+
+
+def add_spend(state: AppState, org_id: str, cost: float) -> float:
+    total = spend_for(state, org_id) + float(cost)
+    if getattr(state, "spend_by_org", None) is None:
+        state.spend_by_org = {}
+    state.spend_by_org[org_id] = total
+    state.spend_usd = total
+    return total

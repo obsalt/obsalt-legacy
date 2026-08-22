@@ -23,8 +23,15 @@ MAX_ATTRS = 128
 MAX_STRING = 8_192
 
 
-def parse_otlp_request(content_type: str, raw: bytes, encoding: str | None) -> ExportTraceServiceRequest:
+def parse_otlp_request(
+    content_type: str,
+    raw: bytes,
+    encoding: str | None,
+    expanded_bytes: int | None = None,
+) -> ExportTraceServiceRequest:
     body = _decompress(raw, encoding)
+    if expanded_bytes is not None and len(body) > expanded_bytes:
+        raise HTTPException(status_code=413, detail="expanded body exceeds limit")
     req = ExportTraceServiceRequest()
     if content_type == "application/x-protobuf":
         try:

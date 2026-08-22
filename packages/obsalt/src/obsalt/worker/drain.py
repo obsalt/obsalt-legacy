@@ -138,7 +138,12 @@ def persist_otlp_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | N
     content_type = (envelope.headers or {}).get("content-type", "application/json")
     ct = content_type.split(";")[0].strip()
     encoding = (envelope.headers or {}).get("content-encoding")
-    req = parse_otlp_request(ct, raw, encoding)
+    req = parse_otlp_request(
+        ct,
+        raw,
+        encoding,
+        expanded_bytes=getattr(getattr(state, "settings", None), "expanded_body_limit", None),
+    )
     spans = request_to_spans(req)
     registry = MapperRegistry(state.plugins)
     from obsalt.plugin.host import invoke_with_deadline
@@ -441,7 +446,9 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
     settings = getattr(state, "settings", None)
     rate = float(getattr(settings, "baseline_sample_rate", 0.0) or 0.0)
     budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
-    spend = float(getattr(state, "spend_usd", 0.0) or 0.0)
+    from obsalt.runtime import add_spend, spend_for
+
+    spend = spend_for(state, revision.org_id)
     budget_usd = budget if budget > 0 else float("inf")
     rubrics = [r for r in getattr(state, "rubrics", {}).values() if getattr(r, "org_id", None) == revision.org_id]
     existing = list(getattr(state.sink, "analysis", {}).get((revision.org_id, revision.call_id, revision.revision), []))
@@ -488,10 +495,10 @@ def _schedule_tier2(state: Any, revision: CallRevision) -> None:
             )
             cost = float((result.payload or {}).get("cost_usd") or 0.0)
             if cost:
-                state.spend_usd = spend + cost
+                total = add_spend(state, revision.org_id, cost)
                 from obsalt.metrics import tier2_spend_usd
 
-                tier2_spend_usd.labels(org_id=revision.org_id).set(state.spend_usd)
+                tier2_spend_usd.labels(org_id=revision.org_id).set(total)
             results.append(result)
             if not result.payload.get("passed", True):
                 from obsalt.webhooks.outbound import emit_standard_event

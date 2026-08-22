@@ -105,7 +105,7 @@ def test_webhook_authenticates_gzip_wire_bytes() -> None:
     assert stored == wire
 
 
-def test_webhook_auth_falls_back_to_expanded_body() -> None:
+def test_webhook_auth_does_not_fall_back_to_expanded_body() -> None:
     plugin = ExamplePlugin()
     raw = (
         ROOT
@@ -136,9 +136,8 @@ def test_webhook_auth_falls_back_to_expanded_body() -> None:
         inbox=MemoryInbox(),
         content_encoding="gzip",
     )
-    assert result.rejected is None
-    assert result.envelope is not None
-    assert result.envelope.body == wire
+    assert result.rejected is not None
+    assert result.envelope is None
 
 
 def test_vapi_oauth2_uses_jwt_not_static_bearer() -> None:

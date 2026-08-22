@@ -145,17 +145,8 @@ def receive_webhook(
     if encoding in {"gzip", "deflate"}:
         from obsalt.otel.receiver import decompress_body
 
-        if not auth.ok:
-            try:
-                expanded = decompress_body(wire, encoding)
-            except Exception:
-                expanded = None
-            if expanded is not None:
-                fallback = plugin.authenticate(expanded, headers.as_list(), connection)
-                if fallback.ok:
-                    auth = fallback
-                    decoded = expanded
-        if auth.ok and decoded is wire:
+        # Authenticate wire bytes only (§6.1). Decompress after a successful auth.
+        if auth.ok:
             try:
                 decoded = decompress_body(wire, encoding)
             except Exception:

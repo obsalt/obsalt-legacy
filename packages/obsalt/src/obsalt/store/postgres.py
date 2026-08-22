@@ -391,6 +391,30 @@ class PostgresInbox:
         ).fetchone()
         return _envelope_from_row(row) if row else None
 
+    def purge_dlq(self, org_id: str, *, source_call_ids: set[str] | None = None) -> int:
+        with self._conn.transaction():
+            if source_call_ids:
+                row = self._conn.execute(
+                    """
+                    DELETE FROM decode_dlq d
+                    USING raw_envelopes e
+                    WHERE d.envelope_id = e.envelope_id
+                      AND e.org_id = %s
+                      AND e.source_call_id = ANY(%s)
+                    """,
+                    (org_id, list(source_call_ids)),
+                )
+            else:
+                row = self._conn.execute(
+                    """
+                    DELETE FROM decode_dlq d
+                    USING raw_envelopes e
+                    WHERE d.envelope_id = e.envelope_id AND e.org_id = %s
+                    """,
+                    (org_id,),
+                )
+        return int(getattr(row, "rowcount", 0) or 0)
+
     def list_dlq(self, limit: int = 200) -> list[dict[str, Any]]:
         rows = self._conn.execute(
             """
@@ -836,14 +860,21 @@ class PostgresRubricStore:
     def new_version(self, previous: Rubric, *, name: str | None = None, description: str | None = None) -> Rubric:
         updated = previous.model_copy(
             update={
-                "id": new_id(),
                 "version": previous.version + 1,
                 "name": name if name is not None else previous.name,
                 "description": description if description is not None else previous.description,
-                "created_at": utcnow(),
             }
         )
-        return self.insert(updated)
+        with self._conn.transaction():
+            self._conn.execute(
+                """
+                UPDATE rubrics
+                SET version = %s, name = %s, description = %s
+                WHERE id = %s AND org_id = %s
+                """,
+                (updated.version, updated.name, updated.description, previous.id, previous.org_id),
+            )
+        return updated
 
     def delete(self, org_id: str, rubric_id: str) -> bool:
         with self._conn.transaction():
@@ -1294,6 +1325,14 @@ class PostgresWebhookStore:
             "UPDATE webhook_outbox SET delivered_at = now() WHERE id = %s",
             (event_id,),
         )
+
+    def purge_for_call(self, org_id: str, call_id: str) -> int:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                "DELETE FROM webhook_outbox WHERE org_id = %s AND call_id = %s",
+                (org_id, call_id),
+            )
+        return int(getattr(row, "rowcount", 0) or 0)
 
     def mark_failed(self, event_id: str, detail: str, attempts: int) -> None:
         self._conn.execute(

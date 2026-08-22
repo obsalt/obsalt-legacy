@@ -152,8 +152,15 @@ class Assembler:
         started = call_obs.started_at if call_obs else None
         ended = call_obs.ended_at if call_obs else (outcome.ended_at if outcome else None)
         status = CallStatus.ENDED if finalized or hangup else CallStatus.ONGOING
+        agent_id = call_obs.agent_id if call_obs and call_obs.agent_id else "unknown"
+        cost = call_obs.cost if call_obs else (outcome.cost if outcome else None)
         if not rooted:
+            # Non-root spans may not win root-owned fields (§6.3).
             status = CallStatus.UNROOTED
+            ended = None
+            hangup = None
+            cost = None
+            agent_id = "unknown"
         if hangup and hangup.reason.value.startswith("error_"):
             status = CallStatus.ERROR
 
@@ -171,7 +178,7 @@ class Assembler:
             revision=new_id(),
             source=source,
             source_call_id=source_call_id,
-            agent_id=(call_obs.agent_id if call_obs and call_obs.agent_id else "unknown"),
+            agent_id=agent_id,
             agent_version=call_obs.agent_version if call_obs else None,
             direction=call_obs.direction if call_obs else CallDirection.UNKNOWN,
             from_number=call_obs.from_number if call_obs else None,
@@ -182,7 +189,7 @@ class Assembler:
             status=status,
             pipeline_architecture=architecture,
             timeline_fidelity=fidelity,
-            cost=call_obs.cost if call_obs else (outcome.cost if outcome else None),
+            cost=cost,
             hangup=hangup,
             turns=turns,
             stage_measurements=stages,
