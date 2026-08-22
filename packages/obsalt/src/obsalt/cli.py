@@ -162,7 +162,9 @@ def _require_plugin(name: str) -> Any:
     except KeyError:
         installed = ", ".join(row["name"] for row in plugin_rows()) or "(none)"
         print(f"plugin {name!r} is not installed. Installed: {installed}", file=sys.stderr)
-        print("Core ships no providers. pip install obsalt-vapi / obsalt-retell / …", file=sys.stderr)
+        print(
+            "Core ships no providers. pip install obsalt-vapi / obsalt-retell / …", file=sys.stderr
+        )
         raise SystemExit(2) from None
 
 
