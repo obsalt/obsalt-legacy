@@ -13,7 +13,8 @@ from obsalt.ingest.receive import receive_webhook
 from obsalt.plugin.types import BackfillCursor, ConnectionConfig
 from obsalt_retell.plugin import RetellPlugin
 from obsalt_vapi.plugin import VapiPlugin
-from tests.conftest import (
+
+from tests.helpers import (
     RETELL_FIXTURES,
     VAPI_FIXTURES,
     retell_headers,
@@ -147,7 +148,8 @@ def test_vapi_backfill_does_not_follow_redirects(monkeypatch: pytest.MonkeyPatch
 def test_mixed_org_otlp_resource_is_rejected() -> None:
     from obsalt.otel.tenancy import reject_tenant_assertions
     from obsalt.plugin.types import ReadableSpan
-    from tests.conftest import api_client, example_state
+
+    from tests.helpers import api_client, example_state
 
     spans = [
         ReadableSpan(

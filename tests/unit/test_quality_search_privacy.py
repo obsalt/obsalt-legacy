@@ -15,7 +15,8 @@ from obsalt.search.index import MemorySearchIndex
 from obsalt.util import utcnow
 from obsalt.worker.drain import drain_once
 from obsalt_example.plugin import ExamplePlugin
-from tests.conftest import EXAMPLE_FIXTURES, example_headers, example_state
+
+from tests.helpers import EXAMPLE_FIXTURES, example_headers, example_state
 
 
 def _call(*, org_id: str, call_id: str, revision: str, text: str) -> CallRevision:

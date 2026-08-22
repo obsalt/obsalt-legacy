@@ -21,7 +21,8 @@ from obsalt.otel.s2s import decode_s2s_spans
 from obsalt.plugin.types import ReadableSpan
 from obsalt_livekit.plugin import LiveKitPlugin
 from obsalt_pipecat.plugin import PipecatPlugin
-from tests.conftest import fidelity_declaration
+
+from tests.helpers import fidelity_declaration
 
 
 def _stamp(events: list) -> list:

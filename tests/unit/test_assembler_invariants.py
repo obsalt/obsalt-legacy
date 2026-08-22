@@ -18,7 +18,8 @@ from obsalt.domain.events import (
     TurnObserved,
 )
 from obsalt.worker.process import MemoryRevisionSink, process_normalized_events
-from tests.conftest import fidelity_declaration
+
+from tests.helpers import fidelity_declaration
 
 
 def test_fold_is_permutation_and_duplicate_idempotent() -> None:

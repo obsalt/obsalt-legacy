@@ -13,6 +13,7 @@ license = { text = "Apache-2.0" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [
+  ".",
   "packages/obsalt/src",
   "packages/obsalt-testkit/src",
   "packages/obsalt-example/src",
