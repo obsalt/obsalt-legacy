@@ -14,7 +14,10 @@ Ruff is the formatter and linter. Line length 100. Target Python 3.11.
 - Absolute imports: `from obsalt.domain.events import NormalizedEvent`.
 - Public packages ship `py.typed`.
 - Strict mypy on `obsalt`, `obsalt_testkit`, `obsalt_example`,
-  `obsalt_vapi`, `obsalt_retell`. New core code must type-check.
+  `obsalt_vapi`, `obsalt_retell`, checked as Python 3.12 so vendor stubs
+  that use `type` statements parse. `requires-python` remains `>=3.11`.
+  New core code must type-check. The CI typecheck job is informational
+  until the existing backlog is cleared.
 
 ## Names that are stable
 
