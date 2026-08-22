@@ -1,5 +1,31 @@
 # Glossary
 
+## If you are not an engineer
+
+- **Call** — One live conversation. The console row you click.
+- **Chip** — A duration we *measured* but cannot place on a timeline
+  (no start/end clocks). Not a waterfall bar.
+- **Console** — The web UI at `/v1/ui`. Seven screens, no query builder.
+- **Eval / rubric** — A plain-English quality question (“did the agent
+  acknowledge frustration?”) judged against a call.
+- **Grounding** — The prompt, knowledge, tool results, and caller text
+  that hallucination detection is allowed to trust.
+- **Hangup** — Why the call ended, in a stable taxonomy (`user_hangup`,
+  `silence_timeout`, …), plus the original provider code.
+- **Hosted platform** — Vapi, Retell, ElevenLabs, Cartesia. They POST a
+  webhook. You do not import `VoiceCall`.
+- **Ingest key** — The secret in the webhook URL. Shown once. Per
+  connection, per tenant.
+- **Provenance** — Where a number came from: the provider sent it, or
+  obsalt derived it, or it is absent / unsupported / redacted / failed
+  to decode.
+- **Revision** — An immutable snapshot of a call. Late events create a
+  new one. The console shows the active revision.
+- **Waterfall** — Stage bars drawn only from real start and end
+  timestamps. Hosted platforms usually cannot supply this.
+
+## If you are going to change the code
+
 - **AggregateMeasurement** — A provider-published statistic (p50, p95, …).
   Never mixed into sample-derived percentile rollups.
 - **as_of_generation** — Serving generation for a fleet response. One

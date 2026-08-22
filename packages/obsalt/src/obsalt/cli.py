@@ -8,36 +8,34 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
 from obsalt._version import __version__
 from obsalt.api import create_app
-from obsalt.config import Settings
-from obsalt.plugin.host import discover_plugins, plugin_by_name
+from obsalt.config import ENV_EXAMPLE, Settings
+from obsalt.ops.doctor import format_report, plugin_rows, run_doctor
+from obsalt.plugin.host import plugin_by_name
 from obsalt.runtime import in_memory_state, production_state
 
-_INIT_EXAMPLE = """# Secrets. Do not commit the real .env.
-OBSALT_MASTER_KEY=change-me-master-key-not-for-production
-OBSALT_SESSION_SECRET=change-me-session
-OBSALT_BOOTSTRAP_API_KEY=dev-key
-OBSALT_BOOTSTRAP_ORG_ID=local
+_EPILOG = """Typical local path:
+  docker compose up -d
+  obsalt init --write-env
+  obsalt doctor
+  obsalt serve          # terminal 1 — API + console
+  obsalt worker         # terminal 2 — decode / assemble / analyze
 
-OBSALT_POSTGRES_DSN=postgresql://obsalt:obsalt@localhost:5432/obsalt
-OBSALT_CLICKHOUSE_URL=http://localhost:8123
-OBSALT_REDIS_URL=redis://localhost:6379/0
-
-OBSALT_S3_ENDPOINT=http://localhost:9010
-OBSALT_S3_BUCKET=obsalt
-OBSALT_S3_ACCESS_KEY=obsalt
-OBSALT_S3_SECRET_KEY=obsalt-secret
-OBSALT_S3_REGION=us-east-1
+Docs: https://github.com/coder-with-a-bushido/obsalt/tree/main/docs
 """
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="obsalt", description="Self-hosted call analytics for AI voice agents"
+        prog="obsalt",
+        description="Self-hosted call analytics for AI voice agents",
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-V", "--version", action="store_true")
     sub = parser.add_subparsers(dest="command")
@@ -50,11 +48,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Forbidden in production. Tests only: inject memory doubles.",
     )
     serve.set_defaults(func=cmd_serve)
-    init = sub.add_parser("init", help="Write .env.example")
+    init = sub.add_parser("init", help="Write .env.example (and optionally .env)")
     init.add_argument("--dir", default=".")
+    init.add_argument(
+        "--write-env",
+        action="store_true",
+        help="Also write .env when it is missing. Never overwrites an existing .env.",
+    )
     init.set_defaults(func=cmd_init)
-    doctor = sub.add_parser("doctor", help="Check config")
+    doctor = sub.add_parser("doctor", help="Check plugins and probe the durable stack")
+    doctor.add_argument(
+        "--skip-network",
+        action="store_true",
+        help="Print plugins and config warnings without connecting to stores",
+    )
+    doctor.add_argument("--json", action="store_true", help="Machine-readable report")
     doctor.set_defaults(func=cmd_doctor)
+    plugins = sub.add_parser("plugins", help="List installed source plugins")
+    plugins.add_argument("--json", action="store_true")
+    plugins.set_defaults(func=cmd_plugins)
     demo = sub.add_parser(
         "demo", help="Launch the ephemeral full stack (docker compose). Not for production."
     )
@@ -102,29 +114,58 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    dest = Path(args.dir) / ".env.example"
-    dest.write_text(_INIT_EXAMPLE)
+    root = Path(args.dir)
+    dest = root / ".env.example"
+    dest.write_text(ENV_EXAMPLE)
     print(f"wrote {dest}")
+    if getattr(args, "write_env", False):
+        env_path = root / ".env"
+        if env_path.exists():
+            print(f"left existing {env_path} untouched")
+        else:
+            env_path.write_text(ENV_EXAMPLE)
+            print(f"wrote {env_path} — replace every change-me and dev-key before a real deploy")
+    else:
+        print("Copy to .env, or re-run with --write-env if .env is missing.")
     print("Install a provider plugin (obsalt-vapi, obsalt-retell, …). Core ships no providers.")
     return 0
 
 
-def cmd_doctor(_args: argparse.Namespace) -> int:
-    settings = Settings()
-    plugins = discover_plugins()
-    print(f"obsalt {__version__}")
-    print(f"plugins: {', '.join(p.name for p in plugins) or '(none installed)'}")
-    print(f"postgres: {settings.postgres_dsn}")
-    print(f"clickhouse: {settings.clickhouse_url}")
-    print(f"object store: {settings.s3_endpoint}/{settings.s3_bucket}")
-    if settings.insecure_defaults():
-        print("WARNING: default master/session keys are in use")
-    print("require_auth=false has been removed. Every key is hashed and org-bound.")
-    if settings.bootstrap_api_key == "dev-key":
-        print("WARNING: OBSALT_BOOTSTRAP_API_KEY is the default dev-key")
-    print(f"raw retention days: {settings.raw_retention_days}")
-    print("Supported path: docker compose up -d && obsalt serve")
+def cmd_doctor(args: argparse.Namespace) -> int:
+    report = run_doctor(probe=not getattr(args, "skip_network", False))
+    if getattr(args, "json", False):
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        format_report(report, sys.stdout)
+    return report.exit_code()
+
+
+def cmd_plugins(args: argparse.Namespace) -> int:
+    rows = plugin_rows()
+    if getattr(args, "json", False):
+        print(json.dumps(rows, indent=2))
+        return 0 if rows else 1
+    if not rows:
+        print("No plugins installed. Core ships none.")
+        print("Try: pip install obsalt-vapi   or   pip install -r requirements-dev.txt")
+        return 1
+    width = max(len(row["name"]) for row in rows)
+    for row in rows:
+        caps = ", ".join(row["capabilities"]) or "(no capabilities)"
+        print(f"{row['name']:<{width}}  {row['display_name']}  {caps}")
     return 0
+
+
+def _require_plugin(name: str) -> Any:
+    try:
+        return plugin_by_name(name).plugin
+    except KeyError:
+        installed = ", ".join(row["name"] for row in plugin_rows()) or "(none)"
+        print(f"plugin {name!r} is not installed. Installed: {installed}", file=sys.stderr)
+        print(
+            "Core ships no providers. pip install obsalt-vapi / obsalt-retell / …", file=sys.stderr
+        )
+        raise SystemExit(2) from None
 
 
 def _compose_file() -> Path:
@@ -147,13 +188,19 @@ def cmd_demo(_args: argparse.Namespace) -> int:
         return rc
     settings = Settings()
     for _ in range(30):
-        try:
-            state = production_state(settings)
+        report = run_doctor(settings, probe=True)
+        if report.required_ok:
             break
-        except Exception:
-            time.sleep(1)
+        time.sleep(1)
     else:
         print("compose services did not become ready", file=sys.stderr)
+        format_report(run_doctor(settings, probe=True), sys.stderr)
+        return 2
+    try:
+        state = production_state(settings)
+    except Exception as exc:
+        print("Could not connect to Postgres / ClickHouse / object storage.", file=sys.stderr)
+        print(exc, file=sys.stderr)
         return 2
     host = settings.host
     port = settings.port
@@ -167,7 +214,7 @@ def cmd_parse(args: argparse.Namespace) -> int:
     from obsalt.util import new_id, utcnow
 
     raw = Path(args.path).read_bytes() if args.path != "-" else sys.stdin.buffer.read()
-    plugin = plugin_by_name(args.provider).plugin
+    plugin = _require_plugin(args.provider)
     envelope = RawEnvelope(
         envelope_id=new_id(),
         org_id="parse",
@@ -188,7 +235,7 @@ def cmd_record_golden(args: argparse.Namespace) -> int:
     from obsalt_testkit import decode_raw_fixture, stable_event_dump
 
     raw_path = Path(args.path)
-    plugin = plugin_by_name(args.provider).plugin
+    plugin = _require_plugin(args.provider)
     events = [stable_event_dump(event) for event in decode_raw_fixture(plugin, raw_path)]
     dest = Path(args.out) if args.out else raw_path.parent.parent / "expected" / raw_path.name
     dest.parent.mkdir(parents=True, exist_ok=True)

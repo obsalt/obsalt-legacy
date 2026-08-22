@@ -1,3 +1,7 @@
+# Durable stack for local development and the supported production shape.
+# There is no SQLite / Postgres-only mode. After this is healthy:
+#   obsalt doctor && obsalt serve
+#   obsalt worker          # second terminal
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -6,18 +10,33 @@ services:
       POSTGRES_PASSWORD: obsalt
       POSTGRES_DB: obsalt
     ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U obsalt -d obsalt"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./packages/obsalt/src/obsalt/store/sql/postgres.sql:/docker-entrypoint-initdb.d/01.sql:ro
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     ports: ["8123:8123"]
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
     volumes:
       - chdata:/var/lib/clickhouse
       - ./packages/obsalt/src/obsalt/store/sql/clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
   redis:
     image: redis:7
     ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"

@@ -178,4 +178,5 @@ Replay cannot invent data past the raw or provider horizon.
 Webhooks are lossy. `POST /v1/backfill` pulls from the provider if that
 plugin implements `RestBackfill` (Vapi does).
 
-Next: [The console](console.md).
+Next: [The console](console.md). If the list stays empty or the webhook
+fails: [Troubleshooting](troubleshooting.md).

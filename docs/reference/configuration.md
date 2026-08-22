@@ -3,10 +3,16 @@
 Every setting is an `OBSALT_*` environment variable. A `.env` file in the
 working directory is loaded. Extra keys are ignored.
 
-Copy `.env.example` via `obsalt init`. Replace every `change-me` and
-`dev-key` before a network-exposed deploy. `Settings.insecure_defaults()`
-is true when the master key, session secret, or bootstrap API key is still
-the shipped value. `/ready` reports that.
+Copy `.env.example` via `obsalt init`. `obsalt init --write-env` also
+writes `.env` when it is missing and will not overwrite an existing
+file. Replace every `change-me` and `dev-key` before a network-exposed
+deploy. `Settings.insecure_defaults()` is true when the master key,
+session secret, or bootstrap API key is still the shipped value.
+`/ready` reports that. `obsalt doctor` prints the same warning.
+
+Every `Settings` field must appear in `ENV_EXAMPLE`
+(`packages/obsalt/src/obsalt/config.py`). The unit test fails if a new
+key is added without the example line.
 
 ## Process
 

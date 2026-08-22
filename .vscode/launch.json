@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "obsalt serve (in-memory)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "obsalt",
+      "args": ["serve", "--in-memory"],
+      "justMyCode": true
+    },
+    {
+      "name": "obsalt serve",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "obsalt",
+      "args": ["serve"],
+      "justMyCode": true
+    },
+    {
+      "name": "pytest unit",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q", "-m", "unit"],
+      "justMyCode": true
+    }
+  ]
+}

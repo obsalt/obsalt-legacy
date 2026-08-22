@@ -44,6 +44,8 @@ target-version = "py311"
 src = ["packages", "tests"]
 
 [tool.ruff.lint]
+# E/F: pyflakes + pycodestyle. I: import order. B: bugbear. UP: pyupgrade.
+# Keep this set small and enforced. Do not add a rule family until the tree is clean.
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 

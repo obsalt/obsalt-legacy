@@ -16,5 +16,10 @@ obsalt.toml
 .coverage
 htmlcov/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
 *.log
+.DS_Store
+exports/
