@@ -33,16 +33,20 @@ def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
         state.inbox.mark_failed(envelope.envelope_id, str(exc))
     finalize_due_traces(state)
     from obsalt.otel.forward_queue import drain_forward_queue
+    from obsalt.webhooks.outbound import drain_outbound
 
     drain_forward_queue(state)
+    drain_outbound(state)
 
 
 def drain_once(state: Any, *, limit: int = 32) -> int:
     processed = process_outbox(state, limit=limit)
     processed += finalize_due_traces(state)
     from obsalt.otel.forward_queue import drain_forward_queue
+    from obsalt.webhooks.outbound import drain_outbound
 
     drain_forward_queue(state)
+    drain_outbound(state)
     return processed
 
 

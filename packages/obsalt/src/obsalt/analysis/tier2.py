@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any
 
+from obsalt.analysis.entailment import entail_claims
 from obsalt.analysis.evals import HeuristicJudge, rubric_to_request
 from obsalt.analysis.hallucination import extract_candidate_claims
 from obsalt.domain.enums import AnalysisState
@@ -127,7 +128,7 @@ async def run_tier2(
     spend_usd: float = 0.0,
     cache: MutableMapping[str, AnalysisResult] | None = None,
     hallucination_candidates: Sequence[Mapping[str, Any]] | None = None,
-    judge: HeuristicJudge | None = None,
+    judge: Any | None = None,
     judge_version: str = JUDGE_VERSION,
     prompt_version: str = PROMPT_VERSION,
     analyzer_id: str | None = None,
@@ -219,17 +220,24 @@ async def _judge_payload(
     *,
     rubric: Rubric | None,
     candidates: Sequence[Mapping[str, Any]],
-    judge: HeuristicJudge,
+    judge: Any,
     selection: str,
 ) -> dict[str, Any]:
     if rubric is None:
-        rubric = Rubric(
-            id="hallucination",
-            org_id=call.org_id,
-            name="Hallucination",
-            description="Flag invented facts and ungrounded claims (hallucination).",
-            version=1,
-        )
+        entailed = await entail_claims(call, judge=judge, candidates=list(candidates))
+        unsupported = [item for item in entailed if item.get("verdict") != "grounded"]
+        return {
+            "score": 0.0 if unsupported else 1.0,
+            "passed": not unsupported,
+            "rationale": "entailment",
+            "quotes": [str(item.get("span_text") or "") for item in unsupported],
+            "prompt_version": "entailment/1",
+            "model": getattr(judge, "version", "heuristic/1"),
+            "selection": selection,
+            "trigger": selection,
+            "candidates": [dict(item) for item in entailed],
+            "claims": [dict(item) for item in entailed],
+        }
     judged = await judge.judge(rubric_to_request(call, rubric))
     payload: dict[str, Any] = {
         "score": judged.score,

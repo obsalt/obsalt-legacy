@@ -151,6 +151,16 @@ def receive_webhook(
         body=raw,
     )
     stored, created = inbox.accept(envelope, tombstone_hints=hints)
+    if stored.state is EnvelopeState.TOMBSTONED:
+        try:
+            objects.delete(key)
+        except Exception:
+            log.warning("failed to purge tombstoned orphan %s", key)
+        return ReceiveResult(
+            response=plugin.acknowledgement(kind),
+            envelope=None,
+            rejected="tombstoned",
+        )
     ack = plugin.acknowledgement(kind)
     return ReceiveResult(response=ack, envelope=stored, created=created)
 

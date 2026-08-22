@@ -16,6 +16,7 @@ from obsalt.worker.process import RevisionSink
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "clickhouse.sql"
 
+# Tables keyed by call_id. hangup_clusters and stage_quantile_states are not.
 FACT_TABLES = (
     "call_revisions",
     "turns",
@@ -23,6 +24,7 @@ FACT_TABLES = (
     "aggregate_measurements",
     "tool_invocations",
     "analysis_results",
+    "rollup_contributions",
 )
 
 

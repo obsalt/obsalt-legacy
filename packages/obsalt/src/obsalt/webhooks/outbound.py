@@ -80,7 +80,7 @@ def deliver(
 
 
 def emit_call_finalized(state: Any, revision: Any) -> None:
-    """Fire call.finalized after a promoted revision. Never a second logical event on retry."""
+    """Enqueue call.finalized once. Drain delivers with retries; never a second logical event."""
     dests = list(getattr(state, "webhook_destinations", None) or [])
     if not dests:
         return
@@ -92,13 +92,37 @@ def emit_call_finalized(state: Any, revision: Any) -> None:
         "revision": revision.revision,
         "source": revision.source,
     }
-    body = canonical_json(payload).encode()
+    event_id = f"call.finalized:{revision.org_id}:{revision.call_id}:{revision.revision}"
+    outbox = getattr(state, "webhook_outbox", None)
+    if outbox is None:
+        state.webhook_outbox = []
+        outbox = state.webhook_outbox
+    if any(item.get("event_id") == event_id for item in outbox):
+        return
     for dest in dests:
         if dest.get("org_id") and dest["org_id"] != revision.org_id:
             continue
         event = dest.get("event_type") or dest.get("event") or "call.finalized"
         if event not in {"call.finalized", "*"}:
             continue
+        outbox.append(
+            {
+                "event_id": event_id,
+                "dest": dest,
+                "payload": payload,
+                "attempts": 0,
+            }
+        )
+    drain_outbound(state)
+
+
+def drain_outbound(state: Any) -> int:
+    outbox = list(getattr(state, "webhook_outbox", None) or [])
+    remaining: list[dict[str, Any]] = []
+    delivered = 0
+    for item in outbox:
+        dest = item["dest"]
+        body = canonical_json(item["payload"]).encode()
         secret_raw = dest.get("secret_bytes")
         if secret_raw is None:
             stored = dest.get("secret") or dest.get("whsec") or ""
@@ -114,5 +138,17 @@ def emit_call_finalized(state: Any, revision: Any) -> None:
             body,
             allow_http_localhost=bool(allow),
         )
-        if not ok:
-            log.warning("outbound %s to %s: %s", payload["type"], dest.get("url"), detail)
+        if ok:
+            delivered += 1
+            continue
+        item["attempts"] = int(item.get("attempts") or 0) + 1
+        item["last_error"] = detail
+        if item["attempts"] < 8 and str(detail).startswith("retryable"):
+            remaining.append(item)
+        else:
+            log.warning("outbound dlq %s to %s: %s", item["payload"]["type"], dest.get("url"), detail)
+            from obsalt.metrics import dlq_inserts_total
+
+            dlq_inserts_total.inc()
+    state.webhook_outbox = remaining
+    return delivered

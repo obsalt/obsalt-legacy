@@ -1,23 +1,10 @@
 from __future__ import annotations
 
+from obsalt.analysis.judge import HeuristicJudge, OpenAICompatibleJudge, judge_from_settings
 from obsalt.domain.models import CallRevision, Rubric
-from obsalt.plugin.types import JudgeRequest, JudgeResult
+from obsalt.plugin.types import JudgeRequest
 
-
-class HeuristicJudge:
-    """Offline default. Production orgs plug in an LLM judge capability."""
-
-    async def judge(self, request: JudgeRequest) -> JudgeResult:
-        text = request.rubric_text.lower()
-        score = 1.0
-        quotes: list[str] = []
-        if "hallucin" in text or "invent" in text:
-            if any(token in request.transcript.lower() for token in ("ord-", "$")):
-                if not any(token in "\n".join(request.grounding).lower() for token in ("ord-", "$")):
-                    score -= 0.5
-                    quotes.append("ungrounded identifier or price")
-        passed = score >= 0.7
-        return JudgeResult(score=score, passed=passed, rationale="heuristic", quotes=quotes, prompt_version="heuristic/1")
+__all__ = ["HeuristicJudge", "OpenAICompatibleJudge", "judge_from_settings", "rubric_to_request"]
 
 
 def rubric_to_request(call: CallRevision, rubric: Rubric) -> JudgeRequest:

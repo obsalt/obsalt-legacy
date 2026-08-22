@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -17,15 +20,19 @@ from obsalt.domain.models import AnalysisExecution, CallRevision, Rubric
 from obsalt.ingest.headers import RawHeaders
 from obsalt.ingest.otlp import receive_otlp_batch
 from obsalt.ingest.receive import ReceiveLimits, receive_webhook
+from obsalt.ops.backfill import run_backfill
+from obsalt.ops.privacy import apply_deletion
+from obsalt.ops.retention import replay_horizon
 from obsalt.otel.receiver import parse_otlp_request, request_to_spans, serialized_success
+from obsalt.otel.span_identity import SpanIdentityIndex
 from obsalt.plugin.host import plugin_by_name
-from obsalt.plugin.types import TombstoneHints
 from obsalt.query import (
     active_calls,
     call_list_item,
     hangup_rollup,
     in_range,
     latency_rollup,
+    matches_call_filters,
     paginate_calls,
     quality_rollup,
     search_calls,
@@ -39,13 +46,29 @@ from obsalt.worker.replay import replay_envelopes
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "ui" / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+log = logging.getLogger("obsalt.api")
 
 
 def create_app(settings: Settings | None = None, state: AppState | None = None) -> FastAPI:
     settings = settings or Settings()
     if state is None:
         state = in_memory_state(settings)
-    app = FastAPI(title="obsalt", version=__version__)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        grpc_server = None
+        if settings.otlp_grpc_enabled:
+            try:
+                from obsalt.otel.grpc_server import serve_otlp_grpc
+
+                grpc_server = await serve_otlp_grpc(state, port=settings.otlp_grpc_port)
+            except RuntimeError:
+                log.warning("OTLP gRPC requested but obsalt[grpc] is not installed")
+        yield
+        if grpc_server is not None:
+            await grpc_server.stop(grace=2)
+
+    app = FastAPI(title="obsalt", version=__version__, lifespan=lifespan)
     app.state.obsalt = state
 
     @app.get("/health")
@@ -136,6 +159,8 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                     expanded_bytes=state.settings.expanded_body_limit,
                 ),
                 compressed_size=int(request.headers.get("content-length") or len(raw)),
+                spans=spans,
+                span_index=getattr(state, "span_identities", None) or SpanIdentityIndex(),
             )
         except Exception as exc:
             raise HTTPException(status_code=503, detail="ingest capacity") from exc
@@ -151,6 +176,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         start: datetime | None = None,
         end: datetime | None = None,
         agent_id: str | None = None,
+        outcome: str | None = None,
+        source: str | None = None,
+        latency_ms: float | None = None,
+        flag: str | None = None,
+        eval_result: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
     ) -> dict:
@@ -162,7 +192,17 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         for rev in active_calls(state, org):
             if not in_range(rev, start, end):
                 continue
-            if agent_id and rev.agent_id != agent_id:
+            analysis = getattr(state.sink, "analysis", {}).get((org, rev.call_id, rev.revision), [])
+            if not matches_call_filters(
+                rev,
+                agent_id=agent_id,
+                outcome=outcome,
+                source=source,
+                latency_ms=latency_ms,
+                flag=flag,
+                eval_result=eval_result,
+                analysis=analysis,
+            ):
                 continue
             offset_items.append(call_list_item(rev))
         page, next_cursor = paginate_calls(offset_items, cursor=cursor, limit=limit)
@@ -314,6 +354,9 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             threshold=float(body.get("threshold") or 0.7),
         )
         state.rubrics[rubric.id] = rubric
+        store = getattr(state, "rubric_store", None)
+        if store is not None and hasattr(store, "insert"):
+            store.insert(rubric)
         return rubric.model_dump(mode="json")
 
     @app.delete("/v1/rubrics/{rubric_id}")
@@ -425,9 +468,19 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return {"status": "queued", "replayed": queued, "as_of_generation": state.rollup_generation}
 
     @app.post("/v1/backfill")
-    def backfill(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
-        _require_key(state, x_api_key, KeyScope.ADMIN)
-        return {"status": "queued", "note": "provider pull is bounded by upstream retention"}
+    async def backfill(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        body: dict = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return run_backfill(
+            state,
+            org_id=org,
+            provider=body.get("provider"),
+            connection_id=body.get("connection_id"),
+        )
 
     @app.post("/v1/privacy/deletion-requests")
     async def deletion(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -435,33 +488,72 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         body = await request.json()
         call_id = body.get("call_id")
         source_call_id = body.get("source_call_id") or call_id
-        if not source_call_id:
-            raise HTTPException(status_code=400, detail="call_id is required for delete-by-call")
-        hints = TombstoneHints(source_call_id=str(source_call_id))
-        state.inbox.tombstone(org, hints)
-        to_delete: set[str] = set()
-        if call_id:
-            to_delete.add(str(call_id))
-        for rev in list(getattr(state.sink, "revisions", {}).values()):
-            if rev.org_id != org:
-                continue
-            if call_id and rev.call_id == call_id:
-                to_delete.add(rev.call_id)
-            if rev.source_call_id == source_call_id:
-                to_delete.add(rev.call_id)
-        deleter = getattr(state.pointers, "delete", None)
-        search = getattr(state, "search", None)
-        rollups = getattr(state, "rollups", None)
-        for cid in to_delete:
-            state.sink.delete_call(org, cid)
-            if callable(deleter):
-                deleter(org, cid)
-            if search is not None and hasattr(search, "delete_for_call"):
-                search.delete_for_call(org, cid)
-            if rollups is not None and hasattr(rollups, "delete_call"):
-                rollups.delete_call(org, cid)
-        bump_generation(state)
-        return {"status": "accepted", "undoable": False}
+        start = body.get("start")
+        end = body.get("end")
+        if not source_call_id and not body.get("caller") and not body.get("caller_token") and not (start and end):
+            raise HTTPException(status_code=400, detail="call_id, caller, or start/end is required")
+        return apply_deletion(
+            state,
+            org_id=org,
+            call_id=str(call_id) if call_id else None,
+            source_call_id=str(source_call_id) if source_call_id else None,
+            caller=str(body["caller"]) if body.get("caller") else None,
+            caller_token_value=str(body["caller_token"]) if body.get("caller_token") else None,
+            start=datetime.fromisoformat(start.replace("Z", "+00:00")) if isinstance(start, str) else start,
+            end=datetime.fromisoformat(end.replace("Z", "+00:00")) if isinstance(end, str) else end,
+        )
+
+    @app.get("/v1/retention")
+    def retention(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        _require_key(state, x_api_key, KeyScope.READ)
+        return replay_horizon(raw_retention_days=state.settings.raw_retention_days)
+
+    @app.post("/v1/export")
+    async def export_calls(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        body: dict = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        from pathlib import Path
+
+        from obsalt.ops.parquet import export_revisions
+
+        dest = Path(str(body.get("dest") or "/tmp/obsalt-export"))
+        return export_revisions(
+            active_calls(state, org),
+            dest,
+            as_of_generation=state.rollup_generation,
+        )
+
+    @app.post("/v1/rubrics/{rubric_id}/calibrate")
+    async def calibrate(rubric_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ANALYZE)
+        rubric = state.rubrics.get(rubric_id)
+        if rubric is None or rubric.org_id != org:
+            raise HTTPException(status_code=404, detail="not found")
+        body = await request.json()
+        labelled = []
+        for item in body.get("labeled") or []:
+            rev = _active(state, org, str(item.get("call_id")))
+            labelled.append((rev, bool(item.get("expected_pass"))))
+        from obsalt.analysis.calibration import calibrate_rubric
+
+        return await calibrate_rubric(rubric, labelled, judge=state.judge)
+
+    @app.post("/v1/quality/review")
+    async def review(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ANALYZE)
+        body = await request.json()
+        item = {
+            "org_id": org,
+            "call_id": str(body.get("call_id") or ""),
+            "agree": bool(body.get("agree")),
+            "note": str(body.get("note") or ""),
+        }
+        state.reviews.append(item)
+        return {"status": "recorded", "item": item}
 
     @app.get("/v1/plugins")
     def plugins() -> dict:

@@ -80,6 +80,28 @@ CREATE TABLE IF NOT EXISTS obsalt.rollup_contributions (
 ) ENGINE = MergeTree
 ORDER BY (org_id, agent_id, stage, metric, bucket, call_id, revision);
 
+CREATE TABLE IF NOT EXISTS obsalt.hangup_clusters (
+    org_id String,
+    generation String,
+    cluster_id String,
+    reason String,
+    party String,
+    size UInt32,
+    top_call_id String,
+    created_at DateTime64(3)
+) ENGINE = MergeTree
+ORDER BY (org_id, generation, cluster_id);
+
+CREATE TABLE IF NOT EXISTS obsalt.stage_quantile_states (
+    org_id String,
+    agent_id String,
+    stage String,
+    metric String,
+    bucket DateTime,
+    state AggregateFunction(quantileTDigest, Float64)
+) ENGINE = AggregatingMergeTree
+ORDER BY (org_id, agent_id, stage, metric, bucket);
+
 CREATE TABLE IF NOT EXISTS obsalt.analysis_results (
     org_id String,
     call_id String,

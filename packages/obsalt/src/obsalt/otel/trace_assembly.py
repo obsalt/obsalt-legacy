@@ -40,6 +40,7 @@ class TraceRecord:
     finalized: bool = False
     unrooted: bool = False
     mapper_name: str | None = None
+    late_after_finalize: bool = False
 
 
 class MemoryTraceAssembler:
@@ -66,6 +67,14 @@ class MemoryTraceAssembler:
             self.records[key] = record
         if mapper_name:
             record.mapper_name = mapper_name
+        if record.finalized and (spans or events):
+            from obsalt.metrics import late_spans_after_finalize_total
+
+            late_spans_after_finalize_total.inc(max(len(spans), 1))
+            record.finalized = False
+            record.late_after_finalize = True
+            if record.unrooted and any(is_root_span(span) for span in spans):
+                record.unrooted = False
         record.events.extend(events)
         for span in spans:
             if is_root_span(span):
@@ -85,6 +94,8 @@ class MemoryTraceAssembler:
     ) -> bool:
         if record.finalized:
             return False
+        if record.late_after_finalize:
+            return True
         now = now or utcnow()
         max_deadline = record.first_seen_at + timedelta(seconds=max_call_duration_seconds)
         if record.rooted and record.root_ended_at is not None:
@@ -113,6 +124,7 @@ class MemoryTraceAssembler:
 
     def mark_finalized(self, record: TraceRecord, *, unrooted: bool = False) -> None:
         record.finalized = True
+        record.late_after_finalize = False
         record.unrooted = unrooted and not record.rooted
 
 

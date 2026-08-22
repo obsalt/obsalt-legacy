@@ -9,12 +9,16 @@ enter sample percentiles.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
+from datetime import UTC
 from typing import Any
 
 from obsalt.analysis.rollups import _percentile_stats, build_latency_rollup
 from obsalt.domain.models import CallRevision
 from obsalt.util import new_id
+
+log = logging.getLogger("obsalt.rollups")
 
 
 class MemoryRollupStore:
@@ -100,6 +104,70 @@ class MemoryRollupStore:
             "items": items,
             "note": "sample percentiles exclude AggregateMeasurement provider statistics; one serving generation only",
         }
+
+
+class ClickHouseRollupStore(MemoryRollupStore):
+    """Immutable contribution facts in ClickHouse. Memory copy serves this process."""
+
+    def __init__(self, client: Any) -> None:
+        super().__init__()
+        self._client = client
+
+    def contribute(self, revision: CallRevision) -> str:
+        generation = super().contribute(revision)
+        bucket = _bucket(revision)
+        rows = [
+            [
+                revision.org_id,
+                revision.agent_id,
+                revision.call_id,
+                revision.revision,
+                stage.stage.value,
+                stage.metric.value,
+                stage.value_ms,
+                bucket,
+                generation,
+            ]
+            for stage in revision.stage_measurements
+        ]
+        if rows:
+            try:
+                self._client.insert(
+                    "rollup_contributions",
+                    rows,
+                    column_names=[
+                        "org_id",
+                        "agent_id",
+                        "call_id",
+                        "revision",
+                        "stage",
+                        "metric",
+                        "value_ms",
+                        "bucket",
+                        "generation",
+                    ],
+                )
+            except Exception:
+                log.warning("clickhouse rollup_contributions insert failed", exc_info=True)
+        return generation
+
+    def delete_call(self, org_id: str, call_id: str) -> str:
+        generation = super().delete_call(org_id, call_id)
+        try:
+            self._client.command(
+                "ALTER TABLE rollup_contributions DELETE WHERE org_id = {org:String} AND call_id = {cid:String}",
+                parameters={"org": org_id, "cid": call_id},
+            )
+        except Exception:
+            log.warning("clickhouse rollup_contributions delete failed", exc_info=True)
+        return generation
+
+
+def _bucket(revision: CallRevision) -> Any:
+    ts = revision.started_at or revision.created_at
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(UTC).replace(tzinfo=None)
+    return ts.replace(minute=0, second=0, microsecond=0)
 
 
 def latency_from_store_or_calls(

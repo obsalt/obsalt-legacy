@@ -50,3 +50,18 @@ class S3ObjectStore:
 
     def delete(self, key: str) -> None:
         self._client.delete_object(Bucket=self._bucket, Key=key)
+
+    def list_keys(self, prefix: str = "") -> list[str]:
+        keys: list[str] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": self._bucket, "Prefix": prefix}
+            if token:
+                kwargs["ContinuationToken"] = token
+            response = self._client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents") or []:
+                keys.append(str(obj["Key"]))
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+        return keys
