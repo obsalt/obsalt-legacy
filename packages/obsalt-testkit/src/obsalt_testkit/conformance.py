@@ -13,6 +13,7 @@ from obsalt.crypto.primitives import require_singleton
 from obsalt.domain.enums import (
     GroundingKind,
     MeasurementPlacement,
+    Signal,
     VerifyOutcome,
 )
 from obsalt.domain.events import (
@@ -24,8 +25,8 @@ from obsalt.domain.events import (
 )
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.ingest.headers import RawHeaders
-from obsalt.plugin.contract import WebhookSource
-from obsalt.plugin.types import ConnectionConfig, RawEnvelope, ReadableSpan
+from obsalt.plugin.contract import StreamSource, WebhookSource
+from obsalt.plugin.types import BackfillCursor, ConnectionConfig, RawEnvelope, ReadableSpan
 from obsalt.testing.fakes import MemoryResolver
 from obsalt.util import new_id, utcnow
 
@@ -316,6 +317,111 @@ class SchemaFixtureTests:
             actual = [stable_event_dump(event, ignore) for event in events]
             expected = json.loads(expected_path.read_text())
             assert actual == expected, f"golden mismatch for {raw.name}"
+
+    def test_bypass_reasons_cover_structurally_absent(self) -> None:
+        if self.plugin is None:
+            pytest.skip("SchemaFixtureTests.plugin not set")
+        declaration: FidelityDeclaration = self.plugin.fidelity
+        reasons = load_bypass_reasons(self.fixtures_dir)
+        for signal, reason in declaration.structurally_absent.items():
+            key = signal.name if isinstance(signal, Signal) else str(signal)
+            alt = signal.value if isinstance(signal, Signal) else key
+            assert key in reasons or alt in reasons or alt.upper() in reasons, (
+                f"{key} is structurally_absent but missing from fixtures/bypass_reasons"
+            )
+            assert (reasons.get(key) or reasons.get(alt) or reasons.get(alt.upper()) or reason).strip()
+
+    def test_structurally_absent_not_emitted_as_interval(self) -> None:
+        if self.plugin is None:
+            pytest.skip("SchemaFixtureTests.plugin not set")
+        declaration: FidelityDeclaration = self.plugin.fidelity
+        if Signal.STAGE_INTERVAL not in declaration.structurally_absent:
+            return
+        raw_dir = self.fixtures_dir / "raw"
+        if not raw_dir.exists():
+            pytest.skip("no raw fixtures")
+        for path in sorted(raw_dir.glob("*.json")):
+            for event in decode_raw_fixture(self.plugin, path, org_id=self.org_id):
+                if isinstance(event, StageObserved):
+                    assert event.placement is not MeasurementPlacement.INTERVAL
+
+
+class StreamSourceConformanceTests:
+    """Required for StreamSource plugins (§6.6 / §13.2). Deepgram is additive later."""
+
+    plugin: StreamSource
+    connection: ConnectionConfig
+
+    def test_frames_are_raw_envelopes(self) -> None:
+        import asyncio
+
+        async def collect() -> list[RawEnvelope]:
+            items: list[RawEnvelope] = []
+            async for frame in self.plugin.frames(self.connection):  # type: ignore[attr-defined]
+                items.append(frame)
+                if len(items) >= 3:
+                    break
+            return items
+
+        frames = asyncio.run(collect())
+        assert frames, "StreamSource.frames must yield at least one RawEnvelope in tests"
+        for frame in frames:
+            assert isinstance(frame, RawEnvelope)
+            assert frame.body is not None
+            assert frame.delivery_key
+
+    def test_frame_identity_is_stable(self) -> None:
+        import asyncio
+
+        async def collect() -> list[str]:
+            keys: list[str] = []
+            async for frame in self.plugin.frames(self.connection):  # type: ignore[attr-defined]
+                keys.append(frame.delivery_key)
+            return keys
+
+        first = asyncio.run(collect())
+        second = asyncio.run(collect())
+        assert first == second
+
+
+class RestBackfillConformanceTests:
+    """Required for RestBackfill plugins (§6.4 / §13.2)."""
+
+    plugin: Any
+    connection: ConnectionConfig
+
+    def test_scan_returns_page(self) -> None:
+        page = self.plugin.scan(self.connection, BackfillCursor())
+        assert page is not None
+        assert hasattr(page, "items")
+
+    def test_hydrate_emits_raw_envelope(self) -> None:
+        page = self.plugin.scan(self.connection, BackfillCursor())
+        if not page.items:
+            pytest.skip("no backfill items")
+        envelope = self.plugin.hydrate(self.connection, page.items[0])
+        assert isinstance(envelope, RawEnvelope)
+        assert envelope.body is not None
+        assert envelope.delivery_key
+
+
+def load_bypass_reasons(fixtures_dir: Path) -> dict[str, str]:
+    path = fixtures_dir / "bypass_reasons"
+    if not path.exists():
+        return {}
+    reasons: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if "\t" in text:
+            key, rest = text.split("\t", 1)
+        elif " " in text:
+            key, rest = text.split(None, 1)
+        else:
+            key, rest = text, ""
+        reasons[key.strip()] = rest.strip()
+    return reasons
 
 
 def _payload_has_prompt(payload: Any) -> bool:

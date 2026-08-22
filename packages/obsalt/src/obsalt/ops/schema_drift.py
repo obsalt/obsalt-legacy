@@ -43,3 +43,19 @@ def compare_vendored(
         "remote_hash": remote_hash,
         "schema_revision": pin.get("revision") or pin.get("schema_revision"),
     }
+
+
+def compare_all_vendored(
+    packages_root: Path,
+    remote_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    reports = []
+    diverged = False
+    for fixtures in sorted(packages_root.glob("*/src/*/fixtures")):
+        if not (fixtures / "schema").exists():
+            continue
+        report = compare_vendored(fixtures, remote_schema)
+        report["fixtures"] = str(fixtures)
+        reports.append(report)
+        diverged = diverged or bool(report.get("diverged"))
+    return {"status": "offline" if remote_schema is None else "compared", "diverged": diverged, "plugins": reports}

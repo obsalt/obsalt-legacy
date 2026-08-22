@@ -239,4 +239,14 @@ ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
 ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS mapper_name TEXT;
 ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS unrooted BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS late_after_finalize BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE search_documents ADD COLUMN IF NOT EXISTS embedder_version TEXT NOT NULL DEFAULT 'local/256';
+ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS source TEXT;
+ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS hangup_reason TEXT;
+ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'call.finalized';
+ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_ciphertext BYTEA;
+ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_expires_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS active_calls_org_started ON active_calls (org_id, started_at DESC, call_id DESC);
 

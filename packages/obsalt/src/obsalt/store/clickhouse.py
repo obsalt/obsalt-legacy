@@ -235,6 +235,75 @@ class ClickHouseSink(RevisionSink):
             raise RuntimeError("clickhouse write is not query-visible")
         self.revisions[(revision.org_id, revision.call_id, revision.revision)] = revision
 
+    def list_analysis(
+        self,
+        org_id: str,
+        call_id: str | None = None,
+        revision: str | None = None,
+    ) -> list[AnalysisResult]:
+        from obsalt.domain.enums import AnalysisState
+        from obsalt.domain.models import AnalysisExecution
+
+        try:
+            result = self._client.query(
+                """
+                SELECT call_id, revision, analyzer_id, analyzer_version, payload
+                FROM analysis_results
+                WHERE org_id = {org:String}
+                  AND ({cid:String} = '' OR call_id = {cid:String})
+                  AND ({rev:String} = '' OR revision = {rev:String})
+                """,
+                parameters={"org": org_id, "cid": call_id or "", "rev": revision or ""},
+            )
+        except Exception:
+            return self._memory_analysis(org_id, call_id, revision)
+        rows: list[AnalysisResult] = []
+        for call, rev, analyzer_id, analyzer_version, payload in result.result_rows:
+            if isinstance(payload, bytes):
+                payload = payload.decode("utf-8")
+            parsed = payload
+            if isinstance(payload, str):
+                import json
+
+                try:
+                    parsed = json.loads(payload)
+                except json.JSONDecodeError:
+                    parsed = {"raw": payload}
+            rows.append(
+                AnalysisResult(
+                    execution=AnalysisExecution(
+                        call_id=str(call),
+                        revision=str(rev),
+                        analyzer_id=str(analyzer_id),
+                        analyzer_version=str(analyzer_version),
+                        state=AnalysisState.COMPLETED,
+                    ),
+                    payload=parsed if isinstance(parsed, dict) else {"value": parsed},
+                )
+            )
+        if rows:
+            return rows
+        return self._memory_analysis(org_id, call_id, revision)
+
+    def _memory_analysis(
+        self,
+        org_id: str,
+        call_id: str | None,
+        revision: str | None,
+    ) -> list[AnalysisResult]:
+        if call_id and revision:
+            return list(self.analysis.get((org_id, call_id, revision), []))
+        out: list[AnalysisResult] = []
+        for (stored_org, stored_call, stored_rev), values in self.analysis.items():
+            if stored_org != org_id:
+                continue
+            if call_id and stored_call != call_id:
+                continue
+            if revision and stored_rev != revision:
+                continue
+            out.extend(values)
+        return out
+
     def get(self, org_id: str, call_id: str, revision: str) -> CallRevision | None:
         result = self._client.query(
             """

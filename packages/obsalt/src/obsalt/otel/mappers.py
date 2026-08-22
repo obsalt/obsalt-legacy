@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from obsalt.domain.enums import Capability
 from obsalt.domain.events import NormalizedEvent
+from obsalt.otel.foreign import ForeignConventionMapper
 from obsalt.plugin.contract import OtlpMapper
 from obsalt.plugin.host import LoadedPlugin
 from obsalt.plugin.types import ReadableSpan
@@ -14,6 +15,9 @@ class MapperRegistry:
         self.mappers: list[OtlpMapper] = [
             p.plugin for p in plugins if p.has(Capability.OTLP_MAPPER)  # type: ignore[misc]
         ]
+        # Conventions, not a provider. Lowest priority so first-party plugins win.
+        if not any(getattr(mapper, "name", "") == "foreign-conventions" for mapper in self.mappers):
+            self.mappers.append(ForeignConventionMapper())
 
     def pick(self, span: ReadableSpan) -> OtlpMapper | None:
         best: tuple[int, OtlpMapper] | None = None

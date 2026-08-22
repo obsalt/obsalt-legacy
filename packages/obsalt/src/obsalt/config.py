@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     compressed_body_limit: int = 1_000_000
     expanded_body_limit: int = 8_000_000
+    outbox_backpressure_limit: int = 10_000
+    slo_e2e_ms: float = 2000.0
+    key_rotation_overlap_seconds: int = 86_400
 
     llm_monthly_budget_usd: float = 0.0
     baseline_sample_rate: float = 0.0

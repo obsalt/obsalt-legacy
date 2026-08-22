@@ -40,4 +40,7 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if next_cursor %}
+  <p><a href="/v1/ui?{% for key, value in filters.items() %}{{ key }}={{ value }}&{% endfor %}cursor={{ next_cursor }}">Next page</a></p>
+  {% endif %}
 {% endblock %}

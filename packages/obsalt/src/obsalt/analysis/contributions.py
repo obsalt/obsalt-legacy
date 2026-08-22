@@ -149,7 +149,82 @@ class ClickHouseRollupStore(MemoryRollupStore):
                 )
             except Exception:
                 log.warning("clickhouse rollup_contributions insert failed", exc_info=True)
+        self._write_quantile_states(revision)
         return generation
+
+    def _write_quantile_states(self, revision: CallRevision) -> None:
+        """Provider AggregateMeasurements never enter quantileTDigestState (§9.2)."""
+
+        bucket = _bucket(revision)
+        for stage in revision.stage_measurements:
+            sql = (
+                "INSERT INTO stage_quantile_states "
+                "(org_id, agent_id, stage, metric, bucket, state) "
+                "SELECT {org:String} AS org_id, {agent:String} AS agent_id, "
+                "{stage:String} AS stage, {metric:String} AS metric, "
+                "{bucket:DateTime} AS bucket, quantileTDigestState({value:Float64})"
+            )
+            try:
+                self._client.command(
+                    sql,
+                    parameters={
+                        "org": revision.org_id,
+                        "agent": revision.agent_id or "",
+                        "stage": stage.stage.value,
+                        "metric": stage.metric.value,
+                        "bucket": bucket,
+                        "value": float(stage.value_ms),
+                    },
+                )
+            except Exception:
+                log.warning("clickhouse quantileTDigestState insert failed", exc_info=True)
+
+    def latency(self, org_id: str, as_of_generation: str) -> dict[str, Any]:
+        try:
+            result = self._client.query(
+                """
+                SELECT stage, metric,
+                       quantileTDigestMerge(0.5)(state) AS p50,
+                       quantileTDigestMerge(0.95)(state) AS p95,
+                       count() AS n
+                FROM stage_quantile_states
+                WHERE org_id = {org:String}
+                GROUP BY stage, metric
+                ORDER BY stage, metric
+                """,
+                parameters={"org": org_id},
+            )
+        except Exception:
+            return super().latency(org_id, as_of_generation)
+        if not getattr(result, "result_rows", None):
+            return super().latency(org_id, as_of_generation)
+        items = []
+        sample_percentiles: dict[str, Any] = {}
+        for stage, metric, p50, p95, count in result.result_rows:
+            stats = {"n": int(count or 0), "p50": p50, "p95": p95, "metric": metric}
+            sample_percentiles[str(stage)] = stats
+            items.append(
+                {
+                    "stage": stage,
+                    "metric": metric,
+                    "count": stats["n"],
+                    "p50": p50,
+                    "p95": p95,
+                }
+            )
+        provider = [row for row in self.aggregates if row["org_id"] == org_id]
+        return {
+            "as_of_generation": as_of_generation or self.generation,
+            "sample_percentiles": sample_percentiles,
+            "provider_aggregates": provider,
+            "aggregates_excluded": len(provider),
+            "items": items,
+            "approximation": "quantileTDigestMerge",
+            "note": (
+                "sample percentiles from quantileTDigestState exclude "
+                "AggregateMeasurement provider statistics; one serving generation only"
+            ),
+        }
 
     def delete_call(self, org_id: str, call_id: str) -> str:
         generation = super().delete_call(org_id, call_id)

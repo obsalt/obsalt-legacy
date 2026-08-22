@@ -83,8 +83,21 @@ def enforce_window(
     return None
 
 
-def jwt_hs256_verify(token: str, secret: str) -> dict[str, object] | None:
-    """Minimal HS256 JWT validation for plugin composition. Fail closed."""
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def jwt_hs256_sign(payload: Mapping[str, object], secret: str) -> str:
+    """Mint an HS256 JWT for tests and plugin composition."""
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode())
+    body = _b64url(json.dumps(dict(payload), separators=(",", ":")).encode())
+    signing = f"{header}.{body}".encode("ascii")
+    sig = _b64url(hmac.new(secret.encode("utf-8"), signing, hashlib.sha256).digest())
+    return f"{header}.{body}.{sig}"
+
+
+def jwt_hs256_verify(token: str, secret: str, *, now: float | None = None) -> dict[str, object] | None:
+    """Minimal HS256 JWT validation for plugin composition. Fail closed on expiry."""
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError:
@@ -103,7 +116,17 @@ def jwt_hs256_verify(token: str, secret: str) -> dict[str, object] | None:
         payload = json.loads(base64.urlsafe_b64decode(payload_b64 + pad_p))
     except (ValueError, json.JSONDecodeError):
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    exp = payload.get("exp")
+    if exp is not None:
+        current = now if now is not None else time.time()
+        try:
+            if float(exp) < current:
+                return None
+        except (TypeError, ValueError):
+            return None
+    return payload
 
 
 def ed25519_verify(public_key: bytes, message: bytes, signature: bytes) -> bool:
@@ -124,7 +147,8 @@ def header_values(headers: list[tuple[bytes, bytes]] | Mapping[str, str], name: 
         return found
     values: list[str] = []
     for key, value in headers:
-        if key.lower() == want:
+        key_bytes = key.lower() if isinstance(key, bytes) else key.lower().encode("latin-1")
+        if key_bytes == want:
             values.append(value.decode("latin-1") if isinstance(value, bytes) else str(value))
     return values
 

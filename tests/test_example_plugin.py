@@ -14,7 +14,9 @@ from obsalt_example.plugin import ExamplePlugin
 from obsalt_testkit import (
     AuthenticationConformanceTests,
     DecoderConformanceTests,
+    RestBackfillConformanceTests,
     SchemaFixtureTests,
+    StreamSourceConformanceTests,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "packages" / "obsalt-example" / "src" / "obsalt_example" / "fixtures"
@@ -28,6 +30,30 @@ class TestExampleDecoder(DecoderConformanceTests):
 class TestExampleSchema(SchemaFixtureTests):
     plugin = ExamplePlugin()
     fixtures_dir = FIXTURES
+
+
+class TestExampleStream(StreamSourceConformanceTests):
+    plugin = ExamplePlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="example",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={},
+        settings={"emit_example_frame": True},
+    )
+
+
+class TestExampleBackfill(RestBackfillConformanceTests):
+    plugin = ExamplePlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="example",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={},
+        settings={"backfill_items": [{"id": "bf-1", "hash": "h1", "ended_reason": "completed"}]},
+    )
 
 
 class TestExampleAuth(AuthenticationConformanceTests):

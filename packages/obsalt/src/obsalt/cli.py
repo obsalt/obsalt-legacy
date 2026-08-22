@@ -62,10 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--out", default=None)
     record.set_defaults(func=cmd_record_golden)
     drift = sub.add_parser("schema-drift", help="Compare a vendored plugin schema to a refetched copy")
-    drift.add_argument("--fixtures", required=True)
+    drift.add_argument("--fixtures", default=None)
+    drift.add_argument("--all", action="store_true", help="Scan every first-party plugin fixtures/ directory")
     drift.add_argument("--remote", default=None, help="Optional JSON file of the refetched vendor schema")
     drift.set_defaults(func=cmd_schema_drift)
-    retain = sub.add_parser("retain", help="Sweep expired raw blobs and print the replay horizon")
+    retain = sub.add_parser("retain", help="Sweep expired raw, transcript, and aggregate retention")
     retain.set_defaults(func=cmd_retain)
     export = sub.add_parser("export", help="Export active-call revisions to a Parquet/JSONL manifest")
     export.add_argument("--org", required=True)
@@ -174,23 +175,27 @@ def cmd_record_golden(args: argparse.Namespace) -> int:
 
 
 def cmd_schema_drift(args: argparse.Namespace) -> int:
-    from obsalt.ops.schema_drift import compare_vendored
+    from obsalt.ops.schema_drift import compare_all_vendored, compare_vendored
 
     remote = json.loads(Path(args.remote).read_text()) if args.remote else None
+    if args.all or args.fixtures is None:
+        report = compare_all_vendored(Path("packages"), remote)
+        print(json.dumps(report, indent=2))
+        return 1 if report.get("diverged") else 0
     report = compare_vendored(Path(args.fixtures), remote)
     print(json.dumps(report, indent=2))
     return 1 if report.get("diverged") else 0
 
 
 def cmd_retain(_args: argparse.Namespace) -> int:
-    from obsalt.ops.retention import sweep_raw
+    from obsalt.ops.retention import sweep
 
     settings = Settings()
     try:
         state = production_state(settings)
     except Exception:
         state = in_memory_state(settings)
-    print(json.dumps(sweep_raw(state), indent=2))
+    print(json.dumps(sweep(state), indent=2))
     return 0
 
 

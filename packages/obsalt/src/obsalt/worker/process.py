@@ -61,6 +61,25 @@ class MemoryRevisionSink(RevisionSink):
     def write_analysis(self, org_id: str, call_id: str, revision: str, results: list[AnalysisResult]) -> None:
         self.analysis[(org_id, call_id, revision)] = results
 
+    def list_analysis(
+        self,
+        org_id: str,
+        call_id: str | None = None,
+        revision: str | None = None,
+    ) -> list[AnalysisResult]:
+        if call_id and revision:
+            return list(self.analysis.get((org_id, call_id, revision), []))
+        rows: list[AnalysisResult] = []
+        for (stored_org, stored_call, stored_rev), values in self.analysis.items():
+            if stored_org != org_id:
+                continue
+            if call_id and stored_call != call_id:
+                continue
+            if revision and stored_rev != revision:
+                continue
+            rows.extend(values)
+        return rows
+
 
 def process_envelope(
     envelope: RawEnvelope,
@@ -183,7 +202,7 @@ def process_normalized_events(
     prior = events_from_revision(previous) if previous is not None else []
     merged = [*prior, *redacted.events]
     candidate = assembler.assemble(org_id, call_id, source, merged, rooted=rooted)
-    frontier = frozenset(event.fact_id for event in redacted.events if event.fact_id)
+    frontier = frozenset(fid for fid in candidate.accepted_fact_ids if fid)
     analysis: list[AnalysisResult] = []
     if not candidate.conflicts:
         analysis = list(analyze_tier1(candidate))

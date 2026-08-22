@@ -28,6 +28,7 @@ from obsalt.otel.span_identity import SpanIdentityIndex
 from obsalt.plugin.host import plugin_by_name
 from obsalt.query import (
     active_calls,
+    analysis_for,
     call_list_item,
     hangup_rollup,
     in_range,
@@ -96,10 +97,6 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     ) -> Response:
         raw = await request.body()
         encoding = request.headers.get("content-encoding")
-        if encoding and encoding not in {"identity"}:
-            from obsalt.otel.receiver import decompress_body
-
-            raw = decompress_body(raw, encoding)
         header_pairs = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in request.headers.items()]
         try:
             loaded = plugin_by_name(provider, state.plugins)
@@ -120,6 +117,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             ),
             compressed_size=int(request.headers.get("content-length") or len(raw)),
             leases=getattr(state, "leases", None),
+            content_encoding=encoding,
         )
         if result.envelope is not None and result.rejected is None:
             # Ack first. Decode runs as a background worker (TestClient waits for it).
@@ -154,24 +152,28 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         denied = reject_tenant_assertions(spans, org)
         if denied:
             raise HTTPException(status_code=401, detail=denied)
-        try:
-            result = receive_otlp_batch(
-                org_id=org,
-                raw=raw,
-                content_type=ct,
-                objects=state.objects,
-                inbox=state.inbox,
-                limits=ReceiveLimits(
-                    compressed_bytes=state.settings.compressed_body_limit,
-                    expanded_bytes=state.settings.expanded_body_limit,
-                ),
-                compressed_size=int(request.headers.get("content-length") or len(raw)),
-                spans=spans,
-                span_index=_span_index(state),
-                leases=getattr(state, "leases", None),
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="ingest capacity") from exc
+        extra_headers = {}
+        if content_encoding:
+            extra_headers["content-encoding"] = content_encoding
+        result = receive_otlp_batch(
+            org_id=org,
+            raw=raw,
+            content_type=ct,
+            objects=state.objects,
+            inbox=state.inbox,
+            limits=ReceiveLimits(
+                compressed_bytes=state.settings.compressed_body_limit,
+                expanded_bytes=state.settings.expanded_body_limit,
+            ),
+            compressed_size=int(request.headers.get("content-length") or len(raw)),
+            spans=spans,
+            span_index=_span_index(state),
+            leases=getattr(state, "leases", None),
+            extra_headers=extra_headers or None,
+            backpressure_limit=state.settings.outbox_backpressure_limit,
+        )
+        if result.status_code == 503:
+            raise HTTPException(status_code=503, detail=result.rejected or "ingest capacity")
         if result.status_code == 413:
             raise HTTPException(status_code=413, detail=result.rejected)
         if result.status_code == 409:
@@ -198,11 +200,44 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         if start is None or end is None:
             raise HTTPException(status_code=400, detail="start and end are required")
         limit = min(max(limit, 1), 100)
+        if getattr(state.pointers, "supports_sql_list", False) and not flag and not eval_result and latency_ms is None:
+            summaries, next_cursor = state.pointers.list_summaries(
+                org,
+                start=start,
+                end=end,
+                cursor=cursor,
+                limit=limit,
+                agent_id=agent_id,
+                source=source,
+                outcome=outcome,
+            )
+            page = []
+            for row in summaries:
+                rev = state.sink.get(org, row["call_id"], row["revision"])
+                if rev is None:
+                    page.append(
+                        {
+                            "id": row["call_id"],
+                            "revision": row["revision"],
+                            "source": row.get("source"),
+                            "agent_id": row.get("agent_id"),
+                            "status": row.get("status"),
+                            "started_at": row["started_at"].isoformat() if row.get("started_at") else None,
+                            "hangup": row.get("hangup_reason"),
+                        }
+                    )
+                    continue
+                page.append(call_list_item(rev))
+            return {
+                "items": page,
+                "as_of_generation": state.rollup_generation,
+                "next_cursor": next_cursor,
+            }
         offset_items = []
         for rev in active_calls(state, org):
             if not in_range(rev, start, end):
                 continue
-            analysis = getattr(state.sink, "analysis", {}).get((org, rev.call_id, rev.revision), [])
+            analysis = analysis_for(state, org, rev.call_id, rev.revision)
             if not matches_call_filters(
                 rev,
                 agent_id=agent_id,
@@ -229,7 +264,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         payload = rev.model_dump(mode="json")
         payload["analysis"] = [
             r.model_dump(mode="json") if hasattr(r, "model_dump") else r
-            for r in getattr(state.sink, "analysis", {}).get((org, call_id, rev.revision), [])
+            for r in analysis_for(state, org, call_id, rev.revision)
         ]
         return payload
 
@@ -316,7 +351,7 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         calls = [c for c in active_calls(state, org) if start is None or in_range(c, start, end)]
         return quality_rollup(
             calls,
-            getattr(state.sink, "analysis", {}),
+            analysis_for(state, org),
             as_of_generation=state.rollup_generation,
         )
 
@@ -470,8 +505,10 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     def list_outbound(x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
         org = _require_key(state, x_api_key, KeyScope.ADMIN)
         items = []
-        for dest in state.webhook_destinations:
-            if dest.get("org_id") != org:
+        store = getattr(state, "webhook_store", None)
+        dests = store.list_destinations(org) if getattr(store, "durable", False) else state.webhook_destinations
+        for dest in dests:
+            if dest.get("org_id") and dest.get("org_id") != org:
                 continue
             items.append({"id": dest.get("id"), "url": dest.get("url"), "event_type": dest.get("event_type")})
         return {"items": items}
@@ -497,8 +534,63 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             "event_type": str(body.get("event_type") or "call.finalized"),
             "allow_http_localhost": "true" if body.get("allow_http_localhost") else "false",
         }
-        state.webhook_destinations.append(dest)
+        store = getattr(state, "webhook_store", None)
+        if getattr(store, "durable", False):
+            store.create(dest)
+        else:
+            state.webhook_destinations.append(dest)
         return {"id": dest["id"], "url": url, "secret": secret}
+
+    @app.post("/v1/outbound-webhooks/{dest_id}/rotate")
+    async def rotate_outbound(dest_id: str, request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        from obsalt.webhooks.outbound import mint_whsec
+
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        secret = str(body.get("secret") or mint_whsec())
+        overlap = int(body.get("overlap_seconds") or state.settings.key_rotation_overlap_seconds)
+        store = getattr(state, "webhook_store", None)
+        if getattr(store, "durable", False):
+            store.rotate_secret(org, dest_id, secret, overlap_seconds=overlap)
+        else:
+            from datetime import timedelta
+
+            from obsalt.util import utcnow
+
+            for dest in state.webhook_destinations:
+                if dest.get("id") == dest_id and dest.get("org_id") == org:
+                    dest["previous_secret"] = dest.get("secret")
+                    dest["previous_secret_expires_at"] = (utcnow() + timedelta(seconds=overlap)).isoformat()
+                    dest["secret"] = secret
+                    break
+        return {"id": dest_id, "secret": secret, "overlap_seconds": overlap}
+
+    @app.post("/v1/keys/rotate")
+    async def rotate_key(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
+        org = _require_key(state, x_api_key, KeyScope.ADMIN)
+        import secrets as secretsmod
+        from datetime import timedelta
+
+        from obsalt.util import utcnow
+
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        old = str(body.get("current_key") or x_api_key or "")
+        overlap = int(body.get("overlap_seconds") or state.settings.key_rotation_overlap_seconds)
+        new_key = secretsmod.token_urlsafe(24)
+        if state.key_directory is not None:
+            state.key_directory.rotate(org, old, new_key, overlap_seconds=overlap)
+        scopes = state.keys.get(old, (org, frozenset(KeyScope)))[1]
+        state.keys[new_key] = (org, scopes)
+        state.key_expiry[old] = utcnow() + timedelta(seconds=overlap)
+        return {"key": new_key, "overlap_seconds": overlap}
 
     @app.post("/v1/replay")
     async def replay(request: Request, x_api_key: str | None = Header(None, alias="X-API-Key")) -> dict:
@@ -602,7 +694,11 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
             "agree": bool(body.get("agree")),
             "note": str(body.get("note") or ""),
         }
-        state.reviews.append(item)
+        store = getattr(state, "review_store", None)
+        if getattr(store, "durable", False):
+            item = store.insert(item)
+        else:
+            state.reviews.append(item)
         return {"status": "recorded", "item": item}
 
     @app.get("/v1/plugins")
@@ -654,10 +750,24 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
                 outcome=filters["outcome"] or filters["hangup_reason"] or None,
                 source=filters["source"] or None,
                 flag=filters["flag"] or None,
-                analysis=getattr(state.sink, "analysis", {}).get((org, c.call_id, c.revision), []) if org else [],
+                analysis=analysis_for(state, org, c.call_id, c.revision) if org else [],
             )
         ]
-        return _render(request, "call_list.html", {"calls": calls, "org": org, "filters": filters})
+        limit = min(max(int(request.query_params.get("limit") or 50), 1), 100)
+        cursor = request.query_params.get("cursor")
+        page, next_cursor = paginate_calls(
+            [{"id": c.call_id, "revision": c.revision} for c in calls],
+            cursor=cursor,
+            limit=limit,
+        )
+        id_set = {(item["id"], item["revision"]) for item in page}
+        calls = [c for c in calls if (c.call_id, c.revision) in id_set]
+        filters["cursor"] = cursor or ""
+        return _render(
+            request,
+            "call_list.html",
+            {"calls": calls, "org": org, "filters": filters, "next_cursor": next_cursor},
+        )
 
     @app.get("/v1/ui/login", response_class=HTMLResponse)
     def ui_login(request: Request) -> HTMLResponse:
@@ -878,6 +988,12 @@ def _lookup_key(state: AppState, key: str | None) -> tuple[str, frozenset[KeySco
     if not key:
         raise HTTPException(status_code=401, detail="API key required")
     found = state.keys.get(key)
+    expiry = getattr(state, "key_expiry", {}).get(key)
+    if expiry is not None:
+        from obsalt.util import utcnow
+
+        if expiry < utcnow():
+            found = None
     if found is None and state.key_directory is not None:
         record = state.key_directory.lookup(key)
         if record is not None:
