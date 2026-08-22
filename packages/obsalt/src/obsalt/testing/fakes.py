@@ -42,7 +42,17 @@ class MemoryInbox:
         for envelope in list(self.envelopes.values()):
             if envelope.org_id != org_id:
                 continue
+            matched = False
             if hints.source_call_id and envelope.source_call_id == hints.source_call_id:
+                matched = True
+            if (
+                hints.range_start
+                and hints.range_end
+                and envelope.received_at is not None
+                and hints.range_start <= envelope.received_at <= hints.range_end
+            ):
+                matched = True
+            if matched:
                 envelope.state = EnvelopeState.TOMBSTONED
                 if envelope.envelope_id in self.outbox:
                     self.outbox.remove(envelope.envelope_id)
@@ -57,6 +67,8 @@ class MemoryInbox:
             if hints.caller_token and stored.caller_token == hints.caller_token:
                 return True
             if stored.covers_event(hints.event_time):
+                if stored.caller_token and hints.caller_token and stored.caller_token != hints.caller_token:
+                    continue
                 return True
         return False
 

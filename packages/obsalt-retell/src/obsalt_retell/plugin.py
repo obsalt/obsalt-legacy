@@ -193,7 +193,18 @@ class RetellPlugin:
                 "source_call_id": ProvenanceStamp(provenance=Provenance.PROVIDER_REPORTED, source_path="call.call_id"),
             },
         )
-        yield SnapshotBoundaryObserved(authoritative_domains=["turn_observed", "stage_observed", "aggregate_observed", "tool_observed"])
+        # §5.3: only ended/analyzed snapshots are authoritative. call_started
+        # and transcript_updated are deltas and must not retract by omission.
+        if event in {"call_ended", "call_analyzed"}:
+            yield SnapshotBoundaryObserved(
+                authoritative_domains=[
+                    "turn_observed",
+                    "stage_observed",
+                    "aggregate_observed",
+                    "tool_observed",
+                    "grounding_observed",
+                ]
+            )
         recording = as_str(blob.get("recording_url")) or as_str(blob.get("recording_multi_channel_url"))
         if recording:
             yield EvidenceObserved(
@@ -221,7 +232,11 @@ class RetellPlugin:
             )
         woven = blob.get("transcript_with_tool_calls") or blob.get("transcript_object") or []
         if isinstance(woven, list):
-            yield from _turns_and_tools(woven, parse_datetime(blob.get("start_timestamp")))
+            yield from _turns_and_tools(
+                woven,
+                parse_datetime(blob.get("start_timestamp")),
+                emit_user_grounding=event in {"call_ended", "call_analyzed"},
+            )
         yield from _latency(blob.get("latency") if isinstance(blob.get("latency"), dict) else {})
         reason = as_str(blob.get("disconnection_reason"))
         if reason:
@@ -238,7 +253,12 @@ class RetellPlugin:
             yield CallFinalized(reason="provider")
 
 
-def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[NormalizedEvent]:
+def _turns_and_tools(
+    items: list,
+    call_started: datetime | None,
+    *,
+    emit_user_grounding: bool = False,
+) -> Iterable[NormalizedEvent]:
     turn_index = 0
     pending: dict[str, str] = {}
     user_texts: list[str] = []
@@ -344,7 +364,7 @@ def _turns_and_tools(items: list, call_started: datetime | None) -> Iterable[Nor
             last_anchor = started
             last_anchor_path = "call.transcript_with_tool_calls[].words[].start (seconds)"
         turn_index += 1
-    if user_texts:
+    if emit_user_grounding and user_texts:
         yield GroundingObserved(
             kind=GroundingKind.USER_TEXT,
             content="\n".join(user_texts),

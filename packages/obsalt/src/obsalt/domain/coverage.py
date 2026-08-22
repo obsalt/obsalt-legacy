@@ -73,7 +73,7 @@ def derive_coverage(
                 present[Signal.TURN_INTERVAL] = "turn.started_at"
         elif isinstance(event, ToolObserved):
             present[Signal.TOOL_RESULT] = "tool"
-            if event.started_at or event.ended_at:
+            if event.started_at and event.ended_at:
                 present[Signal.TOOL_TIMING] = "tool.started_at"
         elif isinstance(event, GroundingObserved):
             present[_grounding_signal(event)] = event.source_path

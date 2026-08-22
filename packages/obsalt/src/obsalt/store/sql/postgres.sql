@@ -247,6 +247,8 @@ ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS source TEXT;
 ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS hangup_reason TEXT;
 ALTER TABLE active_calls ADD COLUMN IF NOT EXISTS status TEXT;
+ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_start TIMESTAMPTZ;
+ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_end TIMESTAMPTZ;
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'call.finalized';
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_ciphertext BYTEA;
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_expires_at TIMESTAMPTZ;

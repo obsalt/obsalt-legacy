@@ -27,8 +27,15 @@ def apply_deletion(
     if caller and not token:
         token = caller_token(org_id, caller, DEFAULT_PEPPER)
 
+    resolved_source = source_call_id
+    if resolved_source is None and call_id:
+        for rev in _all_revisions(state, org_id):
+            if rev.call_id == call_id and rev.source_call_id:
+                resolved_source = rev.source_call_id
+                break
+
     hints = TombstoneHints(
-        source_call_id=source_call_id or call_id,
+        source_call_id=resolved_source,
         caller_token=token,
         range_start=start,
         range_end=end,
@@ -81,7 +88,7 @@ def apply_deletion(
         state,
         org_id,
         call_ids=to_delete,
-        source_call_id=source_call_id or call_id,
+        source_call_id=resolved_source,
         caller_token=token,
     )
     return {

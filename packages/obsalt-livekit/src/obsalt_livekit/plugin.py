@@ -66,13 +66,18 @@ class LiveKitPlugin:
         for span in spans:
             if not span.name:
                 continue
+            if not span.start_unix_nano or span.end_unix_nano <= span.start_unix_nano:
+                continue
             attrs = span.attributes or {}
+            stage = _stage_for_span(span.name, attrs)
+            if stage is Stage.E2E and not _looks_like_call_span(span.name, attrs):
+                continue
             _count, key = genai_audio_input_tokens(attrs)
             source_path = f"span:{span.name}"
             if key:
                 source_path = f"span:{span.name}/{key}"
             yield StageObserved(
-                stage=_stage_for_span(span.name, attrs),
+                stage=stage,
                 metric=Metric.DURATION,
                 value_ms=(span.end_unix_nano - span.start_unix_nano) / 1e6,
                 placement=MeasurementPlacement.INTERVAL,
@@ -96,3 +101,8 @@ def _stage_for_span(name: str, attrs: dict[str, object]) -> Stage:
     if any(token in blob for token in ("vad", "endpoint", "eou")):
         return Stage.ENDPOINTING
     return Stage.E2E
+
+
+def _looks_like_call_span(name: str, attrs: dict[str, object]) -> bool:
+    blob = f"{name} {' '.join(str(k) for k in attrs)}".lower()
+    return any(token in blob for token in ("conversation", "call", "session", "room.duration"))

@@ -29,6 +29,7 @@ from obsalt.domain.events import (
     GroundingObserved,
     NormalizedEvent,
     OutcomeObserved,
+    SnapshotBoundaryObserved,
     TurnObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
@@ -54,7 +55,7 @@ class ElevenLabsPlugin:
     fidelity = FidelityDeclaration(
         source_format="elevenlabs.post_call_transcription",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE}),
-        possible_placements=frozenset({MeasurementPlacement.COARSE_ANCHOR}),
+        possible_placements=frozenset({MeasurementPlacement.COARSE_ANCHOR, MeasurementPlacement.INTERVAL}),
         provides=frozenset({Signal.TRANSCRIPT, Signal.TURN_INTERVAL, Signal.HANGUP, Signal.GROUNDING_USER}),
         structurally_absent={
             Signal.STAGE_INTERVAL: "post-call JSON uses whole-second message anchors without documented end timestamps",
@@ -159,6 +160,9 @@ class ElevenLabsPlugin:
                     provenance=Provenance.PROVIDER_REPORTED, source_path="data.conversation_id"
                 )
             },
+        )
+        yield SnapshotBoundaryObserved(
+            authoritative_domains=["turn_observed", "outcome_observed", "grounding_observed"]
         )
         transcript = data.get("transcript") or []
         user_texts: list[str] = []

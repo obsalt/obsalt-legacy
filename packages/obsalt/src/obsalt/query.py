@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +34,14 @@ def analysis_for(
             if revision and stored_rev != revision:
                 continue
             rows.extend(values)
+    return rows
+
+
+def analysis_for_active(state: Any, org_id: str, calls: Sequence[CallRevision]) -> list[Any]:
+    """Analysis rows for the currently promoted revision of each call (§4.2)."""
+    rows: list[Any] = []
+    for call in calls:
+        rows.extend(analysis_for(state, org_id, call.call_id, call.revision))
     return rows
 
 
@@ -254,10 +263,17 @@ def search_calls(
     if index is not None and hasattr(index, "query") and not isinstance(index, MemorySearchIndex):
         result = index.query(org_id or "", query, filters=filters)
         return list(result.get("items") or [])
-    if not query.strip() or not calls:
+    if not query.strip():
         return []
-    search_index = MemorySearchIndex()
-    for call in calls:
-        search_index.index(call)
-    result = search_index.query(query, filters=filters)
+    search_index = index if isinstance(index, MemorySearchIndex) and getattr(index, "_docs", None) else MemorySearchIndex()
+    if not getattr(search_index, "_docs", None):
+        if not calls:
+            return []
+        search_index = MemorySearchIndex()
+        for call in calls:
+            search_index.index(call)
+    merged = dict(filters or {})
+    if org_id:
+        merged.setdefault("org_id", org_id)
+    result = search_index.query(query, filters=merged or None)
     return list(result.get("items") or [])

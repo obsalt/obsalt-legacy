@@ -33,6 +33,7 @@ AND (
         range_start IS NOT NULL AND range_end IS NOT NULL
         AND %s IS NOT NULL
         AND %s BETWEEN range_start AND range_end
+        AND (caller_token IS NULL OR %s IS NULL OR caller_token = %s)
       )
 )
 """
@@ -47,6 +48,8 @@ def _tombstone_params(org_id: str, hints: TombstoneHints) -> tuple[Any, ...]:
         hints.caller_token,
         hints.event_time,
         hints.event_time,
+        hints.caller_token,
+        hints.caller_token,
     )
 
 
@@ -180,6 +183,34 @@ class PostgresInbox:
                       AND e.org_id = %s AND e.source_call_id = %s
                     """,
                     (org_id, hints.source_call_id),
+                )
+            if hints.range_start and hints.range_end:
+                self._conn.execute(
+                    """
+                    UPDATE raw_envelopes
+                    SET state = %s
+                    WHERE org_id = %s
+                      AND received_at BETWEEN %s AND %s
+                      AND (%s IS NULL OR source_call_id IS NULL OR source_call_id = %s)
+                    """,
+                    (
+                        EnvelopeState.TOMBSTONED.value,
+                        org_id,
+                        hints.range_start,
+                        hints.range_end,
+                        hints.source_call_id,
+                        hints.source_call_id,
+                    ),
+                )
+                self._conn.execute(
+                    """
+                    DELETE FROM outbox o
+                    USING raw_envelopes e
+                    WHERE o.envelope_id = e.envelope_id
+                      AND e.org_id = %s
+                      AND e.received_at BETWEEN %s AND %s
+                    """,
+                    (org_id, hints.range_start, hints.range_end),
                 )
             self._conn.execute(
                 """

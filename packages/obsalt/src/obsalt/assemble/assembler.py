@@ -7,8 +7,10 @@ source-revision rules in §5.3. Conflicts block automatic promotion.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
+from obsalt.analysis.hangup import customer_loss_score
 from obsalt.assemble.facts import ASSEMBLER_VERSION, fact_id_for
 from obsalt.domain.coverage import architecture_of, derive_coverage, derive_fidelity
 from obsalt.domain.enums import (
@@ -121,7 +123,13 @@ class Assembler:
 
         call_obs = _last_of(remaining, CallObserved)
         turns = [_turn(e) for e in remaining if isinstance(e, TurnObserved)]
-        turns.sort(key=lambda t: t.index)
+        turns.sort(
+            key=lambda t: (
+                t.started_at or datetime.min.replace(tzinfo=UTC),
+                t.index,
+                t.speaker.value,
+            )
+        )
         _apply_interruptions(turns, remaining)
         tools = [_tool(e) for e in remaining if isinstance(e, ToolObserved)]
         _annotate_retries(tools)
@@ -172,7 +180,7 @@ class Assembler:
         if call_obs:
             provenance.update(call_obs.provenance_by_field)
 
-        return CallRevision(
+        revision = CallRevision(
             org_id=org_id,
             call_id=call_id,
             revision=new_id(),
@@ -207,6 +215,11 @@ class Assembler:
             accepted_fact_ids=sorted(fid for fid in accepted if fid not in retracted),
             created_at=utcnow(),
         )
+        if revision.hangup is not None:
+            score, reasons = customer_loss_score(revision)
+            revision.hangup.loss_score = score
+            revision.hangup.loss_reasons = reasons
+        return revision
 
 
 def fold_facts(events: Iterable[NormalizedEvent]) -> tuple[dict[str, FactRecord], list[str], set[str]]:
@@ -234,7 +247,12 @@ def fold_facts(events: Iterable[NormalizedEvent]) -> tuple[dict[str, FactRecord]
             continue
         merged = _merge_or_choose(existing, record)
         if merged is None:
-            conflicts.append(record.fact_id)
+            # Differing content without a comparable revision is a conflict.
+            # Keep a deterministic winner so fold is commutative; promotion still blocks.
+            if record.fact_id not in conflicts:
+                conflicts.append(record.fact_id)
+            if record.content_hash < existing.content_hash:
+                accepted[record.fact_id] = record
             continue
         accepted[record.fact_id] = merged
 
@@ -340,6 +358,9 @@ def _tool(event: ToolObserved) -> ToolInvocation:
         status=event.status,
         payload_shape=payload_shape(event.args) if event.args is not None else None,
         argument_hash=sha256_text(canonical_json(event.args)) if event.args is not None else None,
+        result_ref=sha256_text(canonical_json(event.result)) if event.result is not None else None,
+        args=event.args,
+        result=event.result,
         error=event.error,
         provenance_by_field=event.provenance_by_field,
     )

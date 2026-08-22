@@ -163,6 +163,8 @@ def receive_webhook(
 
     delivery = plugin.delivery_key(decoded, headers.as_list()) or sha256_bytes(decoded)
     hints = plugin.tombstone_hints(decoded)
+    if hints.event_time is None:
+        hints = hints.model_copy(update={"event_time": utcnow()})
     if inbox.is_tombstoned(connection.org_id, hints):
         # Tombstoned orphan is purged before acknowledgement.
         return ReceiveResult(

@@ -47,7 +47,7 @@ class PipecatPlugin:
     fidelity = FidelityDeclaration(
         source_format="pipecat.otlp",
         possible_architectures=frozenset({PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}),
-        possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
+        possible_placements=frozenset({MeasurementPlacement.INTERVAL, MeasurementPlacement.ANCHORED_DURATION}),
         provides=frozenset({Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.TTFA}),
         structurally_absent={},
         schema_source="Pipecat tracing (metrics.ttfb, turn.*, gen_ai.provider.name in code; gen_ai.system in docs)",
@@ -131,14 +131,15 @@ class PipecatPlugin:
                 except (TypeError, ValueError):
                     ttfb_ms = None
                 if ttfb_ms is not None:
+                    # TTFB is a measured duration from the span start, not the
+                    # full span width. Drawing it as INTERVAL invents a waterfall.
                     yield StageObserved(
                         stage=stage,
                         metric=Metric.TTFB,
                         value_ms=ttfb_ms,
                         turn_index=turn_i,
-                        placement=MeasurementPlacement.INTERVAL,
+                        placement=MeasurementPlacement.ANCHORED_DURATION,
                         started_at=started,
-                        ended_at=ended,
                         provenance=Provenance.PROVIDER_REPORTED,
                         source_path="span.attributes.metrics.ttfb",
                     )

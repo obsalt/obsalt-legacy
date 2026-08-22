@@ -62,7 +62,10 @@ def extract_candidate_claims(call: CallRevision) -> list[dict[str, object]]:
 def _grounding_corpus(call: CallRevision) -> list[str]:
     parts = [t.text for t in call.user_turns()]
     parts.extend(g.content for g in call.grounding if g.content)
-    parts.extend(t.error or t.name for t in call.tools)
+    for tool in call.tools:
+        parts.append(tool.error or tool.name)
+        if tool.result is not None:
+            parts.append(tool.result if isinstance(tool.result, str) else str(tool.result))
     return parts
 
 
