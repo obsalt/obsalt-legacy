@@ -125,8 +125,8 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "traceId": "aa" * 16,
                                 "spanId": "bb" * 8,
                                 "name": "turn",
-                                "startTimeUnixNano": "1000000000",
-                                "endTimeUnixNano": "2000000000",
+                                "startTimeUnixNano": "1787400001000000000",
+                                "endTimeUnixNano": "1787400002000000000",
                                 "attributes": [
                                     {"key": "turn.index", "value": {"intValue": "0"}},
                                     {
@@ -141,8 +141,8 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
                                 "spanId": "cc" * 8,
                                 "parentSpanId": "bb" * 8,
                                 "name": "stt.transcription",
-                                "startTimeUnixNano": "1000000000",
-                                "endTimeUnixNano": "1300000000",
+                                "startTimeUnixNano": "1787400001000000000",
+                                "endTimeUnixNano": "1787400001300000000",
                                 "attributes": [
                                     {
                                         "key": "gen_ai.conversation.id",
@@ -170,4 +170,6 @@ def test_otlp_complete_batch_assembles_stage_level() -> None:
     item = listed.json()["items"][0]
     detail = client.get(f"/v1/calls/{item['id']}", headers={"X-API-Key": "k"})
     assert detail.status_code == 200
-    assert detail.json()["timeline_fidelity"] == "stage_level"
+    body = detail.json()
+    assert body["timeline_fidelity"] == "stage_level"
+    assert body["started_at"].startswith("2026-08-22T12:00:01")
