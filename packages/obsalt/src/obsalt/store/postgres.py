@@ -1000,7 +1000,7 @@ class PostgresSearchDocuments:
                     literal,
                     index_version,
                     revision.agent_id,
-                    revision.started_at,
+                    revision.started_at or revision.created_at,
                     revision.source,
                     hangup,
                     embedder_version,

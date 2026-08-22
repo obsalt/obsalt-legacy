@@ -2,11 +2,16 @@
 {% block title %}obsalt — search{% endblock %}
 {% block content %}
   <h1>Search</h1>
-  <p class="muted">Hybrid lexical + vector over redacted transcripts. Results share tenant and structured filters.</p>
+  <p class="muted">Hybrid lexical + vector over redacted transcripts. Results share tenant and structured filters. A time range is required.</p>
+  {% if error %}
+    <p class="decode_failed">{{ error }}</p>
+  {% endif %}
   <form class="filters" method="get" action="/v1/ui/search">
     <label>Query <input name="q" value="{{ q|default('') }}" /></label>
     <label>Agent <input name="agent_id" value="{{ filters.agent_id|default('') if filters is defined else '' }}" /></label>
     <label>Source <input name="source" value="{{ filters.source|default('') if filters is defined else '' }}" /></label>
+    <label>Start <input name="start" value="{{ filters.start|default('') if filters is defined else '' }}" /></label>
+    <label>End <input name="end" value="{{ filters.end|default('') if filters is defined else '' }}" /></label>
     <button type="submit">Search</button>
   </form>
   <table>

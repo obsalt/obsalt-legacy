@@ -1034,21 +1034,45 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
     @app.get("/v1/ui/search", response_class=HTMLResponse)
     def ui_search(request: Request, q: str = "") -> HTMLResponse:
         org = _ui_org(request, state)
+        start = request.query_params.get("start") or ""
+        end = request.query_params.get("end") or ""
         filters = {
             "agent_id": request.query_params.get("agent_id") or "",
             "source": request.query_params.get("source") or "",
+            "start": start,
+            "end": end,
         }
         hits = []
+        error = None
         if q and org:
-            hits = search_calls(
-                active_calls(state, org),
-                q,
-                index=state.search,
-                org_id=org,
-                filters={k: v for k, v in filters.items() if v} or None,
-            )
+            if not start or not end:
+                error = "start and end are required"
+            else:
+                try:
+                    start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                except ValueError:
+                    error = "start and end are required"
+                else:
+                    structured = {
+                        key: value
+                        for key, value in filters.items()
+                        if value and key not in {"start", "end"}
+                    }
+                    structured["start"] = start_dt
+                    structured["end"] = end_dt
+                    calls = [c for c in active_calls(state, org) if in_range(c, start_dt, end_dt)]
+                    hits = search_calls(
+                        calls,
+                        q,
+                        index=state.search,
+                        org_id=org,
+                        filters=structured,
+                    )
         return _render(
-            request, "search.html", {"q": q, "results": hits, "org": org, "filters": filters}
+            request,
+            "search.html",
+            {"q": q, "results": hits, "org": org, "filters": filters, "error": error},
         )
 
     @app.get("/v1/ui/settings", response_class=HTMLResponse)

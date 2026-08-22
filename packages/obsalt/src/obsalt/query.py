@@ -70,13 +70,20 @@ def active_calls(state: Any, org_id: str) -> list[CallRevision]:
             if state.pointers.get(rev.org_id, rev.call_id) != rev.revision:
                 continue
             items.append(rev)
-    items.sort(key=lambda r: (r.started_at or r.created_at, r.call_id), reverse=True)
+    items.sort(key=lambda r: (range_clock(r), r.call_id), reverse=True)
     return items
 
 
+def range_clock(call: CallRevision) -> datetime:
+    """One clock for list, search, and rollup windows. Never ingest time alone
+    when the source reported a start; never drop a call that only has
+    ``created_at``.
+    """
+    return call.started_at or call.created_at
+
+
 def in_range(call: CallRevision, start: datetime, end: datetime) -> bool:
-    ts = call.started_at or call.created_at
-    return start <= ts <= end
+    return start <= range_clock(call) <= end
 
 
 def matches_call_filters(

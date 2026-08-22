@@ -8,6 +8,7 @@ from obsalt.api import create_test_app
 from obsalt.config import Settings
 from obsalt.runtime import in_memory_state
 from tests.helpers import (
+    RANGE_QS,
     VAPI_FIXTURES,
     api_client,
     auth,
@@ -125,6 +126,25 @@ def test_key_rotation_keeps_overlap() -> None:
     new_key = rotated.json()["key"]
     assert client.get("/v1/plugins", headers=auth("dev-key")).status_code == 200
     assert client.get("/v1/plugins", headers=auth(new_key)).status_code == 200
+
+
+def test_console_search_requires_a_range_and_finds_refunds() -> None:
+    client = api_client(example_state())
+    ingest_example(client)
+    call_id = first_call_id(client)
+    login = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)
+    assert login.status_code == 303
+    missing = client.get("/v1/ui/search?q=refund")
+    assert missing.status_code == 200
+    assert b"start and end are required" in missing.content
+    found = client.get(f"/v1/ui/search?q=refund&{RANGE_QS}")
+    assert found.status_code == 200
+    assert call_id.encode() in found.content
+    too_early = client.get(
+        "/v1/ui/search?q=refund&start=2019-01-01T00:00:00Z&end=2019-12-31T00:00:00Z"
+    )
+    assert too_early.status_code == 200
+    assert call_id.encode() not in too_early.content
 
 
 def test_call_list_filters_by_agent() -> None:

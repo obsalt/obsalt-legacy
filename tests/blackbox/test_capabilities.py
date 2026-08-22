@@ -7,9 +7,7 @@ from tests.helpers import (
     EXAMPLE_SOURCE_CALL_ID,
     EXAMPLE_STT_MS,
     EXAMPLE_USER_TEXT,
-    RANGE_END,
     RANGE_QS,
-    RANGE_START,
     VAPI_FIXTURES,
     api_client,
     assert_generation_labelled,
@@ -95,7 +93,11 @@ def test_search_finds_refunds_only_inside_the_requested_range() -> None:
     in_range = client.post(
         "/v1/search",
         headers=auth(),
-        json={"q": "refund", "start": RANGE_START, "end": RANGE_END},
+        json={
+            "q": "refund",
+            "start": "2026-08-22T12:00:00Z",
+            "end": "2026-08-22T12:00:10Z",
+        },
     )
     assert in_range.status_code == 200
     hits = in_range.json()["items"]

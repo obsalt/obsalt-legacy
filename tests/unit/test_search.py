@@ -75,6 +75,40 @@ def test_search_restricts_to_the_caller_provided_calls() -> None:
     assert empty == []
 
 
+def test_index_time_filters_fall_back_to_created_at() -> None:
+    call = CallRevision(
+        org_id="acme",
+        call_id="ingest-only",
+        revision="r1",
+        source="example",
+        source_call_id="src-ingest-only",
+        agent_id="support",
+        started_at=None,
+        created_at=datetime(2026, 8, 21, 12, 0, tzinfo=UTC),
+        turns=[Turn(index=0, speaker=Speaker.USER, text="customer asking about refunds")],
+    )
+    index = MemorySearchIndex()
+    index.index(call)
+    inside = index.query(
+        "refunds",
+        filters={
+            "org_id": "acme",
+            "start": datetime(2026, 1, 1, tzinfo=UTC),
+            "end": datetime(2026, 12, 31, tzinfo=UTC),
+        },
+    )
+    assert [item["call_id"] for item in inside["items"]] == ["ingest-only"]
+    outside = index.query(
+        "refunds",
+        filters={
+            "org_id": "acme",
+            "start": datetime(2019, 1, 1, tzinfo=UTC),
+            "end": datetime(2019, 12, 31, tzinfo=UTC),
+        },
+    )
+    assert outside["items"] == []
+
+
 def test_index_time_filters_drop_calls_outside_the_window() -> None:
     early = _call(
         call_id="early",

@@ -31,6 +31,7 @@ class _Document:
     source: str
     hangup_reason: str | None
     started_at: datetime | None
+    created_at: datetime | None
     text: str
     tokens: set[str]
     vector: list[float]
@@ -62,6 +63,7 @@ class MemorySearchIndex:
             source=call.source,
             hangup_reason=hangup_reason,
             started_at=call.started_at,
+            created_at=call.created_at,
             text=text,
             tokens=set(TOKEN_RE.findall(text.lower())),
             vector=vector,
@@ -127,7 +129,7 @@ def _matches(doc: _Document, filters: dict[str, Any] | None) -> bool:
     start = filters.get("start")
     end = filters.get("end")
     if start is not None or end is not None:
-        ts = doc.started_at
+        ts = doc.started_at or doc.created_at
         if ts is None:
             return False
         if start is not None and ts < start:

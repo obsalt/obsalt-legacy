@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 
 from obsalt.assemble.assembler import Assembler, fold_facts
 from obsalt.assemble.facts import stamp_event
@@ -127,6 +127,52 @@ def test_interval_stage_draws_waterfall() -> None:
     view = timeline_view(call)
     assert view["draw_stage_waterfall"] is True
     assert call.timeline_fidelity.value == "stage_level"
+
+
+def test_assemble_derives_started_at_from_the_earliest_turn() -> None:
+    first = datetime(2026, 8, 22, 12, 0, 1, tzinfo=UTC)
+    later = datetime(2026, 8, 22, 12, 0, 3, tzinfo=UTC)
+    events = [
+        stamp_event(
+            CallObserved(source_call_id="c1", agent_id="a"),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=0,
+        ),
+        stamp_event(
+            TurnObserved(
+                turn_index=0, speaker=Speaker.USER, text="hi", started_at=later, ended_at=later
+            ),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=1,
+        ),
+        stamp_event(
+            TurnObserved(
+                turn_index=1, speaker=Speaker.AGENT, text="hello", started_at=first, ended_at=first
+            ),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=2,
+        ),
+    ]
+    call = Assembler(_decl(), decoder_version="t/1", processing_run_id="r").assemble(
+        "o", "cid", "test", events
+    )
+    assert call.started_at == first
+    assert call.ended_at is None
+    stamp = call.provenance["started_at"]
+    assert stamp.provenance.value == "obsalt_derived"
+    assert stamp.derivation == "min(turn.started_at)"
 
 
 def test_promote_cas_and_retain_prior_revision() -> None:
