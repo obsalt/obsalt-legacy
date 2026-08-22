@@ -7,7 +7,7 @@ source-revision rules in §5.3. Conflicts block automatic promotion.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, TypeVar
 
 from obsalt.assemble.facts import ASSEMBLER_VERSION, fact_id_for
 from obsalt.domain.coverage import architecture_of, derive_coverage, derive_fidelity
@@ -27,6 +27,7 @@ from obsalt.domain.events import (
     EvidenceObserved,
     FactRetracted,
     GroundingObserved,
+    InterruptionObserved,
     NormalizedEvent,
     OutcomeObserved,
     SnapshotBoundaryObserved,
@@ -51,6 +52,20 @@ from obsalt.util import canonical_json, duration_ms, new_id, sha256_text, utcnow
 
 ROOT_OWNED_FIELDS = frozenset({"agent_id", "ended_at", "status", "hangup", "cost"})
 
+# Processing metadata is stamped by core and is not fact content (§5.3).
+BOOKKEEPING_FIELDS = frozenset(
+    {
+        "envelope_id",
+        "processing_run_id",
+        "envelope_sequence",
+        "event_occurred_at",
+        "decoder_version",
+        "fact_id",
+        "org_id",
+        "call_key",
+    }
+)
+
 
 class FactRecord:
     __slots__ = ("fact_id", "content_hash", "event", "source_revision")
@@ -63,8 +78,7 @@ class FactRecord:
 
 
 def _content(event: NormalizedEvent) -> dict[str, Any]:
-    data = event.model_dump(exclude={"envelope_id", "processing_run_id", "envelope_sequence", "event_occurred_at"})
-    return data
+    return event.model_dump(exclude=set(BOOKKEEPING_FIELDS))
 
 
 def _revision_cmp(left: FactRecord, right: FactRecord) -> int | None:
@@ -108,6 +122,7 @@ class Assembler:
         call_obs = _last_of(remaining, CallObserved)
         turns = [_turn(e) for e in remaining if isinstance(e, TurnObserved)]
         turns.sort(key=lambda t: t.index)
+        _apply_interruptions(turns, remaining)
         tools = [_tool(e) for e in remaining if isinstance(e, ToolObserved)]
         _annotate_retries(tools)
         stages = [_stage(e) for e in remaining if isinstance(e, StageObserved)]
@@ -190,42 +205,92 @@ def fold_facts(events: Iterable[NormalizedEvent]) -> tuple[dict[str, FactRecord]
     accepted: dict[str, FactRecord] = {}
     conflicts: list[str] = []
     retracted: set[str] = set()
-    snapshot_domains: list[str] = []
-    present_domains: set[str] = set()
 
     for event in events:
         if isinstance(event, SnapshotBoundaryObserved):
-            snapshot_domains = list(event.authoritative_domains)
+            # A snapshot is authoritative for the declared domains: drop prior
+            # facts in those domains so omitted facts retract. Subsequent events
+            # in this stream re-add what the snapshot still contains.
+            for fact_id, record in list(accepted.items()):
+                if record.event.type in event.authoritative_domains:
+                    accepted.pop(fact_id, None)
             continue
         if isinstance(event, FactRetracted) and event.retracted_fact_id:
             retracted.add(event.retracted_fact_id)
+            accepted.pop(event.retracted_fact_id, None)
             continue
         record = FactRecord(event)
-        present_domains.add(event.type)
         existing = accepted.get(record.fact_id)
         if existing is None:
             accepted[record.fact_id] = record
             continue
-        if existing.content_hash == record.content_hash:
-            continue
-        cmp = _revision_cmp(record, existing)
-        if cmp is None:
+        merged = _merge_or_choose(existing, record)
+        if merged is None:
             conflicts.append(record.fact_id)
             continue
-        if cmp > 0:
-            accepted[record.fact_id] = record
-        # cmp < 0: keep existing; cmp == 0 already handled by hash
-
-    if snapshot_domains:
-        for fact_id, record in list(accepted.items()):
-            if record.event.type in snapshot_domains and record.event.type not in present_domains:
-                retracted.add(fact_id)
+        accepted[record.fact_id] = merged
 
     return accepted, conflicts, retracted
 
 
-def _last_of(events: Sequence[NormalizedEvent], typ: type):
-    found = None
+def _is_unset(value: object) -> bool:
+    if value is None or value == "" or value == [] or value == {}:
+        return True
+    if isinstance(value, str) and value in {"unknown", "pending"}:
+        return True
+    return False
+
+
+def _merge_or_choose(existing: FactRecord, incoming: FactRecord) -> FactRecord | None:
+    """Identical content dedupes; ordered revision wins; additive field fills merge.
+
+    Differing non-empty values without a comparable source revision are a conflict.
+    CallObserved / ToolObserved updates (started then ended, invocation then result)
+    are additive fills, not arbitrary overwrites.
+    """
+    if existing.content_hash == incoming.content_hash:
+        return existing
+    cmp = _revision_cmp(incoming, existing)
+    if cmp is not None:
+        return incoming if cmp > 0 else existing
+    if not isinstance(
+        existing.event,
+        (CallObserved, ToolObserved, TurnObserved, OutcomeObserved, GroundingObserved),
+    ):
+        return None
+    if type(existing.event) is not type(incoming.event):
+        return None
+    left = existing.event.model_dump()
+    right = incoming.event.model_dump()
+    merged: dict[str, object] = {}
+    for key in left:
+        a, b = left.get(key), right.get(key)
+        if key in BOOKKEEPING_FIELDS:
+            merged[key] = b if not _is_unset(b) else a
+            continue
+        if a == b:
+            merged[key] = a
+        elif isinstance(a, dict) and isinstance(b, dict):
+            combined = dict(a)
+            combined.update(b)
+            merged[key] = combined
+        elif _is_unset(a) and not _is_unset(b):
+            merged[key] = b
+        elif _is_unset(b) and not _is_unset(a):
+            merged[key] = a
+        else:
+            return None
+    event = existing.event.__class__.model_validate(merged)
+    record = FactRecord(event)
+    record.fact_id = existing.fact_id
+    return record
+
+
+TEvent = TypeVar("TEvent", bound=NormalizedEvent)
+
+
+def _last_of(events: Sequence[NormalizedEvent], typ: type[TEvent]) -> TEvent | None:
+    found: TEvent | None = None
     for event in events:
         if isinstance(event, typ):
             found = event
@@ -237,12 +302,22 @@ def _turn(event: TurnObserved) -> Turn:
         index=event.turn_index,
         speaker=event.speaker,
         text=event.text,
+        text_ref=sha256_text(event.text) if event.text else None,
         started_at=event.started_at,
         ended_at=event.ended_at,
         interrupted=event.interrupted,
         confidence=event.confidence,
         provenance_by_field=event.provenance_by_field,
     )
+
+
+def _apply_interruptions(turns: list[Turn], events: Sequence[NormalizedEvent]) -> None:
+    for event in events:
+        if not isinstance(event, InterruptionObserved) or event.turn_index is None:
+            continue
+        for turn in turns:
+            if turn.index == event.turn_index:
+                turn.interrupted = True
 
 
 def _tool(event: ToolObserved) -> ToolInvocation:

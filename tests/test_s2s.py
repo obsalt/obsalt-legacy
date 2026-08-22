@@ -10,7 +10,7 @@ from obsalt.otel.conventions import (
     SPAN_USER_INPUT,
 )
 from obsalt.otel.s2s import decode_s2s_spans, is_real_barge_in
-from obsalt.plugin.types import ReadableSpan
+from obsalt.plugin.types import ReadableSpan, SdkConfig
 from obsalt_gemini_live.plugin import GeminiLivePlugin
 from obsalt_openai_realtime.plugin import OpenAIRealtimePlugin
 
@@ -60,6 +60,17 @@ def test_explicit_interrupted_attr_is_barge_in() -> None:
     assert is_real_barge_in(span) is True
     events = list(decode_s2s_spans([span]))
     assert any(isinstance(e, InterruptionObserved) for e in events)
+
+
+def test_sdk_instrumentation_emits_s2s_spans() -> None:
+    openai = OpenAIRealtimePlugin()
+    wrapped = openai.instrument(object(), SdkConfig(service_name="test-agent"))
+    client = wrapped.client
+    span = client.record_user_input("conv-1", 1_000_000_000, 2_000_000_000)
+    assert span.name == SPAN_USER_INPUT
+    assert client.emitted
+    events = list(openai.decode(client.emitted))
+    assert any(isinstance(event, StageObserved) and event.stage is Stage.USER_INPUT for event in events)
 
 
 def test_openai_and_gemini_plugins_use_s2s_shape() -> None:

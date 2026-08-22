@@ -43,6 +43,9 @@ class MemorySearchIndex:
         self.index_version = INDEX_VERSION
         self.embedder_version = EMBEDDER_VERSION
 
+    def upsert_revision(self, call: CallRevision, *, index_version: str = "1") -> None:
+        self.index(call)
+
     def index(self, call: CallRevision) -> None:
         text = _transcript(call)
         vector = _embed_sync(self._embedder, call.call_id, text)

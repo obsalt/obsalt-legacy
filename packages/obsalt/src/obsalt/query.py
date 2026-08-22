@@ -82,7 +82,19 @@ def sample_percentile(values: list[float], pct: float) -> float | None:
     return ordered[min(n, len(ordered) - 1)]
 
 
-def latency_rollup(calls: list[CallRevision], *, as_of_generation: str) -> dict[str, Any]:
+def latency_rollup(
+    calls: list[CallRevision],
+    *,
+    as_of_generation: str,
+    store: Any | None = None,
+    org_id: str | None = None,
+) -> dict[str, Any]:
+    if store is not None and getattr(store, "samples", None):
+        from obsalt.analysis.contributions import latency_from_store_or_calls
+
+        return latency_from_store_or_calls(
+            calls, as_of_generation=as_of_generation, store=store, org_id=org_id
+        )
     data = build_latency_rollup(calls, as_of_generation)
     items = []
     for stage, stats in (data.get("sample_percentiles") or {}).items():

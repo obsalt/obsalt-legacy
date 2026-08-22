@@ -66,6 +66,49 @@ class TestRetellSchema(SchemaFixtureTests):
     fixtures_dir = RETELL_FIXTURES
 
 
+class TestVapiAuth(AuthenticationConformanceTests):
+    plugin = VapiPlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="vapi",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={"legacy_secret": "vapi-secret"},
+        settings={"auth_mode": "legacy_secret"},
+    )
+    valid_raw = (VAPI_FIXTURES / "raw" / "end_of_call.json").read_bytes()
+    valid_headers = {"x-vapi-secret": "vapi-secret"}
+
+
+class TestRetellAuth(AuthenticationConformanceTests):
+    plugin = RetellPlugin()
+    connection = ConnectionConfig(
+        org_id="acme",
+        provider="retell",
+        connection_id="c1",
+        ingest_key_hash="x",
+        secrets={"api_key": "retell-api-key"},
+    )
+    valid_raw = (RETELL_FIXTURES / "raw" / "call_ended.json").read_bytes()
+
+    @property
+    def valid_headers(self) -> dict[str, str]:
+        ts = str(int(time.time() * 1000))
+        sig = hmac_hex("retell-api-key", self.valid_raw + ts.encode())
+        return {"x-retell-signature": f"v={ts},d={sig}"}
+
+    def test_stale_timestamp_rejected(self) -> None:
+        ts = str(int(time.time() * 1000) - 20 * 60 * 1000)
+        sig = hmac_hex("retell-api-key", self.valid_raw + ts.encode())
+        result = self.plugin.authenticate(
+            self.valid_raw,
+            RawHeaders.from_mapping({"x-retell-signature": f"v={ts},d={sig}"}).as_list(),
+            self.connection,
+        )
+        assert result.outcome is VerifyOutcome.STALE
+        assert not result.ok
+
+
 class TestRetellUnits(SecondsVsMillisecondsTests):
     def test_word_timestamps_are_seconds(self) -> None:
         plugin = RetellPlugin()
@@ -238,6 +281,33 @@ class TestCartesiaAuth(AuthenticationConformanceTests):
     )
     valid_raw = (CARTESIA_FIXTURES / "raw" / "call_ended.json").read_bytes()
     valid_headers = {"x-webhook-secret": "line-secret"}
+
+
+def test_elevenlabs_otlp_spans_require_real_interval() -> None:
+    from obsalt.plugin.types import ReadableSpan
+
+    plugin = ElevenLabsPlugin()
+    good = ReadableSpan(
+        name="conversation",
+        trace_id="aa" * 16,
+        span_id="bb" * 8,
+        start_unix_nano=1_000_000_000,
+        end_unix_nano=2_000_000_000,
+        attributes={"elevenlabs.conversation_id": "c1"},
+    )
+    bad = ReadableSpan(
+        name="conversation",
+        trace_id="aa" * 16,
+        span_id="cc" * 8,
+        start_unix_nano=2_000_000_000,
+        end_unix_nano=1_000_000_000,
+        attributes={"elevenlabs.conversation_id": "c1"},
+    )
+    assert plugin.claims(good) > 0
+    events = list(plugin.decode_spans([good, bad]))
+    assert len(events) == 1
+    assert events[0].placement is MeasurementPlacement.INTERVAL
+    assert events[0].started_at is not None and events[0].ended_at is not None
 
 
 def test_elevenlabs_coarse_message_anchors() -> None:

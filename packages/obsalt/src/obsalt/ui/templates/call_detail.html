@@ -76,6 +76,12 @@
   <section class="panel">
     <h2>Evals</h2>
     <p class="muted">Missing output is never interpreted as a passing call.</p>
+    {% if csrf %}
+    <form method="post" action="/v1/ui/calls/{{ call.call_id }}/analyze">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <button type="submit">Evaluate this call</button>
+    </form>
+    {% endif %}
     {% for ev in evals|default([]) %}
       <div>
         {{ ev.rubric_id|default(ev.analyzer_id) }}
@@ -91,7 +97,7 @@
   <section class="panel">
     <h2>Provenance / coverage</h2>
     <p>decoder_version {{ call.decoder_version }} · assembler_version {{ call.assembler_version }}</p>
-    <p class="muted">Raw retention horizon: configured separately; replay is bounded by that horizon.</p>
+    <p class="muted">Raw retention horizon: {{ raw_retention_days|default(30) }} days. Replay is bounded by that horizon.</p>
     <ul>
       {% for row in coverage|default(call.coverage) %}
         <li class="{{ row.status.value }}">

@@ -67,6 +67,19 @@ CREATE TABLE IF NOT EXISTS obsalt.tool_invocations (
 ) ENGINE = MergeTree
 ORDER BY (org_id, call_id, revision, tool_id);
 
+CREATE TABLE IF NOT EXISTS obsalt.rollup_contributions (
+    org_id String,
+    agent_id String,
+    call_id String,
+    revision String,
+    stage String,
+    metric String,
+    value_ms Float64,
+    bucket DateTime64(3),
+    generation String
+) ENGINE = MergeTree
+ORDER BY (org_id, agent_id, stage, metric, bucket, call_id, revision);
+
 CREATE TABLE IF NOT EXISTS obsalt.analysis_results (
     org_id String,
     call_id String,

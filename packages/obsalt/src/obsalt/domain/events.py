@@ -219,3 +219,26 @@ NormalizedEvent = Annotated[
     CallObserved | TurnObserved | StageObserved | AggregateObserved | ToolObserved | OutcomeObserved | GroundingObserved | EvidenceObserved | InterruptionObserved | SnapshotBoundaryObserved | FactRetracted | CallFinalized,
     Field(discriminator="type"),
 ]
+
+_EVENT_TYPES: dict[str, type[EventBase]] = {
+    "call_observed": CallObserved,
+    "turn_observed": TurnObserved,
+    "stage_observed": StageObserved,
+    "aggregate_observed": AggregateObserved,
+    "tool_observed": ToolObserved,
+    "outcome_observed": OutcomeObserved,
+    "grounding_observed": GroundingObserved,
+    "evidence_observed": EvidenceObserved,
+    "interruption_observed": InterruptionObserved,
+    "snapshot_boundary": SnapshotBoundaryObserved,
+    "fact_retracted": FactRetracted,
+    "call_finalized": CallFinalized,
+}
+
+
+def parse_normalized_event(data: dict[str, Any]) -> NormalizedEvent:
+    kind = str(data.get("type") or "")
+    cls = _EVENT_TYPES.get(kind)
+    if cls is None:
+        raise ValueError(f"unknown normalized event type {kind!r}")
+    return cls.model_validate(data)  # type: ignore[return-value]

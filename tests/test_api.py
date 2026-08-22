@@ -94,6 +94,93 @@ def test_fleet_endpoints_require_range_and_carry_generation() -> None:
     assert res.json()["as_of_generation"] == "g1"
 
 
+def test_cross_tenant_call_is_404() -> None:
+    plugin = ExamplePlugin()
+    resolver = MemoryResolver()
+    resolver.add(
+        ConnectionConfig(
+            org_id="acme",
+            provider="example",
+            connection_id="c1",
+            ingest_key_hash="",
+            secrets={"hmac_secret": "s"},
+        ),
+        "ik",
+    )
+    state = AppState(
+        settings=Settings(),
+        plugins=[LoadedPlugin(plugin)],
+        resolver=resolver,
+        objects=MemoryObjectStore(),
+        inbox=MemoryInbox(),
+        pointers=MemoryPointerStore(),
+        sink=MemoryRevisionSink(),
+        keys={
+            "k": ("acme", frozenset(KeyScope)),
+            "other": ("other", frozenset(KeyScope)),
+        },
+        rollup_generation="g1",
+    )
+    client = TestClient(create_app(Settings(), state))
+    raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
+    client.post(
+        "/v1/ingest/example/ik",
+        content=raw,
+        headers={"x-obsalt-example-signature": hmac_hex("s", raw)},
+    )
+    listed = client.get(
+        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
+    )
+    call_id = listed.json()["items"][0]["id"]
+    denied = client.get(f"/v1/calls/{call_id}", headers={"X-API-Key": "other"})
+    assert denied.status_code == 404
+
+
+def test_replay_redecodes_and_promotes() -> None:
+    client = _client()
+    raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
+    client.post(
+        "/v1/ingest/example/ik",
+        content=raw,
+        headers={"x-obsalt-example-signature": hmac_hex("s", raw)},
+    )
+    first = client.get(
+        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
+    ).json()["items"][0]
+    replayed = client.post("/v1/replay", json={}, headers={"X-API-Key": "k"})
+    assert replayed.status_code == 200
+    assert replayed.json()["replayed"] >= 1
+    second = client.get(
+        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
+    ).json()["items"][0]
+    assert second["id"] == first["id"]
+    assert second["revision"] != first["revision"]
+
+
+def test_evidence_is_fetchable_by_ref() -> None:
+    client = _client()
+    raw = (FIXTURES / "raw" / "call_ended.json").read_bytes()
+    client.post(
+        "/v1/ingest/example/ik",
+        content=raw,
+        headers={"x-obsalt-example-signature": hmac_hex("s", raw)},
+    )
+    listed = client.get(
+        "/v1/calls?start=2020-01-01T00:00:00Z&end=2030-01-01T00:00:00Z",
+        headers={"X-API-Key": "k"},
+    )
+    call = listed.json()["items"][0]
+    detail = client.get(f"/v1/calls/{call['id']}", headers={"X-API-Key": "k"}).json()
+    text_ref = detail["turns"][0]["text_ref"]
+    assert text_ref
+    ev = client.get(f"/v1/calls/{call['id']}/evidence/{text_ref}", headers={"X-API-Key": "k"})
+    assert ev.status_code == 200
+    assert ev.content
+
+
 def test_login_sets_httponly_session_cookie() -> None:
     client = _client()
     res = client.post("/v1/ui/login", data={"api_key": "k"}, follow_redirects=False)

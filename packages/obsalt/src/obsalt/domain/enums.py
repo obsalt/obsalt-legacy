@@ -225,6 +225,7 @@ class ObservationalEventKind(StrEnum):
     INTERRUPTION = "interruption"
     UNKNOWN_OBSERVATIONAL = "unknown_observational"
     REJECTED_SYNCHRONOUS = "rejected_synchronous"
+    OTLP_BATCH = "otlp_batch"
 
 
 class VerifyOutcome(StrEnum):

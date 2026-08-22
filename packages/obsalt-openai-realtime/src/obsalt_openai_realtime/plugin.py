@@ -18,7 +18,7 @@ from obsalt.otel.conventions import (
     SPAN_USER_INPUT,
     genai_provider_name,
 )
-from obsalt.otel.s2s import decode_s2s_spans
+from obsalt.otel.s2s import decode_s2s_spans, instrument_s2s
 from obsalt.plugin.types import InstrumentedClient, PluginManifest, ReadableSpan, SdkConfig
 
 
@@ -47,7 +47,12 @@ class OpenAIRealtimePlugin:
     )
 
     def instrument(self, client: object, cfg: SdkConfig) -> InstrumentedClient:
-        return InstrumentedClient(client=client, notes="wraps OpenAI Realtime WebSocket; emit user_input/generation/playout spans")
+        return instrument_s2s(
+            client,
+            cfg,
+            provider="openai",
+            notes="wraps OpenAI Realtime WebSocket; emit user_input/generation/playout spans",
+        )
 
     def claims(self, span: ReadableSpan) -> int:
         if span.name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}:

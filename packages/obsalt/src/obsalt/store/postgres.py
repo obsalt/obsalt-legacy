@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,7 +17,6 @@ from obsalt.assemble.promote import RevisionPointerStore
 from obsalt.domain.enums import EnvelopeState, KeyScope, ObservationalEventKind
 from obsalt.domain.models import CallRevision, Rubric
 from obsalt.plugin.types import ConnectionConfig, RawEnvelope, TombstoneHints
-from obsalt.search.hybrid import TOKEN_RE
 from obsalt.security.secrets import decrypt_secret, encrypt_secret, hash_key
 from obsalt.util import new_id, utcnow
 
@@ -65,12 +63,10 @@ def _sql_statements(script: str) -> list[str]:
 
 
 def _embed_sync(text: str, dim: int = 256) -> list[float]:
-    values = [0.0] * dim
-    for token in TOKEN_RE.findall(text.lower()):
-        idx = int(hashlib.sha256(token.encode()).hexdigest(), 16) % dim
-        values[idx] += 1.0
-    norm = sum(v * v for v in values) ** 0.5 or 1.0
-    return [v / norm for v in values]
+    from obsalt.search.hybrid import OnnxEmbedder
+
+    embedder = OnnxEmbedder(dim=dim)
+    return embedder._project(embedder._bag.bag(text))
 
 
 def _envelope_from_row(row: dict[str, Any]) -> RawEnvelope:
@@ -356,6 +352,35 @@ class PostgresInbox:
             (envelope_id,),
         ).fetchone()
         return _envelope_from_row(row) if row else None
+
+    def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
+        rows = self._conn.execute(
+            "SELECT * FROM raw_envelopes WHERE org_id = %s ORDER BY received_at",
+            (org_id,),
+        ).fetchall()
+        return [_envelope_from_row(row) for row in rows]
+
+    def requeue(self, envelope_id: str) -> None:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                "SELECT state, org_id FROM raw_envelopes WHERE envelope_id = %s FOR UPDATE",
+                (envelope_id,),
+            ).fetchone()
+            if row is None or row["state"] == EnvelopeState.TOMBSTONED.value:
+                return
+            self._conn.execute(
+                "UPDATE raw_envelopes SET state = %s WHERE envelope_id = %s",
+                (EnvelopeState.QUEUED.value, envelope_id),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO outbox (envelope_id, org_id)
+                VALUES (%s, %s)
+                ON CONFLICT (envelope_id) DO UPDATE
+                SET available_at = now(), leased_until = NULL, lease_owner = NULL
+                """,
+                (envelope_id, row["org_id"]),
+            )
 
     def index_revision(self, revision: CallRevision, *, index_version: str = "1") -> None:
         PostgresSearchDocuments(self._conn).upsert_revision(revision, index_version=index_version)

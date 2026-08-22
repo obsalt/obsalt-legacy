@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import time
 from collections.abc import Mapping
 
@@ -80,6 +81,29 @@ def enforce_window(
         kind = VerifyOutcome.STALE if delta < 0 else VerifyOutcome.STALE
         return VerifyResult(outcome=kind, detail=f"timestamp outside ±{tolerance_seconds}s")
     return None
+
+
+def jwt_hs256_verify(token: str, secret: str) -> dict[str, object] | None:
+    """Minimal HS256 JWT validation for plugin composition. Fail closed."""
+    try:
+        header_b64, payload_b64, sig_b64 = token.split(".")
+    except ValueError:
+        return None
+    signing = f"{header_b64}.{payload_b64}".encode("ascii")
+    expected = hmac.new(secret.encode("utf-8"), signing, hashlib.sha256).digest()
+    pad = "=" * (-len(sig_b64) % 4)
+    try:
+        provided = base64.urlsafe_b64decode(sig_b64 + pad)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(expected, provided):
+        return None
+    pad_p = "=" * (-len(payload_b64) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + pad_p))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def ed25519_verify(public_key: bytes, message: bytes, signature: bytes) -> bool:

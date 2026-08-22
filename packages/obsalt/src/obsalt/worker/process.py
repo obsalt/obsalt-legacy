@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import Any
 
 from obsalt.analysis.hallucination import extract_candidate_claims
 from obsalt.analysis.hangup import classify_provider_reason
@@ -10,13 +11,21 @@ from obsalt.analysis.tier1 import analyze_tier1
 from obsalt.assemble.assembler import Assembler
 from obsalt.assemble.facts import stamp_event
 from obsalt.assemble.promote import RevisionPointerStore, promote
+from obsalt.assemble.rehydrate import events_from_revision
 from obsalt.domain.enums import EnvelopeState
-from obsalt.domain.events import CallObserved, NormalizedEvent, OutcomeObserved
+from obsalt.domain.events import (
+    CallObserved,
+    GroundingObserved,
+    NormalizedEvent,
+    OutcomeObserved,
+    ToolObserved,
+    TurnObserved,
+)
 from obsalt.domain.models import AnalysisResult, CallRevision, FidelityDeclaration
 from obsalt.plugin.contract import WebhookSource
 from obsalt.plugin.types import RawEnvelope
 from obsalt.redact.choke import redact_events
-from obsalt.util import call_id_for, new_id
+from obsalt.util import call_id_for, canonical_json, new_id, sha256_bytes, sha256_text
 
 
 class RevisionSink:
@@ -62,6 +71,8 @@ def process_envelope(
     sink: RevisionSink,
     decoder_version: str,
     source: str,
+    objects: Any | None = None,
+    rooted: bool = True,
 ) -> CallRevision:
     if envelope.state is EnvelopeState.TOMBSTONED:
         raise RuntimeError("refusing to decode a tombstoned envelope")
@@ -76,7 +87,49 @@ def process_envelope(
         pointers=pointers,
         sink=sink,
         decoder_version=decoder_version,
+        objects=objects,
+        rooted=rooted,
     )
+
+
+def persist_evidence_blobs(events: Sequence[NormalizedEvent], objects: Any | None, org_id: str) -> None:
+    """Content-address evidence inside an org namespace. Never cross-tenant dedupe."""
+
+    if objects is None:
+        return
+    for event in events:
+        if isinstance(event, TurnObserved) and event.text:
+            digest = sha256_text(event.text)
+            objects.put(
+                f"org/{org_id}/evidence/turn/{digest}",
+                event.text.encode("utf-8"),
+                content_type="text/plain",
+            )
+        elif isinstance(event, GroundingObserved) and event.content:
+            digest = sha256_text(event.content)
+            objects.put(
+                f"org/{org_id}/evidence/grounding/{digest}",
+                event.content.encode("utf-8"),
+                content_type="text/plain",
+            )
+        elif isinstance(event, ToolObserved):
+            if event.args is not None:
+                payload = canonical_json(event.args).encode("utf-8")
+                objects.put(
+                    f"org/{org_id}/evidence/tool-args/{sha256_bytes(payload)}",
+                    payload,
+                    content_type="application/json",
+                )
+            if event.result is not None:
+                if isinstance(event.result, str):
+                    payload = event.result.encode("utf-8")
+                else:
+                    payload = canonical_json(event.result).encode("utf-8")
+                objects.put(
+                    f"org/{org_id}/evidence/tool-result/{sha256_bytes(payload)}",
+                    payload,
+                    content_type="application/json",
+                )
 
 
 def process_normalized_events(
@@ -90,6 +143,8 @@ def process_normalized_events(
     pointers: RevisionPointerStore,
     sink: RevisionSink,
     decoder_version: str,
+    objects: Any | None = None,
+    rooted: bool = True,
 ) -> CallRevision:
     run_id = new_id()
     resolved_source = source_call_id or _source_call_id(events) or envelope_id
@@ -111,10 +166,14 @@ def process_normalized_events(
             )
         )
     redacted = redact_events(stamped)
+    persist_evidence_blobs(redacted.events, objects, org_id)
     assembler = Assembler(declaration, decoder_version=decoder_version, processing_run_id=run_id)
     expected = pointers.get(org_id, call_id)
-    candidate = assembler.assemble(org_id, call_id, source, list(redacted.events))
-    frontier = frozenset(e.fact_id for e in redacted.events if e.fact_id)
+    previous = sink.get(org_id, call_id, expected) if expected else None
+    prior = events_from_revision(previous) if previous is not None else []
+    merged = [*prior, *redacted.events]
+    candidate = assembler.assemble(org_id, call_id, source, merged, rooted=rooted)
+    frontier = frozenset(event.fact_id for event in redacted.events if event.fact_id)
     analysis: list[AnalysisResult] = []
     if not candidate.conflicts:
         analysis = list(analyze_tier1(candidate))
@@ -135,12 +194,34 @@ def process_normalized_events(
                     payload={"candidates": claims},
                 )
             )
+
+    def rebase(attempt: CallRevision, current_id: str) -> CallRevision:
+        current = sink.get(org_id, call_id, current_id)
+        current_events = events_from_revision(current) if current is not None else []
+        rebuilt = assembler.assemble(
+            org_id,
+            call_id,
+            source,
+            [*current_events, *redacted.events],
+            rooted=rooted,
+        )
+        sink.write(rebuilt)
+        return rebuilt
+
     sink.write(candidate)
-    result = promote(pointers, candidate, expected=expected, fact_frontier=frontier)
-    if result.promoted:
+    result = promote(
+        pointers,
+        candidate,
+        expected=expected,
+        fact_frontier=frontier,
+        rebase=rebase,
+    )
+    promoted = sink.get(org_id, call_id, result.active_revision) if result.promoted else candidate
+    if result.promoted and promoted is not None:
         writer = getattr(sink, "write_analysis", None)
         if writer is not None:
-            writer(org_id, call_id, candidate.revision, analysis)
+            writer(org_id, call_id, promoted.revision, analysis)
+        return promoted
     return candidate
 
 

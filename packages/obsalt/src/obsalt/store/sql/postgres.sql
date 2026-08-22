@@ -153,6 +153,32 @@ CREATE TABLE IF NOT EXISTS users (
     UNIQUE (org_id, email)
 );
 
+CREATE TABLE IF NOT EXISTS trace_assemblies (
+    org_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL,
+    rooted BOOLEAN NOT NULL DEFAULT FALSE,
+    root_ended_at TIMESTAMPTZ,
+    call_id TEXT,
+    events JSONB NOT NULL DEFAULT '[]',
+    finalized_at TIMESTAMPTZ,
+    mapper_name TEXT,
+    unrooted BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (org_id, trace_id)
+);
+
+CREATE TABLE IF NOT EXISTS otlp_forward_outbox (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    object_key TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    destination_id TEXT,
+    available_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    delivered_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS webhook_outbox (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
@@ -183,4 +209,6 @@ ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAUL
 ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS error TEXT;
 ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE processing_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS mapper_name TEXT;
+ALTER TABLE trace_assemblies ADD COLUMN IF NOT EXISTS unrooted BOOLEAN NOT NULL DEFAULT FALSE;
 
