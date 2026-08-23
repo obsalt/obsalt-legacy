@@ -1,23 +1,17 @@
 # Operate
 
-**Who this is for:** this box is going near a network you do not
-entirely trust — or it already is.
-
-**Question this page answers:** how do I keep obsalt honest after Day 0?
-
 Supported path: `docker compose up -d && obsalt serve` plus
 `obsalt worker`. There is no SQLite or Postgres-only production mode.
 
 Replace every `change-me` and `dev-key` before the process is reachable
 from a network you do not trust. `/ready` reports `insecure_defaults`.
 
-```mermaid
-flowchart LR
-  health["/health · /ready · /metrics"] --> page["Page on inbox, DLQ, orphans, spend"]
-  raw["Raw blobs, 30 days"] --> replay["POST /v1/replay"]
-  del["Deletion request"] --> done["completed_at set"]
-  keys["POST /v1/keys/rotate"] --> overlap["Old + new accept for 24h"]
-```
+| Task | Where |
+| --- | --- |
+| Liveness / readiness / Prometheus | `/health`, `/ready`, `/metrics` |
+| Replay a retained raw payload | `POST /v1/replay` (raw kept ~30 days) |
+| Verified deletion | `POST /v1/privacy/deletion-requests` until `completed_at` is set |
+| Rotate a service key | `POST /v1/keys/rotate` (old + new accept for 24h by default) |
 
 ## Health
 
@@ -132,7 +126,7 @@ matrix. Cross-org identifiers return 404.
 Recoverable secrets are envelope-encrypted, narrowly decrypted,
 redacted from logs, audited on use, and never returned after creation.
 
-## What's next
+## Next
 
 Every `OBSALT_*` knob: [Configuration](reference/configuration.md).
 Tenancy and redaction: [Security](reference/security.md). Scripts:

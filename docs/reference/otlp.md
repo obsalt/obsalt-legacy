@@ -1,18 +1,8 @@
 # OTLP and semantic conventions
 
-**Who this is for:** you emit spans from an agent process, or you are
-changing `obsalt.otel`.
-
-**Question this page answers:** which attributes do we emit, which do
-we accept, and where is conversational text allowed to live?
-
-OTel GenAI conventions live in `open-telemetry/semantic-conventions-genai`,
-have **zero tagged releases**, and every attribute is `Development`.
-There is an active voice-agent convention effort (PRs #390, #393, #394)
-whose open questions are literally this product's architecture.
-
-Adopt what is merged. Track what is proposed. Own only what the spec
-explicitly leaves open.
+OTel GenAI conventions live in `open-telemetry/semantic-conventions-genai`
+and are still marked `Development`. Adopt what is merged. Track what is
+proposed. Own only what the spec explicitly leaves open.
 
 How to point an exporter at obsalt:
 [Connect your own agent](../connect-custom.md).
@@ -109,7 +99,7 @@ requires real clocks.
 | Wire protocol / settings | `otlp` |
 | HTTP path | `/v1/traces` |
 
-## What's next
+## Next
 
 Emitting from an agent: [Connect your own agent](../connect-custom.md).
 Why clocks matter: [Architecture](../architecture.md).

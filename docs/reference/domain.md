@@ -1,15 +1,8 @@
 # Domain model
 
-**Who this is for:** you are changing events, revisions, or
-measurements.
-
-**Question this page answers:** how do we separate a duration from a
-timeline, and what is a `CallRevision` made of?
-
-The core insight: **separate measurement from timeline.** That resolves
-the tension between “latency breakdown per call” (a required product
-capability) and “hosted providers ship durations without timestamps”
-(an unfixable data limitation).
+**Separate measurement from timeline.** Hosted providers often ship
+durations without timestamps. A duration is still a fact. A waterfall
+bar is not.
 
 ## Placement and fidelity
 
@@ -120,7 +113,7 @@ Provider-agnostic hangup reasons. Keep this list stable:
 `error_unknown`, `spam`, `concurrency`, `cancelled`, `completed`,
 `unknown`.
 
-## What's next
+## Next
 
-Why these types exist: [Architecture](../architecture.md). Words for
-non-engineers: [Glossary](glossary.md).
+Why these types exist: [Architecture](../architecture.md).
+Definitions: [Glossary](glossary.md).

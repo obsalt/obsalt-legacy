@@ -16,7 +16,8 @@ There is no SQLite mode. There is no require_auth=false.
 
 ## Read first
 
-- docs/product.md — six capabilities, who it is for, comparison tables
+- docs/concepts.md — voice-agent primer (STT/LLM/TTS, webhooks, OTLP)
+- docs/product.md — six capabilities, comparison tables, source fidelity
 - docs/architecture.md — pipeline + "The rules we will not break"
 - docs/console.md — what each source actually shows
 - docs/conventions.md — vocabulary and the rules that show up in code
@@ -34,12 +35,12 @@ There is no SQLite mode. There is no require_auth=false.
 ## Reference
 
 - docs/api.md — /v1 routes
-- docs/reference/configuration.md — OBSALT_* 
+- docs/reference/configuration.md — OBSALT_*
 - docs/reference/cli.md — obsalt command
 - docs/reference/domain.md — CallRevision, measurements, hangup taxonomy
 - docs/reference/otlp.md — span names, attributes, PII
 - docs/reference/security.md — tenancy, redaction, egress
-- docs/reference/glossary.md — chip, revision, provenance
+- docs/reference/glossary.md — chip, revision, provenance, STT/TTS
 
 ## Vocabulary to keep
 

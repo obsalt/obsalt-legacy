@@ -20,5 +20,6 @@ obsalt worker    # production: decode does not run on the webhook path
 This is a **service** (plus a small `VoiceCall` tracer for custom
 agents), not an SDK that replaces your voice platform.
 
-Start at the [documentation index](../../docs/README.md) or the
-[product guide](../../docs/product.md).
+Start at the [documentation index](../../docs/README.md),
+[Voice agents](../../docs/concepts.md) if the domain is new, or
+[What obsalt does](../../docs/product.md).

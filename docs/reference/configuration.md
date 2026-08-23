@@ -1,11 +1,5 @@
 # Configuration
 
-**Who this is for:** you are writing a `.env` or wondering which
-`OBSALT_*` knob does what.
-
-**Question this page answers:** what is the default, and what happens
-if I leave the shipped secrets in place?
-
 Every setting is an `OBSALT_*` environment variable. A `.env` file in
 the working directory is loaded. Extra keys are ignored.
 
@@ -95,7 +89,7 @@ intentional.
 are related and intentionally different prefixes: budget is a product
 control, judge is a plugin capability.
 
-## What's next
+## Next
 
 Flags on the command: [CLI](cli.md). Running this for real:
 [Operate](../ops.md). Tenancy implications:

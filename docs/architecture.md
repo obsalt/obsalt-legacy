@@ -1,87 +1,42 @@
 # Architecture
 
-**Who this is for:** people who will change obsalt — or who need to know
-why the console refuses to draw a pretty lie.
+This page is for people who will change obsalt. If you are connecting
+an agent, [Getting started](getting-started.md) and the connect guides
+are enough.
 
-**Question this page answers:** what happens to a call between raw bytes
-and a join view, and which rules are load-bearing?
-
-If you are connecting an agent, you do not need this page.
-[Getting started](getting-started.md) and the connect guides are enough.
-
-A call enters as raw bytes. It becomes something you can trust only
+A call enters as raw bytes. It becomes something you can query only
 after it is authenticated, persisted, decoded, redacted, assembled, and
 promoted. Nothing the provider is waiting on does the expensive work.
 
-```mermaid
-flowchart TB
-  subgraph sources ["Sources"]
-    WH["Webhook receiver<br/>signed, per-tenant"]
-    OTLP["OTLP receiver<br/>HTTP proto + JSON"]
-    SDK["VoiceCall in your process"]
-    PULL["Provider REST backfill"]
-  end
-
-  subgraph spine ["Durable spine"]
-    RAW["RawEnvelope blob<br/>object storage"]
-    INBOX[("Postgres inbox<br/>dedupe + outbox")]
-  end
-
-  subgraph core ["Core"]
-    DEC["Plugin decode"]
-    RED["Redaction choke point"]
-    ASM["Assembler<br/>immutable revision"]
-  end
-
-  subgraph store ["Stores"]
-    CH[("ClickHouse<br/>call facts")]
-    PG[("Postgres<br/>pointers, keys, search")]
-  end
-
-  subgraph out ["You look here"]
-    API["HTTP API"]
-    UI["Console"]
-    FWD["OTLP forward"]
-  end
-
-  WH --> RAW
-  OTLP --> RAW
-  SDK --> OTLP
-  PULL --> RAW
-  RAW --> INBOX --> DEC --> RED --> ASM
-  ASM --> CH
-  ASM --> PG
-  PG --> API --> UI
-  CH --> API
-  INBOX --> FWD
+```
+Sources                         Durable spine              You look here
+─────────                       ─────────────              ────────────
+Webhook (signed, per-tenant) ─┐
+OTLP HTTP (proto + JSON) ─────┼─▶ object store (raw) ─┐
+VoiceCall in your process ────┤   Postgres inbox      ├─▶ HTTP API + console
+Provider REST backfill ───────┘   + outbox            │
+                                                      │
+                              Worker: decode → redact → assemble
+                                      │
+                                      ├─▶ ClickHouse (call facts)
+                                      └─▶ Postgres (active-revision pointer)
 ```
 
-```mermaid
-sequenceDiagram
-  participant P as Provider / exporter
-  participant I as Ingest
-  participant O as Object store
-  participant PG as Postgres
-  participant W as Worker
-  participant CH as ClickHouse
-  participant UI as Console
+Sequence, in order:
 
-  P->>I: signed webhook or OTLP batch
-  I->>O: raw bytes
-  I->>PG: inbox + dedupe + outbox
-  I-->>P: ack
-  W->>PG: claim outbox
-  W->>W: decode → redact → assemble
-  W->>CH: complete candidate revision
-  W->>PG: CAS active-revision pointer
-  UI->>PG: read pointer
-  UI->>CH: read that exact revision
-```
+1. Provider or exporter POSTs a signed webhook or OTLP batch.
+2. Ingest writes raw bytes to object storage.
+3. Ingest commits inbox + dedupe + outbox in Postgres.
+4. Ingest acks the provider.
+5. Worker claims the outbox, decodes, redacts, assembles.
+6. Worker writes a complete candidate revision to ClickHouse.
+7. Worker CAS-promotes the Postgres active-revision pointer.
+8. Console reads the pointer, then that exact ClickHouse revision.
 
 ## The rules we will not break
 
 These are load-bearing. If one of them is wrong, the shape of the system
-changes. Attack them in review before anything else.
+changes.
 
 1. **Never draw what you did not measure.** A waterfall bar requires
    real start and end. Durations without clocks are chips or
@@ -132,7 +87,7 @@ changes. Attack them in review before anything else.
 | Index | active revision | lexical + vector search doc |
 | Analyze T2 | active revision | LLM eval / hallucination, if sampled |
 
-Receive, in order, and not negotiable:
+Receive, in order:
 
 1. Read **raw bytes**. Parsing first breaks signatures.
 2. Resolve `ingest_key` → org, plugin, encrypted credentials.
@@ -183,10 +138,8 @@ Late events create a **new** revision. History stays put.
 Queries always specify `(org_id, call_id, revision)`. Call-list cursors
 are `{call_id}:{revision}`.
 
-This split is intentional. Receive needs a transaction. A year of stage
-measurements does not belong in the same engine. We are not going to add
-a second storage backend to make `pip install && serve` look friendlier.
-Compose is the compromise.
+Receive needs a transaction. A year of stage measurements does not
+belong in the same engine. There is no second storage backend.
 
 Retention defaults: 30 days raw, 90 days transcripts, 400 days
 aggregates. Raw is unredacted on purpose — that is the replay tradeoff.
@@ -213,13 +166,12 @@ own fixtures contain the unconsumed field also fails.
 Speech-to-speech sources use `user_input` / `generation` / `playout`.
 Cascade STT/LLM/TTS rows must not appear as empty placeholders.
 
-## What we are not building next to this
+## Out of scope
 
 - A second storage backend, or SQLite “for demo.”
 - Waterfalls reconstructed from summary statistics.
 - Decode on the webhook request path.
-- A Langfuse-shaped ingest shim (tempting for Vapi; a moving proprietary
-  API). First-class webhooks and OTLP win.
+- A Langfuse-shaped ingest shim. First-class webhooks and OTLP win.
 - Tenant-uploaded plugins. Operator-installed wheels are trusted code,
   not a sandbox.
 - Deepgram as a first-party plugin. `StreamSource` is declared so a tap
@@ -227,7 +179,7 @@ Cascade STT/LLM/TTS rows must not appear as empty placeholders.
 - Bland as a first-party plugin. The contract would accept it; it is
   not in the committed set.
 
-## What's next
+## Next
 
 Domain types and hangup reasons: [domain](reference/domain.md).
 Span conventions: [OTLP](reference/otlp.md).

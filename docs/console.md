@@ -1,21 +1,16 @@
 # The console
 
-**Who this is for:** anyone who just opened `/v1/ui` after a live call —
-and anyone deciding whether obsalt is the right tool.
+The console is the product: `/v1/ui` after a live call has been
+decoded. The HTTP API is the same data without the HTML.
 
-**Question this page answers:** what am I looking at, and what will this
-source actually show me?
+Collection pages (calls, latency, hangups, quality, search) require a
+`start` and `end`. If the list is still empty, ingest has not promoted
+a revision yet — check `obsalt worker` and `GET /ready`.
 
-This is the product. The HTTP API is the same data without the HTML.
-If you are still deciding, read [Product](product.md) first — then come
-back here for the fidelity table. That table is why this page exists.
+New to the domain? [Voice agents](concepts.md). Deciding whether to
+run this? [What obsalt does](product.md).
 
-Open `/v1/ui` after a live call has been decoded. Collection pages
-(calls, latency, hangups, quality, search) require a `start` and `end`.
-If the list is still empty, ingest has not promoted a revision yet —
-check `obsalt worker` and `GET /ready`.
-
-## Seven screens. That is the surface.
+## Screens
 
 There is no query builder and no custom dashboard. Fleet-wide
 infrastructure correlation is a link out to your OTLP backend.
@@ -27,25 +22,13 @@ infrastructure correlation is a link out to your OTLP backend.
 | **Latency** | Stage distributions and percentiles, by agent, over time. |
 | **Hangups** | Why calls ended, clustered, with last speaker, last user/agent text, and drill-through. |
 | **Quality** | Rubric results and hallucination flags. Missing output is never a pass. Agree or disagree on the review queue. |
-| **Search** | “Customers asking about refunds.” Semantic + filters. |
+| **Search** | Calls matching a question, plus filters. |
 | **Settings** | Connections, rubrics, retention, plugins, keys, users. |
 
-```mermaid
-flowchart LR
-  list["Calls"] --> detail["Call detail<br/>the join view"]
-  detail --> timeline["Timeline + chips"]
-  detail --> transcript["Transcript"]
-  detail --> tools["Tools"]
-  detail --> flags["Flags / evals"]
-  detail --> prov["Provenance"]
-```
-
-### Call detail — the join view
-
-This is the page you open when a call went wrong.
+Call detail is the join view:
 
 - **Timeline.** Turn bars when we have turn clocks. A stage waterfall
-  **only** from `INTERVAL` measurements (real start and end). Unplaced
+  **only** from measurements with real start and end. Unplaced
   durations are chips. Provider p50/p95 are labelled aggregates, never
   mixed into sample percentiles.
 - **Transcript.** Speaker + text from the assembled revision.
@@ -53,10 +36,10 @@ This is the page you open when a call went wrong.
 - **Flags / evals.** Deterministic flags on every call. LLM evals when
   you request them or a sample/budget allows. “Evaluate this call” is on
   the page.
-- **Provenance / coverage.** The honest panel. For every signal:
-  present, absent, unsupported, redacted, or decode failed — with a
-  reason and a source path. This is how you tell “Vapi never sent VAD
-  clocks” from “our decoder dropped a field.”
+- **Provenance / coverage.** For every signal: present, absent,
+  unsupported, redacted, or decode failed — with a reason and a source
+  path. This is how you tell “Vapi never sent VAD clocks” from “our
+  decoder dropped a field.”
 
 Fidelity on the call is derived from what landed, not from a sticker on
 the plugin:
@@ -83,9 +66,9 @@ labelled gauge, not a span width.
 
 ## What each source will show you
 
-This is the table people skip, then file a bug. Read your row.
+Read your row before you expect a waterfall.
 
-| Source | How it arrives | Transcript | Hangup | Tools | Stage waterfall | Latency you *will* see |
+| Source | How it arrives | Transcript | Hangup | Tools | Stage waterfall | Latency you will see |
 | --- | --- | --- | --- | --- | --- | --- |
 | **Vapi** | Webhook | Yes | Yes | Yes, no duration | **No** | Per-turn STT/LLM/TTS/e2e/endpointing as chips (ms, unplaced). Interruptions, confidence, cost, recording when sent. |
 | **Retell** | Webhook | Yes, words in **seconds** | Yes | Yes, no duration | **No** | Call-level p50/p95 as aggregates. Word-ish turn intervals. Transport RTT when sent. |
@@ -112,10 +95,9 @@ is empty, evals that need it fail closed — they do not silently pass.
 | `decode_failed` | The payload had something we could not parse. Replay after a plugin fix. |
 
 `provider_reported` vs `obsalt_derived` travels with every number.
-Derived values carry the derivation (for example a turn gap). We do not
-hide that.
+Derived values carry the derivation (for example a turn gap).
 
-## Settings you will actually use
+## Settings you will use
 
 - **Connections** — the ingest keys you already created. Secrets never
   come back out.
@@ -126,15 +108,15 @@ hide that.
 - **Keys / users** — scopes `ingest`, `read`, `analyze`, `admin`. Roles
   `owner`, `admin`, `analyst`, `reviewer`.
 
-## If the call is “wrong”
+## If the call looks wrong
 
-1. Provenance first. Unsupported vs decode_failed is the whole game.
+1. Provenance first. Unsupported vs decode_failed is the fork.
 2. `GET /ready` — inbox age, outbox depth, DLQ, orphan blobs.
 3. `GET /v1/plugins` — is the plugin even loaded?
 4. `obsalt parse payload.json --provider vapi` — decode without ingesting.
 5. `POST /v1/replay` if the raw blob is still in the horizon.
 
-## What's next
+## Next
 
 Something looks off: [Troubleshooting](troubleshooting.md). You want
 scripts instead of HTML: [HTTP API](api.md). This is going to
