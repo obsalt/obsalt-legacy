@@ -1,16 +1,7 @@
 # HTTP API
 
-**Who this is for:** you want the same data as the console, without the
-HTML — scripts, exporters, the occasional 2 a.m. curl.
-
-**Question this page answers:** which `/v1` route, which header, which
-body field?
-
 The console is HTML over these routes. Scripts use `X-API-Key`.
 Interactive OpenAPI (same service): http://localhost:8080/docs.
-
-Paths live under `/v1` because HTTP APIs need a prefix, not because the
-product has a public release number.
 
 Collection list endpoints need a bounded `start` and `end`. Cursors are
 `{call_id}:{revision}`. Fleet responses carry one `as_of_generation`.
@@ -245,7 +236,7 @@ Call detail includes provenance and coverage. Timeline includes
 `timeline_fidelity` derived from the measurements that are actually
 there.
 
-## What's next
+## Next
 
-What those payloads mean in product language: [Product](product.md) and
+What those payloads mean: [What obsalt does](product.md) and
 [the console](console.md). Operating the box: [Operate](ops.md).

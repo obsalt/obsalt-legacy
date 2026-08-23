@@ -1,25 +1,20 @@
 # Connect your own agent
 
-**Who this is for:** **your process** owns the pipeline — Pipecat,
+Use this page when **your process** owns the pipeline — Pipecat,
 LiveKit, OpenAI Realtime, Gemini Live, or anything you wrap with
 `VoiceCall`.
 
-**Question this page answers:** how do I emit OTLP that obsalt will
-recognize, and how do I not invent a private JSON envelope?
-
-obsalt receives OTLP. It does not invent a private “POST us a snapshot”
-SDK. That path is gone on purpose.
-
-```mermaid
-flowchart TB
-  agent["Your agent process<br/>OpenTelemetry exporter"] --> traces["POST /v1/traces<br/>X-API-Key: ingest-scoped key"]
-  traces --> raw["Raw archive + inbox"]
-  raw --> fwd["Durable forward → Tempo / Datadog / Grafana"]
-  raw --> worker["Worker maps spans → console"]
-```
+obsalt receives **OTLP** (OpenTelemetry traces). There is no private
+“POST us a JSON snapshot of the call” SDK. Hosted platforms use
+webhooks instead — see [Connect a hosted platform](connect-hosted.md).
 
 Do not also fire a hosted-platform webhook for the same call. You will
-get two records that do not join, and you will not know which clock won.
+get two records that do not join.
+
+New to OTLP? Your agent already (or can) emit spans that say when STT,
+the model, TTS, and tools started and ended. obsalt stores those spans,
+maps them into a call, and can forward them to Tempo or Grafana. See
+[Voice agents](concepts.md).
 
 ## 1. Install the mapper
 
@@ -157,7 +152,7 @@ preserved (trace id, span id, parent, timestamps). Destination failures
 do not fail the ingest ack. Provider aggregate latency is exported as
 **metrics**, not as span widths.
 
-## What's next
+## Next
 
 [The console](console.md). If traces never appear:
 [Troubleshooting](troubleshooting.md). Span names and PII attributes:

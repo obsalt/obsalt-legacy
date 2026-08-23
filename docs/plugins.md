@@ -1,16 +1,8 @@
 # Write a plugin
 
-**Who this is for:** you are adding a source obsalt does not ship — or
-you are changing a first-party decoder and need the contract in one
-place.
-
-**Question this page answers:** what does a plugin have to implement,
-and how do we know it is not lying?
-
 Core ships no providers. A plugin is a separately installable package on
 the `obsalt.plugins` entry-point group. First-party providers use that
-**same** group. If you need a privileged path, the public API is already
-rotting.
+**same** group.
 
 Plugins are **trusted, operator-installed code**. They are pinned and
 inventoried. Loading isolates version mismatches and ordinary
@@ -145,7 +137,7 @@ obsalt schema-drift --all
 Review the golden diff. Subclass `obsalt-testkit` conformance classes.
 Skipping a required test needs an explicit marker and a written reason.
 
-Units that have already hurt people, so test them:
+Units that have caused real decode bugs — test them:
 
 - Retell `words[].start/end` are **seconds**.
 - Vapi turn-latency fields are milliseconds and **unplaced**. Published
@@ -166,7 +158,7 @@ Units that have already hurt people, so test them:
 | `obsalt-openai-realtime` | `openai_realtime` | SDK + S2S mapper |
 | `obsalt-gemini-live` | `gemini_live` | SDK + S2S mapper |
 
-## What's next
+## Next
 
 How a user connects the thing you just wrote:
 [connect-hosted](connect-hosted.md) or

@@ -1,13 +1,8 @@
 # Troubleshooting
 
-**Who this is for:** the console is empty, the webhook bounced, or
-someone filed “waterfall missing.”
-
-**Question this page answers:** what is actually broken?
-
 If you are still installing, start at
-[Getting started](getting-started.md). Symptoms first. Run these three
-before you read further:
+[Getting started](getting-started.md). Run these three before you read
+further:
 
 ```bash
 obsalt doctor
@@ -98,18 +93,18 @@ appends `/v1/traces` for you.
 
 ---
 
-## “The waterfall is missing”
+## The waterfall is missing
 
 Read your row in [the console](console.md) table before filing a bug.
 
 - **Vapi / Retell / Cartesia:** no stage waterfall. Chips and aggregates
-  only. That is T1: we do not draw what we did not measure.
+  only. obsalt does not draw what it did not measure.
 - **ElevenLabs post-call JSON:** whole-second anchors, not millisecond
   bars.
 - **Pipecat / LiveKit:** waterfall only where **your** spans have real
   start and end. Empty cascade stages are a bug in the emitter.
 - **Realtime / Gemini:** `user_input` / `generation` / `playout` only.
-  We will not invent STT / LLM / TTS.
+  obsalt will not invent STT / LLM / TTS.
 
 Provenance statuses:
 

@@ -1,12 +1,35 @@
 # Glossary
 
-**Who this is for:** you hit a word on another page and want the short
-definition, not the essay.
+Short definitions. For a walkthrough of the domain, start at
+[Voice agents](../concepts.md).
 
-**Question this page answers:** what do we mean when we say chip,
-revision, provenance?
+## Voice-agent terms
 
-## If you are not an engineer
+- **Voice agent** — Software that talks to a person on a live phone
+  call or in a browser. Not a text chatbot.
+- **Cascade** — The usual pipeline: speech-to-text → language model →
+  text-to-speech.
+- **Speech-to-speech (S2S)** — One model hears audio and produces
+  audio (OpenAI Realtime, Gemini Live). No STT / LLM / TTS split.
+- **STT** — Speech-to-text. Turns caller audio into words.
+- **LLM** — The model that decides the next reply and may call tools.
+- **TTS** — Text-to-speech. Turns the reply into audio.
+- **Turn** — One caller utterance plus the agent’s reply.
+- **Tool / function call** — An API the agent invokes mid-call
+  (lookup, book, refund).
+- **Webhook** — HTTP POST from a hosted platform to obsalt with a call
+  payload.
+- **OTLP** — OpenTelemetry protocol. Custom agents emit spans to
+  `/v1/traces`. Not an obsalt server.
+- **Hosted platform** — Vapi, Retell, ElevenLabs, Cartesia. They POST
+  a webhook. You do not import `VoiceCall`.
+- **Barge-in / interruption** — The caller spoke over the agent. Taken
+  only from an explicit signal, never inferred from “user spoke after
+  agent.”
+- **TTFB / TTFA** — Time to first byte / time to first audio. Often
+  sent as a duration without stage clocks.
+
+## Product terms
 
 - **Call** — One live conversation. The console row you click.
 - **Chip** — A duration we *measured* but cannot place on a timeline
@@ -18,10 +41,10 @@ revision, provenance?
   that hallucination detection is allowed to trust.
 - **Hangup** — Why the call ended, in a stable taxonomy (`user_hangup`,
   `silence_timeout`, …), plus the original provider code.
-- **Hosted platform** — Vapi, Retell, ElevenLabs, Cartesia. They POST a
-  webhook. You do not import `VoiceCall`.
 - **Ingest key** — The secret in the webhook URL. Shown once. Per
   connection, per tenant.
+- **Plugin** — A separately installed package that knows one source.
+  Core ships none.
 - **Provenance** — Where a number came from: the provider sent it, or
   obsalt derived it, or it is absent / unsupported / redacted / failed
   to decode.
@@ -30,7 +53,7 @@ revision, provenance?
 - **Waterfall** — Stage bars drawn only from real start and end
   timestamps. Hosted platforms usually cannot supply this.
 
-## If you are going to change the code
+## Implementation terms
 
 - **AggregateMeasurement** — A provider-published statistic (p50, p95,
   …). Never mixed into sample-derived percentile rollups.
@@ -45,8 +68,6 @@ revision, provenance?
   associative, commutative, and idempotent.
 - **FidelityDeclaration** — What a plugin *can* produce. Actual call
   fidelity is derived from decode output.
-- **Grounding** — System prompt, knowledge, tool results, and caller
-  text used by hallucination detection.
 - **ingest_key** — Per-connection identifier in the webhook URL; hashed
   at rest.
 - **INTERVAL** — A `MeasurementPlacement` with real start and end. The
@@ -57,8 +78,6 @@ revision, provenance?
   on spans. Stripped by default.
 - **org_id** — Tenant boundary. Comes only from authenticated
   credentials.
-- **OTLP** — A protocol, not an obsalt server. The HTTP path is
-  `/v1/traces`.
 - **Provenance** — `provider_reported` or `obsalt_derived`, with source
   path or derivation.
 - **RawEnvelope** — Verbatim inbound bytes plus inbox metadata.
@@ -76,8 +95,8 @@ revision, provenance?
 - **VoiceCall** — A library class in your agent process. Emits OTLP.
   Not used for hosted-platform webhooks.
 
-## What's next
+## Next
 
-Still deciding: [Product](../product.md). Opening the UI:
+Still deciding: [What obsalt does](../product.md). Opening the UI:
 [The console](../console.md). Changing code:
 [Domain](domain.md).

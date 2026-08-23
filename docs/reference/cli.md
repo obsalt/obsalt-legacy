@@ -1,13 +1,7 @@
 # CLI
 
-**Who this is for:** you have `obsalt` on your PATH and want the flag
-list, not a product walkthrough.
-
-**Question this page answers:** which command, which exit code, which
-flag?
-
 Walkthroughs live in [getting started](../getting-started.md). This page
-is the lookup.
+is the flag list.
 
 ```
 obsalt [-V] <command>
@@ -49,7 +43,7 @@ a reviewed schema, fixture, and expected-output diff.
 Makefile wrappers: `make help`, `make up`, `make serve`, `make worker`,
 `make doctor`, `make test-unit`.
 
-## What's next
+## Next
 
 Every `OBSALT_*` setting: [Configuration](configuration.md).
 Something failed: [Troubleshooting](../troubleshooting.md).

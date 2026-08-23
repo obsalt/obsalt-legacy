@@ -1,32 +1,20 @@
 # Getting started
 
-**Who this is for:** you are going to run obsalt on a laptop or a
-dev box today.
+This page gets you a signed-in console on your machine. It does **not**
+connect a voice platform — that is the next page, once you know which
+kind of agent you have.
 
-**Question this page answers:** how do I get a signed-in console?
+An empty call list at the end is success. Fixtures in this repo are for
+tests. The console fills from live traffic.
 
-This does **not** connect a voice platform. That is the next page, once
-you know which kind of agent you have. An empty call list at the end is
-success. Fixtures in this repo are for tests. The console fills from
-live traffic.
+If voice agents are new, read [Voice agents](concepts.md) first.
 
-You will end with:
+## What you will have
 
 - Postgres, ClickHouse, Redis, and MinIO on localhost
 - the service on http://localhost:8080
-- a worker draining the outbox
+- a worker that decodes incoming calls
 - a browser session in the console
-
-```mermaid
-flowchart LR
-  prereq["Python 3.11 + Docker"] --> compose["docker compose up"]
-  compose --> init["obsalt init --write-env"]
-  init --> doctor["obsalt doctor"]
-  doctor --> serve["obsalt serve"]
-  serve --> worker["obsalt worker"]
-  worker --> ui["/v1/ui · sign in with dev-key"]
-  ui --> next["Connect one live agent"]
-```
 
 ## Prerequisites
 
@@ -80,7 +68,7 @@ every `change-me` and `dev-key` before the box is reachable from a
 network you do not trust. The committed example lists every `OBSALT_*`
 key; see [Configuration](reference/configuration.md).
 
-`obsalt demo` is the same compose stack with a loud banner: **not for
+`obsalt demo` is the same compose stack with a banner: **not for
 production, data is not durable.**
 
 ## Sign in
@@ -115,7 +103,8 @@ An empty call list is success. obsalt has nothing to show until a
 
 ## Words you will trip over
 
-Worth thirty seconds now. Full list: [Glossary](reference/glossary.md).
+Full list: [Glossary](reference/glossary.md). Background:
+[Voice agents](concepts.md).
 
 | Word | Means |
 | --- | --- |
@@ -124,7 +113,7 @@ Worth thirty seconds now. Full list: [Glossary](reference/glossary.md).
 | **Ingest key** | The secret in the webhook URL. Shown once. Per connection, per tenant. |
 | **Provenance** | Where a number came from — or why it is missing. |
 
-## What's next
+## Next
 
 obsalt is running. It has nothing to look at until a **live** agent
 sends it a call.
@@ -134,6 +123,5 @@ sends it a call.
 | Vapi, Retell, ElevenLabs, or Cartesia | [Connect a hosted platform](connect-hosted.md) |
 | Pipecat, LiveKit, OpenAI Realtime, or Gemini Live | [Connect your own agent](connect-custom.md) |
 
-After the first call lands, [The console](console.md) is the page that
-tells you what you are looking at — and what that provider will never
-send.
+After the first call lands, [The console](console.md) tells you what
+you are looking at — and what that provider will never send.

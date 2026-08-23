@@ -1,13 +1,7 @@
 # Security and tenancy
 
-**Who this is for:** you are reviewing tenancy, redaction, deletion, or
-egress — or you are about to put this on a network.
-
-**Question this page answers:** where does `org_id` come from, and what
-is the honest tradeoff on raw blobs?
-
-The PM-length version lives in [Product](../product.md). Operating
-deletion and rotation: [Operate](../ops.md).
+Short version: [What obsalt does](../product.md). Operating deletion
+and rotation: [Operate](../ops.md).
 
 ## Tenancy
 
@@ -48,12 +42,11 @@ Dedupe is a persisted Postgres table, not a short Redis TTL.
 ## Redaction and PII
 
 Redaction is synchronous, at one choke point, before durable write of
-normalized data. This improves on systems that mask in an async worker
-and therefore land unmasked payloads in blob storage first.
+normalized data. Queryable content is never written unmasked.
 
 Raw blobs are unredacted by definition: encrypted at rest, short
 retention, separately access-controlled, excluded from normal read
-paths. That is the honest tradeoff for replayability.
+paths. Replay needs the original bytes; query paths do not.
 
 Conversational content on spans lives under `obsalt.pii.*`. Default
 export strips it. The denylist is a test assertion.
@@ -109,7 +102,7 @@ The dead-letter queue references the raw envelope and carries only
 allowlisted diagnostics, decoder version, and error history — with an
 alert on insert, not just a log line.
 
-## What's next
+## Next
 
 Knobs: [Configuration](configuration.md). Day-to-day operations:
 [Operate](../ops.md).

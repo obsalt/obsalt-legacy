@@ -2,9 +2,8 @@
 
 ## I want to use obsalt
 
-Start at the [README](README.md). The trailhead for the rest of the
-docs is [docs/README.md](docs/README.md). This file is for changing the
-code.
+Start at the [README](README.md). The documentation index is
+[docs/README.md](docs/README.md). This file is for changing the code.
 
 ## I want to change the code
 

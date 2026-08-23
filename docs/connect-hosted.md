@@ -1,23 +1,21 @@
 # Connect a hosted platform
 
-**Who this is for:** Vapi, Retell, ElevenLabs, or Cartesia owns STT /
-LLM / TTS. You do **not** import `VoiceCall` for these calls.
+Use this page when **Vapi, Retell, ElevenLabs, or Cartesia** owns
+speech-to-text, the model, and text-to-speech. You configure the agent
+in their dashboard. They POST a signed webhook to obsalt after
+(or during) a call.
 
-**Question this page answers:** how do I get a signed webhook into
-obsalt, and what will I see when a live call lands?
-
-```mermaid
-flowchart TB
-  dash["Provider dashboard<br/>server URL / webhook URL"] --> post["POST /v1/ingest/{provider}/{ingest_key}"]
-  post --> ack["Ack immediately<br/>raw bytes already stored"]
-  ack --> worker["Worker decodes → redacts → assembles"]
-  worker --> ui["Console shows the call"]
-```
+Do **not** import `VoiceCall` for these calls. That tracer is for
+agents you run yourself — see [Connect your own agent](connect-custom.md).
 
 If you cannot answer “what is the start timestamp of the LLM stage on
 turn 3?”, you will not get a stage waterfall. You will still get a
-transcript, hangup, tools, evals, and honest latency chips. That is the
-hosted-platform product.
+transcript, hangup, tools, evals, and latency chips. That is expected
+for hosted platforms.
+
+New to webhooks? The platform sends an HTTP POST to a URL you give it.
+obsalt stores the raw body, acks immediately, and a worker decodes
+later. See [Voice agents](concepts.md).
 
 ## 1. Install the plugin
 
@@ -143,7 +141,7 @@ user grounding. If they send the OTLP-shaped webhook, a waterfall
 ## Cartesia Line
 
 **Auth.** Header `x-webhook-secret`, a plain shared secret. Weakest of
-the committed schemes; said here so you treat it that way.
+the committed schemes; treat it that way.
 
 ```bash
 curl -sS -X POST http://localhost:8080/v1/connections \
@@ -181,7 +179,7 @@ Replay cannot invent data past the raw or provider horizon.
 Webhooks are lossy. `POST /v1/backfill` pulls from the provider if that
 plugin implements `RestBackfill` (Vapi does).
 
-## What's next
+## Next
 
 [The console](console.md) is the page that tells you what you are
 looking at. If the list stays empty or the webhook fails:

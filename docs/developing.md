@@ -1,10 +1,5 @@
 # Developing
 
-**Who this is for:** you are going to change this repo.
-
-**Question this page answers:** where does the code live, what is the
-PR bar, and how do I add a source?
-
 If you are connecting a voice agent, you want
 [Getting started](getting-started.md), not this page.
 
@@ -155,7 +150,7 @@ schema + fixture + golden diff.
 - Re-introduce a private “POST us a JSON snapshot” SDK shape. Custom
   agents emit OTLP.
 
-## Known gaps (useful, not a roadmap ceremony)
+## Known gaps
 
 - `StreamSource` is declared. There is no first-party Deepgram tap.
 - Bland is not a first-party plugin.
@@ -164,7 +159,7 @@ schema + fixture + golden diff.
   session cookies.
 - Langfuse-shaped ingest is intentionally not implemented.
 
-## What's next
+## Next
 
 The rules a formatter cannot see: [Conventions](conventions.md).
 Why the pipeline looks like this: [Architecture](architecture.md).
