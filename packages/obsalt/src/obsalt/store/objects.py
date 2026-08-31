@@ -38,6 +38,9 @@ class S3ObjectStore:
             ContentType=content_type,
         )
 
+    def ping(self) -> None:
+        self._client.list_buckets()
+
     def get(self, key: str) -> bytes:
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=key)

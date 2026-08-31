@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 from obsalt.domain.models import CallRevision
+from obsalt.store.ports import RevisionPointerStore
 
 
 @dataclass
@@ -16,38 +19,7 @@ class PromotionResult:
     detail: str = ""
 
 
-class RevisionPointerStore:
-    """CAS store for (org_id, call_id) → active revision.
-
-    Production uses Postgres. Tests inject an in-memory implementation of this
-    protocol; that is not a second product storage backend.
-    """
-
-    def compare_and_swap(
-        self,
-        org_id: str,
-        call_id: str,
-        expected: str | None,
-        candidate: str,
-        *,
-        fact_frontier: frozenset[str],
-    ) -> bool:
-        raise NotImplementedError
-
-    def get(self, org_id: str, call_id: str) -> str | None:
-        raise NotImplementedError
-
-    def list_org(self, org_id: str) -> list[tuple[str, str]]:
-        raise NotImplementedError
-
-    def delete(self, org_id: str, call_id: str) -> None:
-        raise NotImplementedError
-
-    def frontier(self, org_id: str, call_id: str) -> frozenset[str]:
-        return frozenset()
-
-
-class MemoryPointerStore(RevisionPointerStore):
+class MemoryPointerStore:
     def __init__(self) -> None:
         self._ptrs: dict[tuple[str, str], str] = {}
         self._frontiers: dict[tuple[str, str], frozenset[str]] = {}
@@ -83,6 +55,24 @@ class MemoryPointerStore(RevisionPointerStore):
 
     def frontier(self, org_id: str, call_id: str) -> frozenset[str]:
         return self._frontiers.get((org_id, call_id), frozenset())
+
+    def update_summary(self, revision: CallRevision) -> None:
+        return None
+
+    def list_summaries(
+        self,
+        org_id: str,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        cursor: str | None = None,
+        limit: int = 50,
+        agent_id: str | None = None,
+        source: str | None = None,
+        outcome: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None] | None:
+        # No summary table. Callers hydrate from pointers + sink.
+        return None
 
 
 def promote(

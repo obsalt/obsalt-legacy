@@ -278,7 +278,7 @@ class AuthenticationConformanceTests:
         assert not result.ok
 
     def test_duplicate_singleton_headers_rejected(self) -> None:
-        singleton = getattr(self.plugin, "singleton_headers", frozenset())
+        singleton: frozenset[bytes] = getattr(self.plugin, "singleton_headers", frozenset())
         if not singleton:
             pytest.skip("plugin declares no singleton headers")
         name = next(iter(singleton))

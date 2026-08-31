@@ -1,0 +1,93 @@
+{% set bar = filter_bar|default(filters)|default({}) %}
+<form class="filters" method="get" action="{{ bar.action }}">
+  {% if bar.show_search %}
+  <label>Query
+    <input type="search" name="q" value="{{ bar.q|default('') }}" placeholder="refund, supervisor, order id"{% if bar.autofocus_search %} autofocus{% endif %} />
+  </label>
+  {% endif %}
+  <div class="range-presets" role="group" aria-label="Time range">
+    {% for key, label in (bar.preset_labels|default({})).items() %}
+    <a class="preset{% if bar.preset == key %} active{% endif %}" href="{{ (bar.preset_hrefs|default({})).get(key, bar.action) }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+  <label>Start (UTC) <input type="date" name="start" value="{{ bar.start_date|default('') }}" /></label>
+  <label>End (UTC) <input type="date" name="end" value="{{ bar.end_date|default('') }}" /></label>
+  {% if bar.show_source %}
+  <label>Source
+    <select name="source" onchange="this.form.submit()">
+      {% for value, label in bar.source_options|default([]) %}
+      <option value="{{ value }}" {% if bar.source == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if bar.show_agent %}
+  <label>Agent
+    <select name="agent_id" onchange="this.form.submit()">
+      {% for value, label in bar.agent_options|default([]) %}
+      <option value="{{ value }}" {% if bar.agent_id == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if bar.show_hangup %}
+  <label>Hangup
+    <select name="hangup_reason" onchange="this.form.submit()">
+      <option value="">Any</option>
+      {% for group in bar.hangup_groups|default([]) %}
+      <optgroup label="{{ group.label }}">
+        {% for value, label in group.options %}
+        <option value="{{ value }}" {% if bar.hangup_reason == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if bar.show_flag %}
+  <label>Flag
+    <select name="flag" onchange="this.form.submit()">
+      <option value="">Any</option>
+      {% for value, label in bar.flag_options|default([]) %}
+      <option value="{{ value }}" {% if bar.flag == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if bar.show_eval %}
+  <label>Eval
+    <select name="eval_result" onchange="this.form.submit()">
+      <option value="">Any</option>
+      {% for value, label in bar.eval_options|default([]) %}
+      <option value="{{ value }}" {% if bar.eval_result == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if bar.show_latency %}
+  <label>Latency ≥ (ms)
+    <input type="number" name="latency_ms" min="0" step="1" value="{{ bar.latency_ms|default('') }}" />
+  </label>
+  {% endif %}
+  <div class="filter-actions">
+    <button class="primary" type="submit">{{ bar.submit_label|default("Filter") }}</button>
+    <a class="muted reset" href="{{ bar.reset_href|default(bar.action) }}">Reset</a>
+  </div>
+</form>
+{% if bar.window_label %}
+<p class="muted window-label">{{ bar.window_label }}</p>
+{% endif %}
+{% if bar.examples %}
+<p class="muted">Try
+  {% for ex in bar.examples %}
+    <a href="{{ ex.href }}">{{ ex.label }}</a>{% if not loop.last %},{% endif %}
+  {% endfor %}
+</p>
+{% endif %}
+{% if bar.active_chips %}
+<p class="filter-chips">
+  {% for chip in bar.active_chips %}
+    <a href="{{ chip.href }}">{{ chip.label }} ×</a>
+  {% endfor %}
+</p>
+{% endif %}

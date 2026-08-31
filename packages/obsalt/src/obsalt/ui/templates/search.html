@@ -2,33 +2,26 @@
 {% block title %}obsalt — search{% endblock %}
 {% block content %}
   <h1>Search</h1>
-  <p class="muted">Hybrid lexical + vector over redacted transcripts. Results share tenant and structured filters. A time range is required.</p>
   {% if error %}
     <p class="decode_failed">{{ error }}</p>
   {% endif %}
-  <form class="filters" method="get" action="/v1/ui/search">
-    <label>Query <input name="q" value="{{ q|default('') }}" /></label>
-    <label>Agent <input name="agent_id" value="{{ filters.agent_id|default('') if filters is defined else '' }}" /></label>
-    <label>Source <input name="source" value="{{ filters.source|default('') if filters is defined else '' }}" /></label>
-    <label>Start <input name="start" value="{{ filters.start|default('') if filters is defined else '' }}" /></label>
-    <label>End <input name="end" value="{{ filters.end|default('') if filters is defined else '' }}" /></label>
-    <button type="submit">Search</button>
-  </form>
-  <table>
-    <thead>
-      <tr><th>Call</th><th>Agent</th><th>Source</th><th>Score</th></tr>
-    </thead>
-    <tbody>
-      {% for hit in results|default(items|default([])) %}
-      <tr>
-        <td><a href="/v1/ui/calls/{{ hit.call_id }}">{{ hit.call_id }}</a></td>
-        <td>{{ hit.agent_id }}</td>
-        <td>{{ hit.source }}</td>
-        <td>{{ hit.score }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="4">{% if q %}No matching calls.{% else %}Enter a query.{% endif %}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% set filter_bar = filter_bar|default(filters)|default({}) %}
+  {% include "_filter_bar.html" %}
+  {% if results %}
+  <div class="call-list">
+    {% for hit in results %}
+      {% with row=hit %}{% include "_call_row.html" %}{% endwith %}
+    {% endfor %}
+  </div>
+  {% elif q %}
+  <div class="empty">
+    <h2>No matching calls.</h2>
+    <p>Nothing in this range matched “{{ q }}”. Try a broader window, or search for a phrase the caller actually used.</p>
+  </div>
+  {% else %}
+  <div class="empty">
+    <h2>Find a conversation</h2>
+    <p>Search redacted transcripts in this window. Use a phrase the caller actually said — refund, supervisor, order id.</p>
+  </div>
+  {% endif %}
 {% endblock %}

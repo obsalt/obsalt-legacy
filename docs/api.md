@@ -2,6 +2,7 @@
 
 The console is HTML over these routes. Scripts use `X-API-Key`.
 Interactive OpenAPI (same service): http://localhost:8080/docs.
+Human product docs: [What obsalt does](product.md).
 
 Collection list endpoints need a bounded `start` and `end`. Cursors are
 `{call_id}:{revision}`. Fleet responses carry one `as_of_generation`.
@@ -23,8 +24,8 @@ There is no “auth off.” An empty secret is `missing_credential`.
 | --- | --- | --- |
 | Read calls, search, fleet, plugins | reviewer | `read` |
 | Run evals, write rubrics | analyst | `analyze` |
-| Connections, replay, backfill, deletion, webhooks, export | admin | `admin` |
-| Create users, rotate keys | owner | `admin` |
+| Connections, replay, backfill, deletion, webhooks, export, eval runners | admin | `admin` |
+| Rotate keys | owner | `admin` |
 
 Owner vs admin cannot be inferred from the four scopes alone. The
 bootstrap key is owner. See [security](reference/security.md).
@@ -47,27 +48,44 @@ GET    /v1/tools
 GET    /v1/quality
 POST   /v1/calls/{id}/analyze
 POST   /v1/quality/review
-POST   /v1/rubrics/{id}/calibrate
 
 CRUD   /v1/rubrics
+CRUD   /v1/eval-runners                     API key never returned after save
+PUT    /v1/eval-policy
+POST   /v1/eval-runners/{id}/ping
 CRUD   /v1/connections                      ingest_key returned only at creation
 GET/POST /v1/outbound-webhooks              Standard Webhooks; secret at creation only
 POST   /v1/outbound-webhooks/{id}/rotate
 POST   /v1/keys/rotate
-GET/POST/DELETE /v1/users
 
 POST   /v1/replay
 POST   /v1/backfill
 POST   /v1/privacy/deletion-requests
-GET    /v1/retention
-POST   /v1/export
 GET    /v1/plugins
 
 GET    /health  /ready  /metrics
 GET/POST /v1/ui/login
+POST   /v1/ui/logout
 GET    /v1/ui  /v1/ui/calls/{id}  /v1/ui/latency  /v1/ui/hangups
 GET    /v1/ui/quality  /v1/ui/search  /v1/ui/settings
+POST   /v1/ui/replay   /v1/ui/seed
+POST   /v1/ui/calls/{id}/analyze  /replay  /delete
+POST   /v1/ui/quality/review
+POST   /v1/ui/connections  /{id}/delete  /{id}/backfill
+POST   /v1/ui/rubrics  /{id}  /{id}/delete
+POST   /v1/ui/eval-runners  /{id}/delete  /{id}/ping
+POST   /v1/ui/eval-policy
+POST   /v1/ui/keys/rotate
+POST   /v1/ui/outbound-webhooks  /{id}/rotate
+POST   /v1/ui/privacy/deletion-requests
+POST   /v1/ui/export
+POST   /v1/ui/dlq/purge
 ```
+
+Browser writes are CSRF form POSTs. Secrets (ingest key, rotated API
+key, `whsec_`) return a one-shot HTML page, never a query string.
+`POST /v1/ui/export` is a `calls.jsonl` download, not a server `dest`.
+`POST /v1/ui/seed` refuses production.
 
 ## Worked examples
 
@@ -108,8 +126,9 @@ Optional filters: `agent_id`, `outcome`, `source`, `latency_ms`, `flag`,
 ```
 
 `GET /v1/calls/{id}` is the full `CallRevision` plus `analysis[]`.
-`GET /v1/calls/{id}/timeline` is the join-view payload: whether a stage
-waterfall may be drawn, unplaced chips, aggregates, and the reason.
+`GET /v1/calls/{id}/timeline` is the join-view
+payload: whether a stage waterfall may be drawn, unplaced chips,
+aggregates, and the reason.
 
 ### Search
 
@@ -125,7 +144,8 @@ Optional filters: `source`, `hangup_reason`.
 
 ### Connections
 
-`ingest_key` is shown **once**.
+`ingest_key` is shown **once**. `GET /v1/connections` returns `settings`
+(non-secret JSON) and `secret_fields` names, never secret values.
 
 ```bash
 curl -sS -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
@@ -146,8 +166,10 @@ Provider-specific secrets: [connect-hosted](connect-hosted.md).
 
 `POST /v1/calls/{id}/analyze` evaluates **every** rubric in the org
 (or hallucination entailment if none exist) and returns
-`{"items": [AnalysisResult, …]}`. A `$0` monthly budget blocks paid
-judges; the free heuristic may still run.
+`{"items": [AnalysisResult, …]}`. A `$0` monthly budget blocks paid judges. English rubrics stay
+`not_judged` until Settings → Evals has a runner, a cap > 0, and
+LLM evals enabled. Env `OBSALT_JUDGE_*` is bootstrap when the org
+has no runner row.
 
 ### Rubrics and evals
 
@@ -167,19 +189,15 @@ Analyze may return `state: "budget_blocked"` when
 `OBSALT_LLM_MONTHLY_BUDGET_USD` is exhausted (or still `0`). Missing
 judge output is never a pass.
 
-Calibrate a rubric with labeled calls:
-
-```bash
-curl -sS -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
-  -d '{"labeled":[{"call_id":"…","expected_pass":true}]}' \
-  "$BASE/v1/rubrics/$RUBRIC_ID/calibrate"
-```
-
 ### Fleet
 
 `GET /v1/latency`, `/v1/hangups`, `/v1/tools`, `/v1/quality` all require
 `start` and `end`. Each body includes `as_of_generation`. Quality
-exposes completed and eligible denominators.
+exposes confirmed detector flags, candidates, evidence-missing, and
+eval completed/eligible denominators. When the optional groundedness
+extra has run, the body also carries `groundedness`
+(`calls`, `span_count`, `not_judged`). Missing judge output is never a
+pass. There is no Faithfulness scorecard on this route.
 
 ### Replay, backfill, deletion
 
@@ -199,7 +217,7 @@ curl -sS -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 
 Deletion also accepts `source_call_id`, `caller` / `caller_token`, or
 `start`/`end`. Status `accepted` is not done. Done means `completed_at`
-is set. See [Operate](ops.md).
+is set. See [Operate](operate.md).
 
 ### Keys and outbound webhooks
 
@@ -239,4 +257,4 @@ there.
 ## Next
 
 What those payloads mean: [What obsalt does](product.md) and
-[the console](console.md). Operating the box: [Operate](ops.md).
+[the console](console.md). Operating the box: [Operate](operate.md).

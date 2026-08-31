@@ -13,6 +13,9 @@ dependencies = ["obsalt==0.0.0"]
 [project.entry-points."obsalt.plugins"]
 cartesia = "obsalt_cartesia.plugin:CartesiaPlugin"
 
+[tool.uv.sources]
+obsalt = { workspace = true }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

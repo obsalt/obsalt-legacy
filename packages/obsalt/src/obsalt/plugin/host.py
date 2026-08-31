@@ -4,7 +4,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterable
 from importlib.metadata import entry_points
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from obsalt._version import SUPPORTED_PLUGIN_API
 from obsalt.domain.enums import Capability
@@ -43,7 +43,7 @@ def invoke_with_deadline(
     error = box.get("error")
     if error is not None:
         raise error
-    return box["result"]
+    return cast("_T", box["result"])
 
 
 class LoadedPlugin:

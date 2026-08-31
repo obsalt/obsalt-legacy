@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import zlib
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from google.protobuf.json_format import Parse
@@ -78,7 +79,8 @@ def request_to_spans(req: ExportTraceServiceRequest) -> list[ReadableSpan]:
 
 
 def serialized_success() -> bytes:
-    return ExportTraceServiceResponse().SerializeToString()
+    payload: bytes = ExportTraceServiceResponse().SerializeToString()
+    return payload
 
 
 def serialized_partial_success(*, rejected: int, error_message: str) -> bytes:
@@ -86,7 +88,8 @@ def serialized_partial_success(*, rejected: int, error_message: str) -> bytes:
     response = ExportTraceServiceResponse()
     response.partial_success.rejected_spans = int(rejected)
     response.partial_success.error_message = error_message
-    return response.SerializeToString()
+    payload: bytes = response.SerializeToString()
+    return payload
 
 
 def decompress_body(raw: bytes, encoding: str | None) -> bytes:
@@ -103,7 +106,7 @@ def _decompress(raw: bytes, encoding: str | None) -> bytes:
     raise HTTPException(status_code=415, detail=f"unsupported content-encoding {encoding}")
 
 
-def _any_value(value) -> object:
+def _any_value(value: Any) -> object:
     kind = value.WhichOneof("value")
     if kind == "string_value":
         text = value.string_value

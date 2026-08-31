@@ -12,6 +12,8 @@ from opentelemetry.trace import Span
 from obsalt.otel.conventions import (
     AGENT_ID,
     CALL_ID,
+    OBSALT_HANGUP_PROVIDER_CODE,
+    OBSALT_HANGUP_REASON,
     PII_AGENT_TRANSCRIPT,
     PII_USER_TRANSCRIPT,
     PROVIDER_CALL_ID,
@@ -95,6 +97,12 @@ class VoiceCall:
         with tracer.start_as_current_span(SPAN_PLAYOUT) as span:
             yield span
 
+    def end(self, reason: str, *, provider_code: str | None = None) -> None:
+        """Record why the call ended. ``reason`` is a hangup taxonomy value."""
+        self._span.set_attribute(OBSALT_HANGUP_REASON, reason)
+        if provider_code:
+            self._span.set_attribute(OBSALT_HANGUP_PROVIDER_CODE, provider_code)
+
 
 class TurnHandle:
     def __init__(self, span: Span, index: int) -> None:
@@ -104,7 +112,11 @@ class TurnHandle:
     @contextmanager
     def stt(self, provider: str, *, fallback: bool = False) -> Iterator[StageHandle]:
         tracer = trace.get_tracer("obsalt")
-        attrs = {STT_PROVIDER: provider, STT_FALLBACK: fallback, TURN_INDEX: self.index}
+        attrs: dict[str, str | bool | int] = {
+            STT_PROVIDER: provider,
+            STT_FALLBACK: fallback,
+            TURN_INDEX: self.index,
+        }
         with tracer.start_as_current_span(SPAN_STT_PROVIDER_ATTEMPT, attributes=attrs) as span:
             yield StageHandle(span)
 
@@ -127,7 +139,11 @@ class TurnHandle:
     @contextmanager
     def tool(self, name: str, tool_id: str) -> Iterator[StageHandle]:
         tracer = trace.get_tracer("obsalt")
-        attrs = {"gen_ai.tool.name": name, "gen_ai.tool.call.id": tool_id, TURN_INDEX: self.index}
+        attrs: dict[str, str | int] = {
+            "gen_ai.tool.name": name,
+            "gen_ai.tool.call.id": tool_id,
+            TURN_INDEX: self.index,
+        }
         with tracer.start_as_current_span(SPAN_TOOL, attributes=attrs) as span:
             yield StageHandle(span)
 

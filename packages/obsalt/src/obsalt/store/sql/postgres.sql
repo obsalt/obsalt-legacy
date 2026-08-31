@@ -146,15 +146,6 @@ CREATE TABLE IF NOT EXISTS processing_runs (
     finished_at TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    org_id TEXT NOT NULL REFERENCES orgs(id),
-    email TEXT NOT NULL,
-    role TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, email)
-);
-
 CREATE TABLE IF NOT EXISTS trace_assemblies (
     org_id TEXT NOT NULL,
     trace_id TEXT NOT NULL,
@@ -254,6 +245,9 @@ ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_cipher
 ALTER TABLE webhook_destinations ADD COLUMN IF NOT EXISTS previous_secret_expires_at TIMESTAMPTZ;
 ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_start TIMESTAMPTZ;
 ALTER TABLE tombstones ADD COLUMN IF NOT EXISTS range_end TIMESTAMPTZ;
+ALTER TABLE quality_reviews ADD COLUMN IF NOT EXISTS revision TEXT NOT NULL DEFAULT '';
+ALTER TABLE quality_reviews ADD COLUMN IF NOT EXISTS analyzer_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE quality_reviews ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS active_calls_org_started ON active_calls (org_id, started_at DESC, call_id DESC);
 
 CREATE TABLE IF NOT EXISTS org_spend (
@@ -263,4 +257,31 @@ CREATE TABLE IF NOT EXISTS org_spend (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, period)
 );
+
+CREATE TABLE IF NOT EXISTS eval_runners (
+    id TEXT PRIMARY KEY,
+    org_id TEXT NOT NULL REFERENCES orgs(id),
+    slot TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'openai_compatible',
+    base_url TEXT NOT NULL,
+    model TEXT NOT NULL,
+    api_key_ciphertext BYTEA NOT NULL,
+    allow_http_localhost BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, slot)
+);
+
+CREATE TABLE IF NOT EXISTS eval_policy (
+    org_id TEXT PRIMARY KEY REFERENCES orgs(id),
+    monthly_budget_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+    baseline_sample_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
+    llm_evals_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE eval_policy ADD COLUMN IF NOT EXISTS pack TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE eval_policy ADD COLUMN IF NOT EXISTS groundedness_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE eval_policy ADD COLUMN IF NOT EXISTS groundedness_sample_rate DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE rubrics ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'llm_judge';
+ALTER TABLE rubrics ADD COLUMN IF NOT EXISTS spec JSONB NOT NULL DEFAULT '{}';
 

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
-from obsalt.domain.enums import PipelineArchitecture, Stage
-from obsalt.domain.events import CallObserved, InterruptionObserved, StageObserved
+from obsalt.domain.enums import HangupReason, PipelineArchitecture, Speaker, Stage
+from obsalt.domain.events import (
+    CallObserved,
+    GroundingObserved,
+    InterruptionObserved,
+    OutcomeObserved,
+    StageObserved,
+    TurnObserved,
+)
 from obsalt.otel.conventions import (
     SPAN_GENERATION,
     SPAN_PLAYOUT,
@@ -77,6 +84,60 @@ def test_sdk_instrumentation_emits_s2s_spans() -> None:
     assert any(
         isinstance(event, StageObserved) and event.stage is Stage.USER_INPUT for event in events
     )
+
+
+def test_s2s_copies_agent_transcript_and_hangup() -> None:
+    spans = [
+        _span(
+            SPAN_USER_INPUT,
+            attrs={
+                "gen_ai.conversation.id": "c1",
+                "agent.id": "support",
+                "obsalt.pii.user_transcript": "I need a refund",
+                "obsalt.hangup.reason": "user_hangup",
+            },
+        ),
+        _span(
+            SPAN_GENERATION,
+            attrs={"obsalt.pii.agent_transcript": "I can help with that."},
+        ),
+        _span(SPAN_PLAYOUT),
+    ]
+    events = list(decode_s2s_spans(spans))
+    call = next(e for e in events if isinstance(e, CallObserved))
+    assert call.agent_id == "support"
+    outcome = next(e for e in events if isinstance(e, OutcomeObserved))
+    assert outcome.reason is HangupReason.USER_HANGUP
+    turns = [e for e in events if isinstance(e, TurnObserved)]
+    assert turns[0].speaker is Speaker.USER
+    assert turns[0].text == "I need a refund"
+    assert turns[1].speaker is Speaker.AGENT
+    assert any(isinstance(e, GroundingObserved) for e in events)
+    stages = [e.stage for e in events if isinstance(e, StageObserved)]
+    assert Stage.STT not in stages
+
+
+def test_provider_name_beats_generic_s2s_span_claim() -> None:
+    from obsalt.otel.mappers import MapperRegistry
+    from obsalt.plugin.host import LoadedPlugin
+
+    openai = OpenAIRealtimePlugin()
+    gemini = GeminiLivePlugin()
+    openai_span = _span(
+        SPAN_USER_INPUT,
+        attrs={"gen_ai.provider.name": "openai", "gen_ai.conversation.id": "oai"},
+    )
+    gemini_span = _span(
+        SPAN_USER_INPUT,
+        attrs={"gen_ai.provider.name": "gemini", "gen_ai.conversation.id": "gem"},
+    )
+    assert openai.claims(openai_span) > gemini.claims(openai_span)
+    assert gemini.claims(gemini_span) > openai.claims(gemini_span)
+    registry = MapperRegistry(
+        [LoadedPlugin(gemini), LoadedPlugin(openai)],
+    )
+    assert registry.pick(openai_span).name == "openai_realtime"
+    assert registry.pick(gemini_span).name == "gemini_live"
 
 
 def test_openai_and_gemini_plugins_use_s2s_shape() -> None:

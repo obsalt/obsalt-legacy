@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from obsalt.domain.enums import EnvelopeState, ObservationalEventKind, VerifyOutcome
+from obsalt.domain.enums import EnvelopeState, JudgeVerdict, ObservationalEventKind, VerifyOutcome
 from obsalt.util import utcnow
 
 
@@ -120,12 +120,19 @@ class JudgeRequest(BaseModel):
 
 class JudgeResult(BaseModel):
     score: float
-    passed: bool
+    passed: bool | None = None
+    verdict: JudgeVerdict = JudgeVerdict.FAIL
     rationale: str
     quotes: list[str] = Field(default_factory=list)
     model: str | None = None
     prompt_version: str = "1"
     cost_usd: float | None = None
+
+    @model_validator(mode="after")
+    def _align_verdict(self) -> JudgeResult:
+        if self.passed is True and self.verdict is JudgeVerdict.FAIL:
+            self.verdict = JudgeVerdict.PASS
+        return self
 
 
 class RedactedDocument(BaseModel):

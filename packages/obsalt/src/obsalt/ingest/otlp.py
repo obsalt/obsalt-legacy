@@ -96,9 +96,7 @@ def receive_otlp_batch(
     stored, created = inbox.accept(envelope, tombstone_hints=hints)
     if conflict:
         stored.state = EnvelopeState.FAILED
-        drop = getattr(inbox, "drop_outbox", None)
-        if callable(drop):
-            drop(stored.envelope_id)
+        inbox.drop_outbox(stored.envelope_id)
         failures = getattr(inbox, "failures", None)
         if isinstance(failures, dict):
             failures[stored.envelope_id] = "span identity conflict"

@@ -10,7 +10,6 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from obsalt.analysis.hangup import customer_loss_score
 from obsalt.assemble.facts import ASSEMBLER_VERSION, fact_id_for
 from obsalt.domain.coverage import architecture_of, derive_coverage, derive_fidelity
 from obsalt.domain.enums import (
@@ -117,7 +116,6 @@ class Assembler:
         source: str,
         events: Sequence[NormalizedEvent],
         *,
-        base_revision: str | None = None,
         rooted: bool = True,
     ) -> CallRevision:
         accepted, conflicts, retracted = fold_facts(events)
@@ -168,7 +166,13 @@ class Assembler:
                 if last_agent is not None:
                     hangup.last_agent_text_ref = last_agent.text_ref
 
-        started, ended, derived_provenance = _lifecycle_bounds(call_obs, outcome, turns)
+        started, ended, derived_provenance = _lifecycle_bounds(
+            call_obs,
+            outcome,
+            turns,
+            stages,
+            ended_reported=bool(outcome is not None or finalized),
+        )
         status = CallStatus.ENDED if finalized or hangup else CallStatus.ONGOING
         agent_id = call_obs.agent_id if call_obs and call_obs.agent_id else "unknown"
         cost = call_obs.cost if call_obs else (outcome.cost if outcome else None)
@@ -226,10 +230,6 @@ class Assembler:
             accepted_fact_ids=sorted(fid for fid in accepted if fid not in retracted),
             created_at=utcnow(),
         )
-        if revision.hangup is not None:
-            score, reasons = customer_loss_score(revision)
-            revision.hangup.loss_score = score
-            revision.hangup.loss_reasons = reasons
         return revision
 
 
@@ -332,13 +332,16 @@ def _lifecycle_bounds(
     call_obs: CallObserved | None,
     outcome: OutcomeObserved | None,
     turns: Sequence[Turn],
+    stages: Sequence[StageMeasurement] = (),
+    *,
+    ended_reported: bool = False,
 ) -> tuple[datetime | None, datetime | None, dict[str, ProvenanceStamp]]:
-    """Call clocks come from CallObserved / OutcomeObserved, then earliest turn.
+    """Call clocks come from CallObserved / OutcomeObserved, then turns, then stages.
 
-    A missing call-level start is not unknown when turns already carry
-    provider timestamps. Deriving it keeps list, search, and rollups on
-    the same clock as ``in_range``. Call end is never inferred from the
-    last turn — that would invent an end for an ongoing call.
+    A missing call-level start is not unknown when turns or stage intervals
+    already carry provider timestamps. Deriving it keeps list, search, and
+    rollups on the same clock as ``in_range``. Call end is inferred only when
+    an ending was reported (hangup or finalized) — never for an ongoing call.
     """
     started = call_obs.started_at if call_obs is not None else None
     ended = call_obs.ended_at if call_obs is not None else None
@@ -353,6 +356,37 @@ def _lifecycle_bounds(
                 provenance=Provenance.OBSALT_DERIVED,
                 derivation="min(turn.started_at)",
             )
+        else:
+            stage_starts = [row.started_at for row in stages if row.started_at is not None]
+            if stage_starts:
+                started = min(stage_starts)
+                extra["started_at"] = ProvenanceStamp(
+                    provenance=Provenance.OBSALT_DERIVED,
+                    derivation="min(stage.started_at)",
+                )
+    if ended is None and ended_reported:
+        turn_ends = [end for turn in turns if (end := turn.ended_at or turn.started_at) is not None]
+        if turn_ends:
+            ended = max(turn_ends)
+            extra["ended_at"] = ProvenanceStamp(
+                provenance=Provenance.OBSALT_DERIVED,
+                derivation="max(turn.ended_at) after ending reported",
+            )
+        else:
+            stage_ends = [
+                end for row in stages if (end := row.ended_at or row.started_at) is not None
+            ]
+            if stage_ends:
+                ended = max(stage_ends)
+                extra["ended_at"] = ProvenanceStamp(
+                    provenance=Provenance.OBSALT_DERIVED,
+                    derivation="max(stage.ended_at) after ending reported",
+                )
+    if started is not None and ended is not None and ("started_at" in extra or "ended_at" in extra):
+        extra["duration_ms"] = ProvenanceStamp(
+            provenance=Provenance.OBSALT_DERIVED,
+            derivation="ended_at - started_at",
+        )
     return started, ended, extra
 
 

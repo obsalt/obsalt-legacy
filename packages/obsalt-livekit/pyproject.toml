@@ -13,6 +13,9 @@ dependencies = ["obsalt==0.0.0"]
 [project.entry-points."obsalt.plugins"]
 livekit = "obsalt_livekit.plugin:LiveKitPlugin"
 
+[tool.uv.sources]
+obsalt = { workspace = true }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

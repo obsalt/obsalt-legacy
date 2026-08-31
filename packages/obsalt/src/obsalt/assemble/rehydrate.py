@@ -33,8 +33,14 @@ def events_from_revision(revision: CallRevision) -> list[NormalizedEvent]:
         direction=revision.direction,
         from_number=revision.from_number,
         to_number=revision.to_number,
-        started_at=revision.started_at,
-        ended_at=revision.ended_at,
+        # Do not round-trip the assembler-derived lifecycle bounds back onto the
+        # CallObserved fact. revision.started_at / ended_at are computed from
+        # turns/outcome during assembly; carrying them here would make a later
+        # provider-reported value on the end-of-call snapshot hard-conflict and
+        # block promotion (see obsalt_vapi conversation-update + end-of-call).
+        # They are re-derived by the assembler on the next fold.
+        started_at=None,
+        ended_at=None,
         architecture=revision.pipeline_architecture,
         cost=revision.cost,
         status=revision.status.value,
@@ -84,21 +90,21 @@ def events_from_revision(revision: CallRevision) -> list[NormalizedEvent]:
         stage_event.fact_id = measurement.fact_id or fact_id_for(stage_event)
         events.append(stage_event)
 
-    for measurement in revision.aggregate_measurements:
+    for aggregate in revision.aggregate_measurements:
         aggregate_event = AggregateObserved(
-            stage=measurement.stage,
-            metric=measurement.metric,
-            statistic=measurement.statistic,
-            value_ms=measurement.value_ms,
-            population=measurement.population,
-            window=measurement.window,
-            provenance=measurement.provenance,
-            source_path=measurement.source_path,
+            stage=aggregate.stage,
+            metric=aggregate.metric,
+            statistic=aggregate.statistic,
+            value_ms=aggregate.value_ms,
+            population=aggregate.population,
+            window=aggregate.window,
+            provenance=aggregate.provenance,
+            source_path=aggregate.source_path,
             org_id=revision.org_id,
             call_key=revision.call_id,
             decoder_version=revision.decoder_version,
         )
-        aggregate_event.fact_id = measurement.fact_id or fact_id_for(aggregate_event)
+        aggregate_event.fact_id = aggregate.fact_id or fact_id_for(aggregate_event)
         events.append(aggregate_event)
 
     for tool in revision.tools:
@@ -155,13 +161,13 @@ def events_from_revision(revision: CallRevision) -> list[NormalizedEvent]:
         grounding_event.fact_id = fact_id_for(grounding_event)
         events.append(grounding_event)
 
-    for item in revision.evidence:
+    for evidence in revision.evidence:
         evidence_event = EvidenceObserved(
-            kind=item.kind,
-            uri=item.uri,
-            metadata=dict(item.metadata),
-            provenance=item.provenance,
-            source_path=item.source_path,
+            kind=evidence.kind,
+            uri=evidence.uri,
+            metadata=dict(evidence.metadata),
+            provenance=evidence.provenance,
+            source_path=evidence.source_path,
             org_id=revision.org_id,
             call_key=revision.call_id,
             decoder_version=revision.decoder_version,

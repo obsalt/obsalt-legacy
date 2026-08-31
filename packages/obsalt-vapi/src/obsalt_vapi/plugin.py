@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from obsalt.crypto.primitives import (
     constant_time_eq,
@@ -81,6 +82,20 @@ MAP = FieldMap(
 )
 
 
+def _vapi_shared_secret(headers: list[tuple[bytes, bytes]]) -> str | None:
+    """Vapi may send a Bearer credential, legacy X-Vapi-Secret, or an empty leftover header."""
+
+    for name in ("x-vapi-secret", "authorization"):
+        for value in header_values(headers, name):
+            if not value:
+                continue
+            if name == "authorization" and value.lower().startswith("bearer "):
+                value = value[7:]
+            if value:
+                return value
+    return None
+
+
 class VapiPlugin:
     API_VERSION = PLUGIN_API_VERSION
     name = "vapi"
@@ -152,31 +167,24 @@ class VapiPlugin:
         self, raw: bytes, headers: list[tuple[bytes, bytes]], cfg: ConnectionConfig
     ) -> VerifyResult:
         mode = (cfg.settings.get("auth_mode") or "legacy_secret").lower()
-        if mode == "legacy_secret":
-            secret = cfg.secrets.get("legacy_secret") or cfg.secrets.get("secret")
+        if mode in {"legacy_secret", "bearer"}:
+            secret = (
+                cfg.secrets.get("legacy_secret")
+                or cfg.secrets.get("secret")
+                or cfg.secrets.get("bearer_token")
+            )
             if not secret:
+                field = "bearer_token" if mode == "bearer" else "legacy_secret"
                 return VerifyResult(
-                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="legacy_secret required"
+                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail=f"{field} required"
                 )
-            values = header_values(headers, "x-vapi-secret")
-            if not values:
-                return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing X-Vapi-Secret")
-            if not constant_time_eq(values[0], secret):
-                return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
-            return VerifyResult(outcome=VerifyOutcome.OK)
-        if mode == "bearer":
-            token = cfg.secrets.get("bearer_token")
-            if not token:
+            provided = _vapi_shared_secret(headers)
+            if provided is None:
                 return VerifyResult(
-                    outcome=VerifyOutcome.MISSING_CREDENTIAL, detail="bearer_token required"
+                    outcome=VerifyOutcome.MALFORMED,
+                    detail="missing X-Vapi-Secret or Authorization",
                 )
-            values = header_values(headers, "authorization")
-            if not values:
-                return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail="missing Authorization")
-            provided = values[0]
-            if provided.lower().startswith("bearer "):
-                provided = provided[7:]
-            if not constant_time_eq(provided, token):
+            if not constant_time_eq(provided, secret):
                 return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
             return VerifyResult(outcome=VerifyOutcome.OK)
         if mode == "oauth2":
@@ -220,14 +228,20 @@ class VapiPlugin:
                 if window is not None:
                     return window
                 message = ts_values[0].encode("utf-8") + raw
-            expected = hmac_hex(secret, message, digestmod=algo)
             provided = values[0]
             kv = parse_kv_header(provided)
             if "d" in kv:
                 provided = kv["d"]
-            if not constant_time_eq(provided, expected):
-                return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
-            return VerifyResult(outcome=VerifyOutcome.OK)
+            candidates = [message]
+            if ts_header and message is not raw:
+                ts_bytes = ts_values[0].encode("utf-8")
+                candidates.append(ts_bytes + b"." + raw)
+            if any(
+                constant_time_eq(provided, hmac_hex(secret, item, digestmod=algo))
+                for item in candidates
+            ):
+                return VerifyResult(outcome=VerifyOutcome.OK)
+            return VerifyResult(outcome=VerifyOutcome.BAD_SIGNATURE)
         return VerifyResult(outcome=VerifyOutcome.MALFORMED, detail=f"unknown auth_mode {mode}")
 
     def classify(self, raw: bytes) -> ObservationalEventKind:
@@ -280,8 +294,10 @@ class VapiPlugin:
         source_call_id = as_str(mapped.get("source_call_id"))
         if not source_call_id:
             return
-        call_obj = message.get("call") if isinstance(message.get("call"), dict) else {}
-        assistant = message.get("assistant") if isinstance(message.get("assistant"), dict) else {}
+        raw_call = message.get("call")
+        call_obj = raw_call if isinstance(raw_call, dict) else {}
+        raw_assistant = message.get("assistant")
+        assistant = raw_assistant if isinstance(raw_assistant, dict) else {}
         direction = CallDirection.UNKNOWN
         call_type = as_str(call_obj.get("type")) or ""
         if "inbound" in call_type.lower():
@@ -318,6 +334,8 @@ class VapiPlugin:
                     "outcome_observed",
                     "aggregate_observed",
                     "grounding_observed",
+                    "evidence_observed",
+                    "interruption_observed",
                 ]
             )
 
@@ -336,7 +354,8 @@ class VapiPlugin:
                     source_path="message.assistant.model.messages",
                 )
 
-        artifact = message.get("artifact") if isinstance(message.get("artifact"), dict) else {}
+        raw_artifact = message.get("artifact")
+        artifact = raw_artifact if isinstance(raw_artifact, dict) else {}
         recording = (
             as_str(dig(artifact, "recording", "stereoUrl"))
             or as_str(dig(artifact, "recording", "monoUrl"))
@@ -477,7 +496,9 @@ class VapiPlugin:
         )
 
 
-def _message_anchor(raw: dict, call_started: datetime | None) -> tuple[datetime | None, str]:
+def _message_anchor(
+    raw: dict[str, Any], call_started: datetime | None
+) -> tuple[datetime | None, str]:
     """Prefer secondsFromStart + call start (plan §5.1). Fall back to epoch ``time``."""
 
     seconds_from_start = as_float(raw.get("secondsFromStart"))
@@ -489,7 +510,7 @@ def _message_anchor(raw: dict, call_started: datetime | None) -> tuple[datetime 
 
 
 def _turns_and_tools(
-    messages: list,
+    messages: list[Any],
     call_started: datetime | None = None,
     *,
     emit_user_grounding: bool = False,
@@ -510,7 +531,8 @@ def _turns_and_tools(
             for item in raw.get("toolCalls") or raw.get("toolCallList") or []:
                 if not isinstance(item, dict):
                     continue
-                inner = item.get("function") if isinstance(item.get("function"), dict) else item
+                raw_fn = item.get("function")
+                inner = raw_fn if isinstance(raw_fn, dict) else item
                 name = as_str(inner.get("name")) or "unknown"
                 args = inner.get("arguments") or inner.get("parameters") or {}
                 tool_id = as_str(item.get("id")) or name
@@ -570,9 +592,9 @@ def _turns_and_tools(
         words = raw.get("words") if isinstance(raw.get("words"), list) else []
         if words:
             confs = [
-                as_float(w.get("confidence"))
+                confidence
                 for w in words
-                if isinstance(w, dict) and as_float(w.get("confidence")) is not None
+                if isinstance(w, dict) and (confidence := as_float(w.get("confidence"))) is not None
             ]
             if confs:
                 conf = sum(confs) / len(confs)
@@ -606,7 +628,7 @@ def _turns_and_tools(
         )
 
 
-def _latency(message: dict, artifact: dict) -> Iterable[NormalizedEvent]:
+def _latency(message: dict[str, Any], artifact: dict[str, Any]) -> Iterable[NormalizedEvent]:
     perf = message.get("performanceMetrics") or artifact.get("performanceMetrics") or {}
     if not isinstance(perf, dict):
         return
@@ -662,13 +684,14 @@ def _latency(message: dict, artifact: dict) -> Iterable[NormalizedEvent]:
             yield InterruptionObserved(count=int(count), kind=kind)
 
 
-def _unwrap(payload: dict) -> dict:
-    if isinstance(payload.get("message"), dict):
-        return payload["message"]
+def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:
+    message = payload.get("message")
+    if isinstance(message, dict):
+        return message
     return payload
 
 
-def _json(raw: bytes) -> dict:
+def _json(raw: bytes) -> dict[str, Any]:
     try:
         data = json.loads(raw or b"{}")
     except json.JSONDecodeError:

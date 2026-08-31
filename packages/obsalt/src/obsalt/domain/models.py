@@ -9,6 +9,8 @@ from obsalt.domain.enums import (
     AnalysisState,
     CallDirection,
     CallStatus,
+    EvalRunnerKind,
+    EvalSlot,
     EvidenceKind,
     GroundingKind,
     HangupParty,
@@ -17,6 +19,7 @@ from obsalt.domain.enums import (
     Metric,
     PipelineArchitecture,
     Provenance,
+    RubricKind,
     Signal,
     SignalCoverageStatus,
     Speaker,
@@ -213,4 +216,44 @@ class Rubric(BaseModel):
     version: int = 1
     threshold: float = 0.7
     enabled: bool = True
+    kind: RubricKind = RubricKind.LLM_JUDGE
+    spec: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
+
+    def is_predicate(self) -> bool:
+        return self.kind is RubricKind.PREDICATE
+
+
+class EvalRunner(BaseModel):
+    id: str
+    org_id: str
+    slot: EvalSlot
+    kind: EvalRunnerKind = EvalRunnerKind.OPENAI_COMPATIBLE
+    base_url: str
+    model: str
+    api_key: str = ""
+    allow_http_localhost: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
+
+    def public_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "org_id": self.org_id,
+            "slot": self.slot.value,
+            "kind": self.kind.value,
+            "base_url": self.base_url,
+            "model": self.model,
+            "allow_http_localhost": self.allow_http_localhost,
+            "has_api_key": bool(self.api_key),
+            "created_at": self.created_at.isoformat(),
+        }
+
+
+class EvalPolicy(BaseModel):
+    org_id: str
+    monthly_budget_usd: float = 0.0
+    baseline_sample_rate: float = 0.0
+    llm_evals_enabled: bool = False
+    pack: list[str] = Field(default_factory=list)
+    groundedness_enabled: bool = False
+    groundedness_sample_rate: float = 0.0

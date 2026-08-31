@@ -45,14 +45,10 @@ pipecat = ["obsalt-pipecat==0.0.0"]
 livekit = ["obsalt-livekit==0.0.0"]
 providers = ["obsalt-providers-all==0.0.0"]
 grpc = ["grpcio>=1.66.0"]
-dev = [
-  "pytest>=8.3.0",
-  "ruff>=0.6.0",
-  "mypy>=1.11.0",
-  "hypothesis>=6.112.0",
-  "pre-commit>=4.0.0",
-  "types-jsonschema>=4.23.0",
-  "types-redis>=4.6.0",
+groundedness = [
+  "torch>=2.6.0",
+  "transformers>=4.48.0",
+  "safetensors>=0.4.0",
 ]
 
 [project.scripts]
@@ -63,6 +59,17 @@ Homepage = "https://github.com/coder-with-a-bushido/obsalt"
 Documentation = "https://github.com/coder-with-a-bushido/obsalt/blob/main/docs/README.md"
 
 [project.entry-points."obsalt.plugins"]
+
+[tool.uv.sources]
+obsalt-vapi = { workspace = true }
+obsalt-retell = { workspace = true }
+obsalt-elevenlabs = { workspace = true }
+obsalt-cartesia = { workspace = true }
+obsalt-openai-realtime = { workspace = true }
+obsalt-gemini-live = { workspace = true }
+obsalt-pipecat = { workspace = true }
+obsalt-livekit = { workspace = true }
+obsalt-providers-all = { workspace = true }
 
 [tool.setuptools.packages.find]
 where = ["src"]

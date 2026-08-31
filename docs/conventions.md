@@ -4,7 +4,7 @@ These are the rules we write code against. Style that Ruff can enforce
 lives in `pyproject.toml`. Everything here is the part a formatter
 cannot see.
 
-New contributors: [Developing](developing.md). AI agents:
+New contributors: [Develop](develop.md). AI agents:
 [AGENTS.md](../AGENTS.md).
 
 ---
@@ -96,6 +96,14 @@ If a change violates one of these, it is the wrong change.
 10. **`org_id` comes only from authenticated credentials.** Payload
     fields and OTLP resource attributes may corroborate. They may never
     select. No `require_auth=false`.
+11. **There is no heuristic judge.** Cheap path is `detect_claims`
+    (`detector/2` flags). English pack/rubrics stay `not_judged` until
+    an LLM runner is enabled. Historical `heuristic/1` rows are never
+    confirmed. Pack `tool_use` fails only on a bound phantom, not on
+    every effective tool failure.
+12. **A console/API verdict is source-backed or detector-settled.**
+    Heuristics are not verdicts. Hangup mapping tables and tool
+    effective-status (result body) are allowed derivations.
 
 ---
 
@@ -177,23 +185,29 @@ The directory **is** the marker (`tests/conftest.py`). Sizes follow
 ## Docs
 
 Write **product documentation**, not a company page. One topic per page.
-Tables and ASCII diagrams over mermaid (GitHub often fails to render
-mermaid with HTML labels or punctuation). Define voice-agent terms on
-first use, or link [Voice agents](concepts.md). Every how-to ends with
-a next step. Informal language is fine. Sloppy units are not.
+Define voice-agent terms on first use. Every how-to ends with a next
+step. Informal language is fine. Sloppy units are not.
+
+Diagrams: simple GitHub mermaid (`flowchart TD` / `flowchart LR` /
+`sequenceDiagram`) plus ASCII for trees. Node ids alphanumeric. Labels
+in square brackets. No HTML, no `<br/>`, no nested quotes, no
+punctuation in subgraph titles. `llms.txt` keeps ASCII copies.
 
 If you change a product surface, a public contract, or how someone
 connects an agent, update the matching page:
 
 | Change | Page |
 | --- | --- |
-| Domain primer | [concepts.md](concepts.md) |
 | What the product does | [product.md](product.md) |
 | What a source will show | [console.md](console.md) + connect guide |
 | HTTP route or payload | [api.md](api.md) |
 | `OBSALT_*` | [configuration.md](reference/configuration.md) + `ENV_EXAMPLE` |
 | CLI flag | [cli.md](reference/cli.md) |
-| How to run / recover | [getting-started.md](getting-started.md) / [troubleshooting.md](troubleshooting.md) |
+| How to run / recover | [start.md](start.md) / [operate.md](operate.md) |
+| Pipeline / stores | [architecture.md](architecture.md) |
+| Plugin contract | [plugins.md](plugins.md) |
+| Ingest path / webhook auth | [connect-hosted.md](connect-hosted.md) / [connect-custom.md](connect-custom.md) |
+| Span names and attributes | [otlp.md](reference/otlp.md) |
 
 Do not put version theater in titles (“v2 guide”). The product is
 unreleased; packaging versions exist so extras resolve.

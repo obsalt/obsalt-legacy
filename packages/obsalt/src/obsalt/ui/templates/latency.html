@@ -1,57 +1,142 @@
 {% extends "base.html" %}
 {% block title %}obsalt — latency{% endblock %}
 {% block content %}
-  {% set rollup = rollup|default({}) %}
+  {% set view = view|default({}) %}
   <h1>Latency</h1>
-  <p>Serving generation <code>{{ rollup.as_of_generation|default(as_of_generation) }}</code>. One generation per response; never mixed.</p>
-  <p class="muted">A time range is required.</p>
+  {% if not view.has_samples and not view.has_aggregates and not view.has_slowest %}
+    <p class="lead muted">Where time went — and whether this agent is slower than the rest of the fleet.</p>
+  {% endif %}
   {% if error %}
     <p class="decode_failed">{{ error }}</p>
   {% endif %}
-  {% set filters = filters|default({}) %}
-  <form class="filters" method="get" action="/v1/ui/latency">
-    <label>Start <input name="start" value="{{ filters.start|default('') }}" /></label>
-    <label>End <input name="end" value="{{ filters.end|default('') }}" /></label>
-    <button type="submit">Filter</button>
-  </form>
-  <p class="muted">{{ rollup.note|default("Sample p50/p95 come from StageMeasurement rows only. Provider-published AggregateMeasurement percentiles are listed separately and never enter sample percentiles.") }}</p>
-  <h2>Sample percentiles</h2>
+  {% set filter_bar = filter_bar|default(filters)|default({}) %}
+  {% include "_filter_bar.html" %}
+
+  {% if not view.has_samples and not view.aggregates_primary %}
+  <div class="empty">
+    <h2>No sample clocks in this range</h2>
+    <p>This range has no stage samples. Vapi and Retell chips live on the call. Custom agents that emit OTLP with real intervals fill this table.</p>
+  </div>
+  {% endif %}
+
+  {% if view.aggregates_primary %}
+  <h2>Provider-published stats</h2>
+  <p class="caption">{{ view.aggregate_lead_note }}</p>
   <table>
     <thead>
-      <tr><th>Stage</th><th>Metric</th><th>P50 (ms)</th><th>P95 (ms)</th><th>n</th></tr>
+      <tr><th>Call</th><th>Stage</th><th>Statistic</th><th>Value</th></tr>
     </thead>
     <tbody>
-      {% for stage, stats in (rollup.sample_percentiles|default({})).items() %}
+      {% for row in view.provider_aggregates %}
       <tr>
-        <td>{{ stage }}</td>
-        <td>{{ stats.metric }}</td>
-        <td>{{ stats.p50 }}</td>
-        <td>{{ stats.p95 }}</td>
-        <td>{{ stats.n }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5">No sample stage measurements in this generation.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <h2>Provider-published aggregates</h2>
-  <p class="muted">Not mixed into sample p50/p95.</p>
-  <table>
-    <thead>
-      <tr><th>Call</th><th>Stage</th><th>Statistic</th><th>Value (ms)</th><th>Source path</th></tr>
-    </thead>
-    <tbody>
-      {% for row in rollup.provider_aggregates|default([]) %}
-      <tr>
-        <td><a href="/v1/ui/calls/{{ row.call_id }}">{{ row.call_id }}</a></td>
-        <td>{{ row.stage }}</td>
+        <td><a class="id" href="/v1/ui/calls/{{ row.call_id }}{% if filter_bar.detail_qs %}?{{ filter_bar.detail_qs }}{% endif %}" title="{{ row.call_id }}">{{ row.short_id or row.call_id }}</a></td>
+        <td>{{ row.stage_label }}</td>
         <td>{{ row.statistic }}</td>
-        <td>{{ row.value_ms }}</td>
-        <td>{{ row.source_path }}</td>
+        <td>{{ row.value_text }}</td>
       </tr>
-      {% else %}
-      <tr><td colspan="5">No provider aggregates in this generation.</td></tr>
       {% endfor %}
     </tbody>
   </table>
+  {% endif %}
+
+  {% if view.has_samples %}
+  <h2>Sample percentiles</h2>
+  <p class="caption">{{ view.note }}</p>
+  <table>
+    <thead>
+      <tr><th>Stage</th><th>Metric</th><th>P50</th><th>P95</th><th></th><th>n</th></tr>
+    </thead>
+    <tbody>
+      {% for row in view.samples %}
+      <tr>
+        <td>{{ row.stage_label }}</td>
+        <td>{{ row.metric_label }}</td>
+        <td>{{ row.p50_text }}</td>
+        <td>{{ row.p95_text }}</td>
+        <td><div class="bar-track"><div class="bar-fill" style="width: {{ row.bar_pct }}%"></div></div></td>
+        <td>{{ row.n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if view.by_agent and view.agent_count > 1 %}
+  <h2>By agent</h2>
+  <table>
+    <thead>
+      <tr><th>Agent</th><th>Stage</th><th>Metric</th><th>P50</th><th>P95</th><th>n</th></tr>
+    </thead>
+    <tbody>
+      {% for row in view.by_agent %}
+      <tr>
+        <td>{{ row.agent_id }}</td>
+        <td>{{ row.stage_label }}</td>
+        <td>{{ row.metric_label }}</td>
+        <td>{{ row.p50_text }}</td>
+        <td{% if row.slower %} class="slower"{% endif %}>{{ row.p95_text }}{% if row.slower %} · slower{% endif %}</td>
+        <td>{{ row.n }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if view.slowest_calls %}
+  <h2>Slowest calls</h2>
+  <p class="caption">Highest measured sample on the call. Open it to see the transcript next to the timing.</p>
+  <div class="call-list">
+    {% for call in view.slowest_calls %}
+      {% with row=call %}{% include "_call_row.html" %}{% endwith %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if view.tools %}
+  <h2>Tools</h2>
+  <p class="caption">Function calls that can stall a turn. Duration percentiles use only invocations that reported a duration.</p>
+  <table>
+    <thead>
+      <tr><th>Tool</th><th>Invocations</th><th>Failures</th><th>Success</th><th>Duration p50</th><th>Duration p95</th></tr>
+    </thead>
+    <tbody>
+      {% for row in view.tools %}
+      <tr>
+        <td>{{ row.name }}</td>
+        <td>{{ row.count }}</td>
+        <td>{{ row.failures }}</td>
+        <td>{% if row.success_pct is not none %}{{ row.success_pct }}%{% else %}—{% endif %}</td>
+        <td>{{ row.duration_p50 }}{% if not row.duration_n %} <span class="muted">(not reported)</span>{% endif %}</td>
+        <td>{{ row.duration_p95 }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if view.has_aggregates and not view.aggregates_primary %}
+  <details class="fold">
+    <summary>Provider-published aggregates ({{ view.provider_aggregate_count }})</summary>
+    <p class="caption">Not mixed into sample p50/p95.{% if view.provider_aggregate_count and view.provider_aggregate_count > view.provider_aggregates|length %} Showing {{ view.provider_aggregates|length }} of {{ view.provider_aggregate_count }}.{% endif %}</p>
+    <table>
+      <thead>
+        <tr><th>Call</th><th>Stage</th><th>Statistic</th><th>Value</th></tr>
+      </thead>
+      <tbody>
+        {% for row in view.provider_aggregates %}
+        <tr>
+          <td><a class="id" href="/v1/ui/calls/{{ row.call_id }}{% if filter_bar.detail_qs %}?{{ filter_bar.detail_qs }}{% endif %}" title="{{ row.call_id }}">{{ row.short_id or row.call_id }}</a></td>
+          <td>{{ row.stage_label }}</td>
+          <td>{{ row.statistic }}</td>
+          <td>{{ row.value_text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+  {% endif %}
+
+  {% if view.as_of_generation %}
+  <p class="caption fold">One rollup generation; not mixed. {{ view.as_of_generation }}</p>
+  {% endif %}
 {% endblock %}

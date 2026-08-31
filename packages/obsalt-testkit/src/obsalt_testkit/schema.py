@@ -170,7 +170,7 @@ def _apply_overlay_schema(schema: dict[str, Any], patch_path: Path) -> dict[str,
     if not patch_path.exists():
         return schema
     patch = _json_object(patch_path)
-    merged = json.loads(json.dumps(schema))
+    merged: dict[str, Any] = json.loads(json.dumps(schema))
     extras = patch.get("additionalProperties")
     if extras is not None:
         merged["additionalProperties"] = extras

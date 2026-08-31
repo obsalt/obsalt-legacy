@@ -151,7 +151,18 @@ def test_every_org_rubric_is_evaluated_on_analyze() -> None:
     analyzed = client.post(f"/v1/calls/{call_id}/analyze", headers=auth())
     assert analyzed.status_code == 200
     items = analyzed.json()["items"]
-    assert len(items) == 2
+    rubric_ids = [
+        row.get("execution", {}).get("analyzer_id")
+        for row in items
+        if str(row.get("execution", {}).get("analyzer_id") or "").startswith("rubric:")
+    ]
+    pack_ids = [
+        row.get("execution", {}).get("analyzer_id")
+        for row in items
+        if str(row.get("execution", {}).get("analyzer_id") or "").startswith("pack:")
+    ]
+    assert len(rubric_ids) == 2
+    assert pack_ids
     detail = client.get(f"/v1/calls/{call_id}", headers=auth()).json()
     evals = [
         row

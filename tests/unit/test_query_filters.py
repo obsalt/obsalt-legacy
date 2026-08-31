@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from obsalt.domain.enums import AnalysisState, Speaker
-from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision, Turn
+from obsalt.analysis.hangup import ENDING_NOT_REPORTED
+from obsalt.api import _ui_flags_and_evals
+from obsalt.domain.enums import AnalysisState, HangupParty, HangupReason, Speaker
+from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision, Hangup, Turn
 from obsalt.query import matches_call_filters
 
 
@@ -40,7 +42,16 @@ def _row(
     )
 
 
-def test_pending_hallucination_candidates_are_not_a_flag_filter() -> None:
+def test_not_reported_hangup_filter_matches_missing_outcome() -> None:
+    assert matches_call_filters(_call(), outcome=ENDING_NOT_REPORTED) is True
+    hung = _call().model_copy(
+        update={"hangup": Hangup(reason=HangupReason.USER_HANGUP, party=HangupParty.USER)}
+    )
+    assert matches_call_filters(hung, outcome=ENDING_NOT_REPORTED) is False
+    assert matches_call_filters(hung, outcome="user_hangup") is True
+
+
+def test_pending_hallucination_candidates_are_a_flag_filter() -> None:
     pending = _row(
         "hallucination",
         state=AnalysisState.PENDING,
@@ -49,15 +60,34 @@ def test_pending_hallucination_candidates_are_not_a_flag_filter() -> None:
             "selection": "pending",
         },
     )
-    assert matches_call_filters(_call(), flag="price_claim", analysis=[pending]) is False
+    assert matches_call_filters(_call(), flag="price_claim", analysis=[pending]) is True
 
 
 def test_confirmed_hallucination_matches_flag_filter() -> None:
     confirmed = _row(
         "hallucination",
-        payload={"claims": [{"kind": "price_claim", "verdict": "contradicted"}]},
+        payload={
+            "model": "detector/1",
+            "claims": [{"kind": "price_claim", "verdict": "contradicted", "model": "detector/1"}],
+        },
     )
     assert matches_call_filters(_call(), flag="price_claim", analysis=[confirmed]) is True
+    assert matches_call_filters(_call(), flag="hallucination", analysis=[confirmed]) is True
+
+
+def test_heuristic_hallucination_is_a_candidate_filter() -> None:
+    heuristic = _row(
+        "hallucination",
+        payload={
+            "model": "heuristic/1",
+            "claims": [{"kind": "price_claim", "verdict": "contradicted", "model": "heuristic/1"}],
+        },
+    )
+    assert matches_call_filters(_call(), flag="price_claim", analysis=[heuristic]) is True
+    assert (
+        matches_call_filters(_call(), flag="hallucination_candidate", analysis=[heuristic]) is True
+    )
+    assert matches_call_filters(_call(), flag="hallucination", analysis=[heuristic]) is False
 
 
 def test_eval_result_ignores_hallucination_passed() -> None:
@@ -72,3 +102,51 @@ def test_eval_result_fail_when_passed_is_missing() -> None:
     assert matches_call_filters(_call(), eval_result="fail", analysis=[incomplete]) is False
     failed = _row("tier2", payload={"passed": False, "selection": "manual"})
     assert matches_call_filters(_call(), eval_result="fail", analysis=[failed]) is True
+
+
+def test_grounded_hallucination_is_not_a_pending_flag() -> None:
+    flags, _evals, _card = _ui_flags_and_evals(
+        [
+            _row(
+                "hallucination",
+                payload={
+                    "model": "detector/1",
+                    "claims": [
+                        {
+                            "kind": "price_claim",
+                            "verdict": "contradicted",
+                            "span_text": "$1",
+                            "model": "detector/1",
+                        },
+                        {
+                            "kind": "commitment",
+                            "verdict": "grounded",
+                            "span_text": "ok",
+                            "model": "detector/1",
+                        },
+                    ],
+                },
+            )
+        ]
+    )
+    assert [item.get("kind") for item in flags] == ["price_claim"]
+    assert flags[0].get("pending") is False
+
+
+def test_eval_result_open_verdict_is_not_fail() -> None:
+    open_row = _row(
+        "pack:accuracy",
+        payload={"passed": None, "verdict": "not_judged", "selection": "manual"},
+    )
+    missing = _row(
+        "pack:accuracy",
+        payload={"passed": None, "verdict": "evidence_missing", "selection": "manual"},
+    )
+    shadow = _row(
+        "pack:accuracy",
+        payload={"passed": False, "verdict": "fail", "shadow": True, "selection": "manual"},
+    )
+    assert matches_call_filters(_call(), eval_result="fail", analysis=[open_row]) is False
+    assert matches_call_filters(_call(), eval_result="pass", analysis=[open_row]) is False
+    assert matches_call_filters(_call(), eval_result="fail", analysis=[missing]) is False
+    assert matches_call_filters(_call(), eval_result="fail", analysis=[shadow]) is False

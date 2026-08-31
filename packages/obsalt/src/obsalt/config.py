@@ -28,7 +28,7 @@ OBSALT_BOOTSTRAP_ORG_ID=local
 
 # --- stores (docker compose defaults) --------------------------------------
 OBSALT_POSTGRES_DSN=postgresql://obsalt:obsalt@localhost:5432/obsalt
-OBSALT_CLICKHOUSE_URL=http://localhost:8123
+OBSALT_CLICKHOUSE_URL=http://default:clickhouse@localhost:8123
 OBSALT_CLICKHOUSE_DATABASE=obsalt
 OBSALT_REDIS_URL=redis://localhost:6379/0
 OBSALT_S3_ENDPOINT=http://localhost:9010
@@ -63,6 +63,11 @@ OBSALT_S3_REGION=us-east-1
 # OBSALT_JUDGE_API_KEY=
 # OBSALT_JUDGE_MODEL=gpt-4.1-mini
 # OBSALT_EMBEDDER_ONNX_PATH=
+# OBSALT_GROUNDEDNESS_ENABLED=false
+# OBSALT_GROUNDEDNESS_SAMPLE_RATE=0
+# OBSALT_GROUNDEDNESS_MODEL=KRLabsOrg/lettucedect-v2-mmbert-base
+# OBSALT_GROUNDEDNESS_CACHE_DIR=
+# OBSALT_GROUNDEDNESS_TURN_TIMEOUT_SECONDS=8
 """
 
 
@@ -75,7 +80,7 @@ class Settings(BaseSettings):
     service_name: str = "obsalt"
 
     postgres_dsn: str = "postgresql://obsalt:obsalt@localhost:5432/obsalt"
-    clickhouse_url: str = "http://localhost:8123"
+    clickhouse_url: str = "http://default:clickhouse@localhost:8123"
     clickhouse_database: str = "obsalt"
     redis_url: str = "redis://localhost:6379/0"
     s3_endpoint: str = "http://localhost:9010"
@@ -114,6 +119,11 @@ class Settings(BaseSettings):
     judge_api_key: str | None = None
     judge_model: str = "gpt-4.1-mini"
     embedder_onnx_path: str | None = None
+    groundedness_enabled: bool = False
+    groundedness_sample_rate: float = 0.0
+    groundedness_model: str = "KRLabsOrg/lettucedect-v2-mmbert-base"
+    groundedness_cache_dir: str | None = None
+    groundedness_turn_timeout_seconds: float = 8.0
 
     def insecure_defaults(self) -> bool:
         return (

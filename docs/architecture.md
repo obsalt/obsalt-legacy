@@ -1,132 +1,70 @@
 # Architecture
 
 This page is for people who will change obsalt. If you are connecting
-an agent, [Getting started](getting-started.md) and the connect guides
-are enough.
+an agent, [Start](start.md) and the connect guides are enough.
 
 A call enters as raw bytes. It becomes something you can query only
 after it is authenticated, persisted, decoded, redacted, assembled, and
 promoted. Nothing the provider is waiting on does the expensive work.
 
-```
-Sources                         Durable spine              You look here
-─────────                       ─────────────              ────────────
-Webhook (signed, per-tenant) ─┐
-OTLP HTTP (proto + JSON) ─────┼─▶ object store (raw) ─┐
-VoiceCall in your process ────┤   Postgres inbox      ├─▶ HTTP API + console
-Provider REST backfill ───────┘   + outbox            │
-                                                      │
-                              Worker: decode → redact → assemble
-                                      │
-                                      ├─▶ ClickHouse (call facts)
-                                      └─▶ Postgres (active-revision pointer)
-```
+## Durability sequence
 
-Sequence, in order:
+This is the load-bearing chart. Decode is **not** on the webhook
+request path.
+
+```mermaid
+sequenceDiagram
+  participant P as Provider
+  participant I as Ingest
+  participant S as Object store
+  participant PG as Postgres
+  participant W as Worker
+  participant CH as ClickHouse
+  participant UI as Console
+  P->>I: POST webhook or OTLP
+  I->>S: write blob
+  I->>PG: inbox plus dedupe plus outbox
+  I-->>P: 2xx ack
+  W->>PG: claim outbox
+  W->>W: decode redact assemble
+  W->>CH: candidate revision
+  W->>PG: CAS pointer
+  UI->>PG: active revision
+  UI->>CH: that exact revision
+```
 
 1. Provider or exporter POSTs a signed webhook or OTLP batch.
 2. Ingest writes raw bytes to object storage.
 3. Ingest commits inbox + dedupe + outbox in Postgres.
 4. Ingest acks the provider.
 5. Worker claims the outbox, decodes, redacts, assembles.
-6. Worker writes a complete candidate revision to ClickHouse.
+6. Worker writes a complete candidate revision to ClickHouse and waits
+   until it is query-visible.
 7. Worker CAS-promotes the Postgres active-revision pointer.
 8. Console reads the pointer, then that exact ClickHouse revision.
-
-## The rules we will not break
-
-These are load-bearing. If one of them is wrong, the shape of the system
-changes.
-
-1. **Never draw what you did not measure.** A waterfall bar requires
-   real start and end. Durations without clocks are chips or
-   distributions. Provider p50/p95 never enter sample percentiles.
-2. **Provenance is a field, not a footnote.** Every value is
-   `provider_reported` (with a source path) or `obsalt_derived` (with a
-   derivation). Absence is its own fact, with a reason. That is how we
-   tell “they did not send it” from “we dropped it.”
-3. **Raw first, then ack.** The wire bytes hit object storage and a
-   Postgres inbox/outbox **before** the provider-facing success
-   response. Decode is a pure function. Adapter bugs become replays, not
-   silent holes. Replay dies when raw retention dies; the console says
-   so.
-4. **Decoders are validated against the vendor, not against themselves.**
-   Fixtures must match a vendored schema. Golden `NormalizedEvent[]`
-   plus unit assertions cover units, placement, and pairing — things a
-   schema will not catch.
-5. **One choke point per cross-cutting concern.** All sources hit one
-   normalize/assemble path. Queryable content crosses one redaction
-   boundary. Forwarded telemetry crosses one export-policy boundary.
-   Plugins cannot skip either.
-6. **Decode, assemble, and analyze are separate, versioned stages.**
-   Reprocessing builds a complete new revision and promotes it. We do
-   not mutate a stored call in place.
-7. **Pick the storage engine once.** Production is Postgres +
-   ClickHouse + object storage. Memory types are test doubles. There is
-   no pluggable-backend layer and no SQLite mode.
-8. **Providers are separately installable packages.** Core ships none.
-   First-party plugins use the same public contract as anyone else’s.
-9. **Expensive analysis is sampled and budget-capped.** Cheap
-   deterministic work runs on every call. LLM judges run on a trigger or
-   a sample, behind a hard per-org monthly cap. Missing judge output is
-   not a pass.
-10. **Tenant identity comes only from authenticated credentials.**
-    Payload fields and OTLP resource attributes may corroborate. They
-    may never select an org. There is no `require_auth=false`.
-
-## Pipeline
-
-| Stage | Input | Output |
-| --- | --- | --- |
-| Receive | HTTP request | `RawEnvelope` committed; provider-specific ack |
-| Decode | `RawEnvelope` | `NormalizedEvent[]` (plugin, `decoder_version`) |
-| Redact | those events | same, policy-stamped |
-| Assemble | events | immutable `CallRevision` |
-| Promote | candidate in ClickHouse | Postgres pointer CAS |
-| Analyze T1 | active revision | hangup, tools, coverage, flags |
-| Index | active revision | lexical + vector search doc |
-| Analyze T2 | active revision | LLM eval / hallucination, if sampled |
-
-Receive, in order:
-
-1. Read **raw bytes**. Parsing first breaks signatures.
-2. Resolve `ingest_key` → org, plugin, encrypted credentials.
-3. Fail-closed auth.
-4. Classify. Observational events only on the webhook path.
-5. Delivery key (transport identity ≠ call identity).
-6. Write the blob. Commit inbox + dedupe + outbox in one Postgres
-   transaction.
-7. Ack.
+   Never `SELECT latest`.
 
 OTLP (`POST /v1/traces`) uses the same durability path. Tenancy is the
-ingest key. obsalt is **not** a general span store. Raw spans stay in
-the archive for replay and forwarding. The queryable model is the call.
+API key. obsalt is **not** a general span store. The queryable model is
+the call.
 
-Voice calls have a natural upper bound generic tracing lacks. A trace
-finalizes at `min(root_ended_at + grace, first_seen_at + max_call_duration)`.
+A trace finalizes at
+`min(root_ended_at + grace, first_seen_at + max_call_duration)`.
 A still-rootless trace becomes `unrooted` and does not invent an
-outcome.
-
-## Promotion
-
-There is no cross-database transaction. We do not pretend there is:
-
-1. Write a complete candidate revision to ClickHouse. Wait until it is
-   query-visible.
-2. CAS the Postgres active-revision pointer. Failed CAS rebases and
-   retries. An envelope is not “assembled” until some active revision
-   covers its facts.
-3. Call detail reads the pointer first, then that exact ClickHouse
-   revision. Never `SELECT latest`.
-4. Analysis and search are keyed by revision. States are explicit:
-   `pending`, `sampled_out`, `budget_blocked`, `running`, `failed`,
-   `completed`.
-5. Fleet rollups are serving generations. One `as_of_generation` per
-   response. A page never mixes generations.
-
-Late events create a **new** revision. History stays put.
+ending.
 
 ## Stores
+
+```mermaid
+flowchart TD
+  ingest[Ingest] --> objects[Object store raw and evidence]
+  ingest --> pg[Postgres inbox outbox pointer keys search]
+  worker[Worker] --> ch[ClickHouse immutable revisions]
+  worker --> pg
+  console[Console and API] --> pg
+  console --> ch
+  redis[Redis optional leases] -.-> worker
+```
 
 | Store | Holds |
 | --- | --- |
@@ -135,22 +73,97 @@ Late events create a **new** revision. History stays put.
 | **Object storage** | Org-namespaced raw blobs (unredacted, short-lived), evidence, recordings. |
 | **Redis** | Lease accelerator. If it dies, workers still claim from Postgres. |
 
-Queries always specify `(org_id, call_id, revision)`. Call-list cursors
-are `{call_id}:{revision}`.
-
-Receive needs a transaction. A year of stage measurements does not
-belong in the same engine. There is no second storage backend.
+Queries always specify `(org_id, call_id, revision)`. Call-list
+cursors are `{call_id}:{revision}`. There is no second storage backend.
+Callers talk to ports in `obsalt.store.ports`. Memory types are test
+doubles.
 
 Retention defaults: 30 days raw, 90 days transcripts, 400 days
 aggregates. Raw is unredacted on purpose — that is the replay tradeoff.
 
-Search is hybrid (lexical + vector) over redacted content. Default
-embedder is a local ONNX model.
+## What the console joins
+
+Analysis is keyed by revision, not embedded in the call. Late events
+create a **new** `CallRevision`. History stays put.
+
+```
+CallRevision
+├── identity      org_id, call_id, source, source_call_id, agent_id
+├── lifecycle     started_at, ended_at, duration_ms, pipeline, fidelity
+├── hangup        reason, party, provider_code
+├── Turn[]        speaker, text_ref, clocks?, interrupted?
+├── StageMeasurement[]     placement + provenance
+├── AggregateMeasurement[] provider p50/p95, never mixed into samples
+├── ToolInvocation[]
+├── Grounding     prompt / knowledge / tool results / caller text refs
+├── SignalCoverage[]
+└── Provenance    map of field path to stamp
+```
+
+`*_ref` values are content-addressed evidence, not inline text.
+
+## Analysis
+
+```mermaid
+flowchart LR
+  rev[Active revision] --> t1[Tier-1 always]
+  t1 --> hangup[Hangup tools flags]
+  t1 --> exact[Structured exact detector]
+  t1 --> card[quality card flags]
+  exact --> card
+  rev --> t2[Tier-2 sampled]
+  t2 --> pred[Predicates]
+  t2 --> pack[LiveKit pack]
+  t2 --> judge[English judges]
+```
+
+Detectors and predicates run on every call. The cheap path is
+structured exact flags (numeric/ID match and bound said-vs-done), not
+a Faithfulness Pass/Fail table. LLM judges run on a trigger, a
+cascade, or an unbiased sample, behind a hard per-org monthly cap.
+Missing judge output is `not_judged`, never a pass. A heuristic must
+not score English rubrics. Pack `tool_use` fails only on a bound
+phantom tool success, a denied successful tool (`phantom_tool_failure`),
+or a detector-settled wrong tool argument (`args_mismatch`), not on
+every effective tool failure.
+
+The structured exact detector (`detector/3`) settles claim kinds the
+same way in both runner scenarios: `price_claim`, `fabricated_id`,
+`date_time_claim`, and `count_claim` compare a quoted span against
+scalars extracted from tool results and grounding (exact match →
+`grounded`, no match with tools present → `contradicted`, otherwise
+`evidence_missing`). `phantom_tool_failure` fires when the agent denies
+a bound tool that actually succeeded; an honest failure report is
+dropped. `private_knowledge` (caller email/phone spoken back) grounds
+on an exact source echo, contradicts on a near-miss misquote, and
+stays a `needs_review` candidate for Tier-2 entailment when no source
+exists — ungrounded PII is never a detector fail on absence alone.
+
+Tier 1 also emits behavioral and tool-integrity flags from clocks,
+argument hashes, and closed lexicons alone: agent loops, repeated
+caller utterances, missed farewells, unmet escalation requests,
+monologues, unrecovered barge-ins, dead air before a user hangup,
+duplicate mutating tool invocations (same tool + argument hash
+succeeding twice — a potential double charge, and the one integrity
+flag that also fails the pack `tool_use` precheck), retry storms,
+unfulfilled promises, and broken transfer promises. These are
+operational signals, never eval verdicts, and they roll up per kind so
+release regressions (`agent_version` deltas) are queryable.
+
+Compliance flags are regex-grade and audit-proof: a Luhn-validated card
+number or an SSN spoken by the agent (`pan_spoken`, `ssn_spoken`), and
+verbal secret requests (`verbal_secret_request`) are tier-1 flags with
+masked spans — a detector never republishes the secret it caught.
+Required-disclosure rules need no new mechanism: a predicate rubric
+clause `phrase_in_opening` fails a call whose opening agent turn lacks
+the configured phrase, deterministically and without a judge.
+
+Fleet rollups are serving generations. One `as_of_generation` per
+response. A page never mixes generations.
 
 ## Measurement vs timeline
 
 Hosted platforms send durations. They often do not send stage clocks.
-Those are different facts:
 
 - `StageMeasurement` — one duration, with `placement` (`interval`,
   `anchored_duration`, `unplaced`, `coarse_anchor`) and provenance.
@@ -160,28 +173,38 @@ Those are different facts:
   decode_failed.
 
 A plugin that claims `INTERVAL` and emits a value without timestamps
-fails conformance. A plugin that marks a signal unsupported while its
-own fixtures contain the unconsumed field also fails.
+fails conformance.
 
 Speech-to-speech sources use `user_input` / `generation` / `playout`.
 Cascade STT/LLM/TTS rows must not appear as empty placeholders.
 
-## Out of scope
+## The rules we will not break
 
-- A second storage backend, or SQLite “for demo.”
-- Waterfalls reconstructed from summary statistics.
-- Decode on the webhook request path.
-- A Langfuse-shaped ingest shim. First-class webhooks and OTLP win.
-- Tenant-uploaded plugins. Operator-installed wheels are trusted code,
-  not a sandbox.
-- Deepgram as a first-party plugin. `StreamSource` is declared so a tap
-  can land later without a core change.
-- Bland as a first-party plugin. The contract would accept it; it is
-  not in the committed set.
+1. **Never draw what you did not measure.** A waterfall bar requires
+   real start and end. Durations without clocks are chips.
+2. **Provenance is a field.** Every value is `provider_reported` (with
+   a source path) or `obsalt_derived` (with a derivation). Absence is
+   its own fact.
+3. **Raw first, then ack.** Wire bytes hit object storage and a
+   Postgres inbox/outbox **before** the provider-facing success
+   response. Decode is a pure function.
+4. **Vendor schema, not our own reflection.** Fixtures match a vendored
+   schema. No invented fields.
+5. **One choke point.** Redaction happens once, on the normalized
+   stream. Export policy is one place.
+6. **Revisions are immutable.** Reprocess → new `CallRevision` → CAS
+   promote. Never mutate a stored call in place.
+7. **One storage shape.** Postgres + ClickHouse + object storage.
+   Memory types are test doubles. No SQLite.
+8. **Providers are packages.** Core ships none.
+9. **Expensive analysis is sampled and budget-capped.** Missing Tier-2
+   output is not a pass.
+10. **`org_id` comes only from authenticated credentials.** Payload
+    fields and OTLP attributes may corroborate. They may never select.
+    No `require_auth=false`.
 
 ## Next
 
-Domain types and hangup reasons: [domain](reference/domain.md).
 Span conventions: [OTLP](reference/otlp.md).
-Tenancy and redaction: [security](reference/security.md).
-Changing the code: [Developing](developing.md).
+Tenancy: [Security](reference/security.md).
+Changing the code: [Develop](develop.md).

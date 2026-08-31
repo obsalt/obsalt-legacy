@@ -1,0 +1,28 @@
+{% set row = row|default(call) %}
+{% set qs = (filter_bar.detail_qs if filter_bar is defined else '')|default('') %}
+<a class="call-row" href="/v1/ui/calls/{{ row.call_id }}{% if qs %}?{{ qs }}{% endif %}">
+  <div class="when">
+    {{ row.when|default("") }}
+    <div>{{ row.duration|default("") }}{% if row.source %} · {{ row.source }}{% endif %}{% if row.agent_id %} · {{ row.agent_id }}{% endif %}{% if row.cost %} · {{ row.cost }}{% endif %}</div>
+  </div>
+  <div class="said">
+    {% if row.snippet %}
+      <span class="quote">{{ row.snippet }}</span>
+    {% elif row.last_user %}
+      <span class="quote">{{ row.last_user }}</span>
+    {% else %}
+      <span class="muted">No caller transcript on this call</span>
+    {% endif %}
+    {% if row.last_agent %}<div class="muted">Agent: {{ row.last_agent }}</div>{% endif %}
+  </div>
+  <div class="marks">
+    {% if row.hangup %}<span class="pill {{ row.hangup_tone|default('') }}">{{ row.hangup }}</span>{% endif %}
+    {% if row.latency %}<div class="muted">{{ row.latency }}</div>{% endif %}
+    {% for flag in row.flags_preview|default([]) %}
+      <span class="pill {{ flag.tone|default('loss') }}">{{ flag.label }}</span>
+    {% endfor %}
+    {% if row.flag_overflow %}<span class="muted">+{{ row.flag_overflow }}</span>{% endif %}
+
+    <span class="id muted" title="{{ row.call_id }}">{{ row.short_id }}</span>
+  </div>
+</a>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 from obsalt.domain.enums import Capability
 from obsalt.domain.events import NormalizedEvent
@@ -13,9 +14,10 @@ from obsalt.plugin.types import ReadableSpan
 class MapperRegistry:
     def __init__(self, plugins: Sequence[LoadedPlugin]) -> None:
         self.mappers: list[OtlpMapper] = [
-            p.plugin
+            # Concrete plugins implement the protocol structurally (§5.1).
+            cast(OtlpMapper, p.plugin)
             for p in plugins
-            if p.has(Capability.OTLP_MAPPER)  # type: ignore[misc]
+            if p.has(Capability.OTLP_MAPPER)
         ]
         # Conventions, not a provider. Lowest priority so first-party plugins win.
         if not any(getattr(mapper, "name", "") == "foreign-conventions" for mapper in self.mappers):

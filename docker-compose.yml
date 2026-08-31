@@ -1,7 +1,7 @@
-# Durable stack for local development and the supported production shape.
-# There is no SQLite / Postgres-only mode. After this is healthy:
-#   obsalt doctor && obsalt serve
-#   obsalt worker          # second terminal
+# Full obsalt stack for local development and the supported production shape:
+# stores + `obsalt serve` (API + console on :8080) + the decode worker.
+# There is no SQLite / Postgres-only mode. Secrets come from `.env`
+# (`obsalt init --write-env` writes it); defaults below are dev-only values.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -20,6 +20,10 @@ services:
       - ./packages/obsalt/src/obsalt/store/sql/postgres.sql:/docker-entrypoint-initdb.d/01.sql:ro
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports: ["8123:8123"]
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
@@ -44,8 +48,60 @@ services:
       MINIO_ROOT_USER: obsalt
       MINIO_ROOT_PASSWORD: obsalt-secret
     ports: ["9010:9000", "9001:9001"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
     volumes:
       - miniodata:/data
+
+  obsalt:
+    build: .
+    image: obsalt:local
+    command: ["obsalt", "serve"]
+    environment: &obsalt-env
+      OBSALT_POSTGRES_DSN: postgresql://obsalt:obsalt@postgres:5432/obsalt
+      OBSALT_CLICKHOUSE_URL: http://default:clickhouse@clickhouse:8123
+      OBSALT_REDIS_URL: redis://redis:6379/0
+      OBSALT_S3_ENDPOINT: http://minio:9000
+      OBSALT_S3_BUCKET: obsalt
+      OBSALT_S3_ACCESS_KEY: obsalt
+      OBSALT_S3_SECRET_KEY: obsalt-secret
+      OBSALT_HOST: 0.0.0.0
+      OBSALT_PORT: "8080"
+      OBSALT_MASTER_KEY: ${OBSALT_MASTER_KEY:-change-me-master-key-not-for-production}
+      OBSALT_SESSION_SECRET: ${OBSALT_SESSION_SECRET:-change-me-session}
+      OBSALT_BOOTSTRAP_API_KEY: ${OBSALT_BOOTSTRAP_API_KEY:-dev-key}
+      OBSALT_BOOTSTRAP_ORG_ID: ${OBSALT_BOOTSTRAP_ORG_ID:-local}
+    ports: ["8080:8080"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    restart: unless-stopped
+
+  worker:
+    image: obsalt:local
+    build: .
+    command: ["obsalt", "worker"]
+    environment:
+      <<: *obsalt-env
+    depends_on:
+      obsalt:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:

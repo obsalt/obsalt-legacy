@@ -7,7 +7,10 @@
     "end_unix_nano": 1755777600800000000,
     "attributes": {
       "gen_ai.conversation.id": "oai-stock-1",
-      "gen_ai.provider.name": "openai"
+      "gen_ai.provider.name": "openai",
+      "agent.id": "support",
+      "obsalt.pii.user_transcript": "Can you look up my order?",
+      "obsalt.hangup.reason": "user_hangup"
     }
   },
   {
@@ -17,7 +20,8 @@
     "start_unix_nano": 1755777600800000000,
     "end_unix_nano": 1755777601600000000,
     "attributes": {
-      "gen_ai.conversation.id": "oai-stock-1"
+      "gen_ai.conversation.id": "oai-stock-1",
+      "obsalt.pii.agent_transcript": "I have refunded order ORD-44121 for $49.99."
     }
   },
   {

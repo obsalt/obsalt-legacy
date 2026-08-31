@@ -5,12 +5,18 @@ from __future__ import annotations
 from obsalt.domain.enums import EnvelopeState
 from obsalt.plugin.types import ConnectionConfig, RawEnvelope, TombstoneHints
 from obsalt.security.secrets import hash_key
-from obsalt.util import sha256_bytes
+from obsalt.util import new_id
 
 
 class MemoryObjectStore:
     def __init__(self) -> None:
         self.blobs: dict[str, bytes] = {}
+
+    def ping(self) -> None:
+        return None
+
+    def ensure_bucket(self) -> None:
+        return None
 
     def put(self, key: str, body: bytes, *, content_type: str = "application/octet-stream") -> None:
         self.blobs[key] = body
@@ -35,6 +41,7 @@ class MemoryInbox:
         self.leased: set[str] = set()
         self.attempts: dict[str, int] = {}
         self.dlq: list[dict[str, str]] = []
+        self.runs: list[dict[str, str | None]] = []
 
     def tombstone(self, org_id: str, hints: TombstoneHints) -> None:
         self.tombstones.append((org_id, hints))
@@ -76,8 +83,8 @@ class MemoryInbox:
                 return True
         return False
 
-    def list_dlq(self) -> list[dict[str, str]]:
-        return list(self.dlq)
+    def list_dlq(self, limit: int = 200) -> list[dict[str, str]]:
+        return list(self.dlq[:limit])
 
     def purge_dlq(self, org_id: str, *, source_call_ids: set[str] | None = None) -> int:
         keep: list[dict[str, str]] = []
@@ -175,8 +182,34 @@ class MemoryInbox:
     def get_by_id(self, envelope_id: str) -> RawEnvelope | None:
         return self.by_id.get(envelope_id)
 
-    def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
-        return [envelope for envelope in self.by_id.values() if envelope.org_id == org_id]
+    def list_envelopes(self, org_id: str | None = None) -> list[RawEnvelope]:
+        envelopes = list(self.by_id.values())
+        if org_id is None:
+            return envelopes
+        return [envelope for envelope in envelopes if envelope.org_id == org_id]
+
+    def record_run(
+        self,
+        *,
+        org_id: str,
+        envelope_id: str | None,
+        decoder_version: str,
+        status: str,
+        error: str | None = None,
+        run_id: str | None = None,
+    ) -> str:
+        rid = run_id or new_id()
+        self.runs.append(
+            {
+                "id": rid,
+                "org_id": org_id,
+                "envelope_id": envelope_id,
+                "decoder_version": decoder_version,
+                "status": status,
+                "error": error,
+            }
+        )
+        return rid
 
     def drop_outbox(self, envelope_id: str) -> None:
         if envelope_id in self.outbox:
@@ -213,6 +246,5 @@ class MemoryResolver:
                 return True
         return False
 
-
-def digest_body(body: bytes) -> str:
-    return sha256_bytes(body)
+    def list_for_org(self, org_id: str) -> list[ConnectionConfig]:
+        return [cfg for cfg in self.connections.values() if cfg.org_id == org_id]

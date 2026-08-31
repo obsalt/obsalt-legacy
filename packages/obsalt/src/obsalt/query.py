@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from obsalt.analysis.cluster import cluster_hangups
+from obsalt.analysis.hallucination import hallucination_claim_list
+from obsalt.analysis.hangup import hangup_bucket
 from obsalt.analysis.rollups import (
     _NON_EVAL_ANALYZERS,
+    _binary_eval_verdict,
+    _is_confirmed_claim,
     _percentile,
     build_latency_rollup,
     build_quality_rollup,
     build_tools_rollup,
+    latest_analysis_results,
 )
-from obsalt.domain.enums import AnalysisState
 from obsalt.domain.models import AnalysisResult, CallRevision
 from obsalt.search.index import MemorySearchIndex
 
@@ -25,23 +29,8 @@ def analysis_for(
     call_id: str | None = None,
     revision: str | None = None,
 ) -> list[Any]:
-    lister = getattr(state.sink, "list_analysis", None)
-    if callable(lister):
-        return list(lister(org_id, call_id, revision))
-    store = getattr(state.sink, "analysis", {})
-    if call_id and revision:
-        return list(store.get((org_id, call_id, revision), []))
-    rows: list[Any] = []
-    if isinstance(store, dict):
-        for (stored_org, stored_call, stored_rev), values in store.items():
-            if stored_org != org_id:
-                continue
-            if call_id and stored_call != call_id:
-                continue
-            if revision and stored_rev != revision:
-                continue
-            rows.extend(values)
-    return rows
+    rows = list(state.sink.list_analysis(org_id, call_id, revision))
+    return latest_analysis_results(rows) if rows and hasattr(rows[0], "execution") else rows
 
 
 def analysis_for_active(state: Any, org_id: str, calls: Sequence[CallRevision]) -> list[Any]:
@@ -55,21 +44,11 @@ def analysis_for_active(state: Any, org_id: str, calls: Sequence[CallRevision]) 
 def active_calls(state: Any, org_id: str) -> list[CallRevision]:
     """Hydrate the Postgres/memory active-call pointer with an exact revision get."""
     items: list[CallRevision] = []
-    lister = getattr(state.pointers, "list_org", None)
-    if callable(lister):
-        for call_id, revision in lister(org_id):
-            rev = state.sink.get(org_id, call_id, revision)
-            if rev is None or rev.org_id != org_id:
-                continue
-            items.append(rev)
-    else:
-        revisions = getattr(state.sink, "revisions", {})
-        for rev in revisions.values():
-            if rev.org_id != org_id:
-                continue
-            if state.pointers.get(rev.org_id, rev.call_id) != rev.revision:
-                continue
-            items.append(rev)
+    for call_id, revision in state.pointers.list_org(org_id):
+        rev = state.sink.get(org_id, call_id, revision)
+        if rev is None or rev.org_id != org_id:
+            continue
+        items.append(rev)
     items.sort(key=lambda r: (range_clock(r), r.call_id), reverse=True)
     return items
 
@@ -82,8 +61,19 @@ def range_clock(call: CallRevision) -> datetime:
     return call.started_at or call.created_at
 
 
+def _as_aware(value: datetime | None) -> datetime | None:
+    if value is None or value.tzinfo is None:
+        return None if value is None else value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def in_range(call: CallRevision, start: datetime, end: datetime) -> bool:
-    return start <= range_clock(call) <= end
+    clock = _as_aware(range_clock(call))
+    if clock is None:
+        return False
+    start_aware = _as_aware(start) or start
+    end_aware = _as_aware(end) or end
+    return start_aware <= clock <= end_aware
 
 
 def matches_call_filters(
@@ -102,7 +92,7 @@ def matches_call_filters(
     if source and rev.source != source:
         return False
     if outcome:
-        hangup = rev.hangup.reason.value if rev.hangup else None
+        hangup = hangup_bucket(rev)
         if hangup != outcome and rev.status.value != outcome:
             return False
     if latency_ms is not None:
@@ -124,22 +114,35 @@ def matches_call_filters(
 
 
 def _flag_kinds(rows: list[Any]) -> set[str]:
-    """Confirmed flags only. Pending Tier-1 candidates are not filterable failures."""
+    """Operational flags, confirmed hallucinations, and pending candidates."""
     kinds: set[str] = set()
     for row in rows:
         execution = getattr(row, "execution", None)
-        if getattr(execution, "state", None) is not AnalysisState.COMPLETED:
-            continue
         payload = row.payload if hasattr(row, "payload") else {}
         analyzer = getattr(execution, "analyzer_id", "")
         if analyzer == "flags":
             items = payload.get("flags") or []
         elif analyzer == "hallucination":
-            items = [
+            confirmed = [
                 item
                 for item in (payload.get("claims") or [])
-                if isinstance(item, dict) and item.get("verdict") in {"contradicted", "unsupported"}
+                if isinstance(item, dict) and _is_confirmed_claim(item, payload)
             ]
+            open_items = [
+                item
+                for item in hallucination_claim_list(payload)
+                if isinstance(item, dict) and item.get("kind") and item not in confirmed
+            ]
+            if confirmed:
+                kinds.add("hallucination")
+                for item in confirmed:
+                    if item.get("kind"):
+                        kinds.add(str(item["kind"]))
+            if open_items:
+                kinds.add("hallucination_candidate")
+                for item in open_items:
+                    kinds.add(str(item["kind"]))
+            continue
         else:
             continue
         for item in items:
@@ -151,8 +154,8 @@ def _flag_kinds(rows: list[Any]) -> set[str]:
 def _eval_passed(rows: list[Any]) -> bool | None:
     """Rubric/eval verdicts only. Hallucination ``passed`` is a different signal.
 
-    Fail-closed: any completed eval that is not explicitly ``passed is True``
-    makes the call a fail. Missing output is not a pass.
+    Open verdicts (not_judged, evidence_missing, maybe) and shadow rows are not
+    fail. Missing output is not a pass.
     """
     seen = False
     all_passed = True
@@ -161,6 +164,12 @@ def _eval_passed(rows: list[Any]) -> bool | None:
         if analyzer in _NON_EVAL_ANALYZERS:
             continue
         payload = row.payload if hasattr(row, "payload") else {}
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("shadow"):
+            continue
+        if not _binary_eval_verdict(payload):
+            continue
         if "passed" not in payload:
             continue
         seen = True
@@ -296,24 +305,21 @@ def search_calls(
     org_id: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    if index is not None and hasattr(index, "query") and not isinstance(index, MemorySearchIndex):
-        result = index.query(org_id or "", query, filters=filters)
-        return _restrict_hits_to_calls(list(result.get("items") or []), calls)
-    if not query.strip():
+    if not query.strip() and (index is None or isinstance(index, MemorySearchIndex)):
         return []
-    search_index = (
-        index
-        if isinstance(index, MemorySearchIndex) and getattr(index, "_docs", None)
-        else MemorySearchIndex()
-    )
-    if not getattr(search_index, "_docs", None):
-        if not calls:
-            return []
-        search_index = MemorySearchIndex()
-        for call in calls:
-            search_index.index(call)
+    if index is not None:
+        merged = dict(filters or {})
+        if org_id:
+            merged.setdefault("org_id", org_id)
+        result = index.query(org_id or "", query, filters=merged or None)
+        return _restrict_hits_to_calls(list(result.get("items") or []), calls)
+    if not query.strip() or not calls:
+        return []
+    search_index = MemorySearchIndex()
+    for call in calls:
+        search_index.upsert_revision(call)
     merged = dict(filters or {})
     if org_id:
         merged.setdefault("org_id", org_id)
-    result = search_index.query(query, filters=merged or None)
+    result = search_index.query(org_id or "", query, filters=merged or None)
     return _restrict_hits_to_calls(list(result.get("items") or []), calls)

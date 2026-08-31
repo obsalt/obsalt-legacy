@@ -27,6 +27,7 @@ ACTIONS: dict[str, Role] = {
     "backfill": Role.ADMIN,
     "privacy.delete": Role.ADMIN,
     "webhooks.write": Role.ADMIN,
+    "eval_runners.write": Role.ADMIN,
     "export": Role.ADMIN,
     "users.read": Role.ADMIN,
     "users.write": Role.OWNER,
@@ -43,3 +44,9 @@ def allowed(role: Role, action: str) -> bool:
 
 def require_role(role: Role, action: str) -> bool:
     return allowed(role, action)
+
+
+def can_map(role: Role | None) -> dict[str, bool]:
+    if role is None:
+        return {action: False for action in ACTIONS}
+    return {action: allowed(role, action) for action in ACTIONS}

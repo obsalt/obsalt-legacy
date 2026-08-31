@@ -1,71 +1,145 @@
 {% extends "base.html" %}
 {% block title %}obsalt — quality{% endblock %}
 {% block content %}
-  {% set quality = quality|default(rollup|default({})) %}
-  {% set evals = quality.evals|default({}) %}
-  {% set baseline = quality.baseline|default({}) %}
-  {% set hallucinations = quality.hallucinations|default({}) %}
+  {% set view = view|default({}) %}
   <h1>Quality</h1>
-  <p>Serving generation <code>{{ quality.as_of_generation|default(as_of_generation) }}</code>.</p>
-  <p class="muted">A time range is required.</p>
   {% if error %}
     <p class="decode_failed">{{ error }}</p>
   {% endif %}
-  {% set filters = filters|default({}) %}
-  <form class="filters" method="get" action="/v1/ui/quality">
-    <label>Start <input name="start" value="{{ filters.start|default('') }}" /></label>
-    <label>End <input name="end" value="{{ filters.end|default('') }}" /></label>
-    <button type="submit">Filter</button>
-  </form>
-  <p class="muted">{{ quality.note|default("Missing output is never interpreted as a passing call. Baseline-sample statistics are separate from the trigger-biased review queue.") }}</p>
-  <p>Tier-2 spend: {{ spend_usd|default("—") }} / {{ budget_usd|default("—") }} USD</p>
+  {% set filter_bar = filter_bar|default(filters)|default({}) %}
+  {% include "_filter_bar.html" %}
+  <p class="caption">{% if view.budget_usd %}Judge spend ${{ view.spend_usd }} of ${{ view.budget_usd }} this month. {% elif view.spend_usd %}Judge spend ${{ view.spend_usd }}. {% endif %}{{ view.note }}</p>
+
+  <div class="stats">
+    <div class="stat">
+      <span class="n">{{ view.eligible|default(0) }}</span>
+      <div class="q">Calls in range</div>
+    </div>
+    <div class="stat">
+      <span class="n">{{ view.hallucination_count|default(0) }}</span>
+      <div class="q">Confirmed flag calls</div>
+    </div>
+    <div class="stat">
+      <span class="n">{{ view.candidate_count|default(0) }}</span>
+      <div class="q">Candidate calls</div>
+    </div>
+    <div class="stat">
+      <span class="n">{{ view.evidence_missing_calls|default(0) }}</span>
+      <div class="q">Evidence missing</div>
+    </div>
+    <div class="stat">
+      <span class="n">{{ view.not_settled_calls|default(0) }}</span>
+      <div class="q">Not settled</div>
+    </div>
+  </div>
+  <p class="caption">{{ view.headline|default("") }} Not a scorecard. Missing judge output is never a pass. Coverage: {{ view.checkable|default(0) }} checkable · {{ view.scanned|default(0) }} scanned · {{ view.unscannable|default(0) }} no agent transcript. Eval pass rate {{ view.pass_text|default("Not judged") }}{% if view.judged_caption %} · {{ view.judged_caption }}{% endif %}. The Calls strip counts completed pack/rubric evals.</p>
+
+  {% if view.by_rubric %}
   <section class="panel">
-    <h2>Evals</h2>
-    <p>
-      Eligible {{ evals.eligible|default(0) }}
-      · completed {{ evals.completed|default(0) }}
-      · passed {{ evals.passed|default(0) }}
-      · failed {{ evals.failed|default(0) }}
-    </p>
-    <p class="muted">Unbiased baseline: completed {{ baseline.completed|default(0) }}, passed {{ baseline.passed|default(0) }}, failed {{ baseline.failed|default(0) }}</p>
+    <h2>Evals by rubric</h2>
+    <table>
+      <thead><tr><th>Rubric</th><th>Completed</th><th>Passed</th><th>Failed</th></tr></thead>
+      <tbody>
+        {% for name, row in view.by_rubric.items() %}
+        <tr>
+          <td>{{ name }}</td>
+          <td>{{ row.completed }}</td>
+          <td>{{ row.passed }}</td>
+          <td>{{ row.failed }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </section>
+  {% elif not view.completed %}
+  <p class="caption">No completed evals yet. Detectors and predicates run on every call. English judges need Settings → Evals (a runner, a cap, and enable). <a href="/v1/ui/settings#evals">Configure evals</a>.</p>
+  {% endif %}
+
   <section class="panel">
     <h2>Hallucination flags</h2>
-    <p>Count {{ hallucinations.count|default(0) }}</p>
-    {% for kind, n in (hallucinations.by_kind|default({})).items() %}
-      <div class="chip">{{ kind }} {{ n }}</div>
-    {% endfor %}
+    {% if view.hallucination_kinds %}
+      <div class="pills">
+        {% for item in view.hallucination_kinds %}
+          <span class="pill loss">{{ item.label }} {{ item.count }}</span>
+        {% endfor %}
+      </div>
+      <p class="caption">{{ view.hallucination_count|default(0) }} calls · {{ view.hallucination_claim_count|default(0) }} claims. Detector-settled. Each counted call quotes an agent span and a tool or knowledge span.</p>
+    {% else %}
+      <p class="muted">No confirmed hallucinations in this range. Ungrounded prices, fabricated ids, and phantom tool success appear as candidates on the call when they cannot bind to a tool.</p>
+    {% endif %}
   </section>
+
+  <section class="panel">
+    <h2>Grounding candidates</h2>
+    {% if view.candidate_kinds %}
+      <div class="pills">
+        {% for item in view.candidate_kinds %}
+          <span class="pill warn">{{ item.label }} {{ item.count }}</span>
+        {% endfor %}
+      </div>
+      <p class="caption">{{ view.candidate_count|default(0) }} calls · {{ view.candidate_claim_count|default(0) }} claims. Not confirmed. Unbound success-claims. Empty grounding is the Evidence missing tile.</p>
+    {% elif view.unscannable and not view.scanned %}
+      <p class="muted">No agent transcript to scan in this range.</p>
+    {% else %}
+      <p class="muted">No pending grounding candidates.</p>
+    {% endif %}
+  </section>
+
+  {% if view.groundedness and view.groundedness.calls %}
+  <section class="panel">
+    <h2>Local groundedness spans</h2>
+    <p class="caption">{{ view.groundedness.calls }} calls · {{ view.groundedness.span_count|default(0) }} spans{% if view.groundedness.not_judged %} · {{ view.groundedness.not_judged }} not judged{% endif %}. Encoder spans are not confirmed hallucination flags.</p>
+  </section>
+  {% endif %}
+
   <section class="panel">
     <h2>Review queue</h2>
+    {% if view.review_queue %}
     <table>
       <thead>
-        <tr><th>Call</th><th>Kind</th><th>State</th><th>Passed</th><th>Review</th></tr>
+        <tr><th>Call</th><th>Last words</th><th>Severity</th><th>Kind</th><th>State</th><th>Passed</th><th>Review</th></tr>
       </thead>
       <tbody>
-        {% for item in quality.review_queue|default([]) %}
+        {% for item in view.review_queue %}
         <tr>
-          <td><a href="/v1/ui/calls/{{ item.call_id }}">{{ item.call_id }}</a></td>
-          <td>{{ item.kind }}</td>
-          <td>{{ item.state }}</td>
-          <td>{{ item.passed }}</td>
+          <td><a class="id" href="/v1/ui/calls/{{ item.call_id }}{% if filter_bar.detail_qs %}?{{ filter_bar.detail_qs }}{% endif %}" title="{{ item.call_id }}">{{ item.short_id or item.call_id }}</a>
+            {% if item.hangup %}<div><span class="pill {{ item.hangup_tone }}">{{ item.hangup }}</span></div>{% endif %}
+          </td>
+          <td>{% if item.last_user %}<span class="quote">{{ item.last_user }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ item.severity_label or "—" }}</td>
+          <td>{{ item.label }}</td>
+          <td>{{ item.state_label }}</td>
+          <td>{{ item.passed_label }}</td>
           <td>
             {% if csrf %}
             <form method="post" action="/v1/ui/quality/review">
               <input type="hidden" name="csrf" value="{{ csrf }}" />
               <input type="hidden" name="call_id" value="{{ item.call_id }}" />
-              <input type="hidden" name="start" value="{{ filters.start|default('') }}" />
-              <input type="hidden" name="end" value="{{ filters.end|default('') }}" />
+              <input type="hidden" name="revision" value="{{ item.revision|default('') }}" />
+              <input type="hidden" name="analyzer_id" value="{{ item.analyzer_id|default('') }}" />
+              <input type="hidden" name="severity" value="{{ item.severity|default('') }}" />
+              {% if filter_bar.preset %}<input type="hidden" name="preset" value="{{ filter_bar.preset }}" />{% endif %}
+              <input type="hidden" name="start" value="{{ filter_bar.start|default('') }}" />
+              <input type="hidden" name="end" value="{{ filter_bar.end|default('') }}" />
+              {% if filter_bar.agent_id %}<input type="hidden" name="agent_id" value="{{ filter_bar.agent_id }}" />{% endif %}
+              {% if filter_bar.source %}<input type="hidden" name="source" value="{{ filter_bar.source }}" />{% endif %}
+              {% if filter_bar.flag %}<input type="hidden" name="flag" value="{{ filter_bar.flag }}" />{% endif %}
+              <label>Note <input name="note" /></label>
               <button type="submit" name="agree" value="1">Agree</button>
               <button type="submit" name="agree" value="0">Disagree</button>
             </form>
             {% endif %}
           </td>
         </tr>
-        {% else %}
-        <tr><td colspan="5">Review queue is empty.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+    {% else %}
+    <p class="muted">Nothing to review.</p>
+    {% endif %}
   </section>
+
+  {% if view.as_of_generation %}
+  <p class="caption fold">One rollup generation; not mixed. {{ view.as_of_generation }}</p>
+  {% endif %}
 {% endblock %}

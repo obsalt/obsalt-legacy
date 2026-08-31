@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -25,6 +24,7 @@ _EPILOG = """Typical local path:
   obsalt doctor
   obsalt serve          # terminal 1 — API + console
   obsalt worker         # terminal 2 — decode / assemble / analyze
+  obsalt seed           # optional: fill the console from vendored fixtures
 
 Docs: https://github.com/coder-with-a-bushido/obsalt/tree/main/docs
 """
@@ -67,10 +67,6 @@ def build_parser() -> argparse.ArgumentParser:
     plugins = sub.add_parser("plugins", help="List installed source plugins")
     plugins.add_argument("--json", action="store_true")
     plugins.set_defaults(func=cmd_plugins)
-    demo = sub.add_parser(
-        "demo", help="Launch the ephemeral full stack (docker compose). Not for production."
-    )
-    demo.set_defaults(func=cmd_demo)
     parse = sub.add_parser("parse", help="Decode a payload with an installed plugin")
     parse.add_argument("path")
     parse.add_argument("--provider", required=True)
@@ -83,6 +79,14 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--provider", required=True)
     record.add_argument("--out", default=None)
     record.set_defaults(func=cmd_record_golden)
+    eval_case = sub.add_parser(
+        "record-eval-case",
+        help="Write a redacted regression fixture from a confirmed production failure",
+    )
+    eval_case.add_argument("call_id")
+    eval_case.add_argument("--org", required=True)
+    eval_case.add_argument("--out", default=None)
+    eval_case.set_defaults(func=cmd_record_eval_case)
     drift = sub.add_parser(
         "schema-drift", help="Compare a vendored plugin schema to a refetched copy"
     )
@@ -108,6 +112,35 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--org", required=True)
     export.add_argument("--dest", required=True)
     export.set_defaults(func=cmd_export)
+    seed = sub.add_parser(
+        "seed",
+        help="Replay vendored provider fixtures into a running serve (dev only)",
+    )
+    seed.add_argument(
+        "--base",
+        default=None,
+        help="obsalt serve origin (default http://localhost:8080)",
+    )
+    seed.add_argument("--key", default=None, help="X-API-Key (default OBSALT_BOOTSTRAP_API_KEY)")
+    seed.add_argument("--count", type=int, default=8, help="Clones per provider template")
+    seed.add_argument(
+        "--providers",
+        default=None,
+        help="Comma-separated plugin names (default: all first-party)",
+    )
+    seed.add_argument("--window-days", type=int, default=7)
+    seed.add_argument(
+        "--include-example",
+        action="store_true",
+        help="Also post the example plugin fixture",
+    )
+    seed.add_argument("--json", action="store_true")
+    seed.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Clone and schema-validate without HTTP",
+    )
+    seed.set_defaults(func=cmd_seed)
     version = sub.add_parser("version")
     version.set_defaults(func=lambda _a: print(__version__) or 0)
     return parser
@@ -147,7 +180,7 @@ def cmd_plugins(args: argparse.Namespace) -> int:
         return 0 if rows else 1
     if not rows:
         print("No plugins installed. Core ships none.")
-        print("Try: pip install obsalt-vapi   or   pip install -r requirements-dev.txt")
+        print("Try: uv pip install obsalt-vapi   or   uv sync --all-packages")
         return 1
     width = max(len(row["name"]) for row in rows)
     for row in rows:
@@ -166,47 +199,6 @@ def _require_plugin(name: str) -> Any:
             "Core ships no providers. pip install obsalt-vapi / obsalt-retell / …", file=sys.stderr
         )
         raise SystemExit(2) from None
-
-
-def _compose_file() -> Path:
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidate = parent / "docker-compose.yml"
-        if candidate.is_file():
-            return candidate
-    return Path("docker-compose.yml")
-
-
-def cmd_demo(_args: argparse.Namespace) -> int:
-    compose = _compose_file()
-    if not compose.exists():
-        print("docker-compose.yml not found", file=sys.stderr)
-        return 2
-    print("NOT FOR PRODUCTION. Data is not durable beyond this compose project.")
-    rc = subprocess.call(["docker", "compose", "-f", str(compose), "up", "-d"])
-    if rc != 0:
-        return rc
-    settings = Settings()
-    for _ in range(30):
-        report = run_doctor(settings, probe=True)
-        if report.required_ok:
-            break
-        time.sleep(1)
-    else:
-        print("compose services did not become ready", file=sys.stderr)
-        format_report(run_doctor(settings, probe=True), sys.stderr)
-        return 2
-    try:
-        state = production_state(settings)
-    except Exception as exc:
-        print("Could not connect to Postgres / ClickHouse / object storage.", file=sys.stderr)
-        print(exc, file=sys.stderr)
-        return 2
-    host = settings.host
-    port = settings.port
-    app = create_app(settings, state)
-    uvicorn.run(app, host=host, port=port)
-    return 0
 
 
 def cmd_parse(args: argparse.Namespace) -> int:
@@ -242,6 +234,30 @@ def cmd_record_golden(args: argparse.Namespace) -> int:
     dest.write_text(json.dumps(events, indent=2) + "\n")
     print(f"wrote {dest}")
     print("Review the golden diff before committing.")
+    return 0
+
+
+def cmd_record_eval_case(args: argparse.Namespace) -> int:
+    from obsalt.analysis.eval_case import build_eval_case
+    from obsalt.query import analysis_for
+
+    settings = Settings()
+    try:
+        state = production_state(settings)
+    except Exception as exc:
+        print("Could not connect to the durable stack.", file=sys.stderr)
+        print("Supported path: docker compose up -d && obsalt record-eval-case", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
+    rev = state.sink.get(args.org, args.call_id, state.pointers.get(args.org, args.call_id) or "")
+    if rev is None or rev.org_id != args.org:
+        print("call not found", file=sys.stderr)
+        return 1
+    case = build_eval_case(rev, analysis_for(state, args.org, rev.call_id, rev.revision))
+    dest = Path(args.out) if args.out else Path(f"eval-case-{args.call_id[-8:]}.json")
+    dest.write_text(json.dumps(case, indent=2) + "\n")
+    print(f"wrote {dest}")
+    print("Review the fixture before committing. Not a caller simulator.")
     return 0
 
 
@@ -312,6 +328,56 @@ def cmd_export(args: argparse.Namespace) -> int:
         as_of_generation=state.rollup_generation,
     )
     print(json.dumps(report, indent=2))
+    return 0
+
+
+def cmd_seed(args: argparse.Namespace) -> int:
+    import httpx
+
+    from obsalt.ops.seed import (
+        DEFAULT_BASE,
+        SeedError,
+        format_report,
+        run_seed,
+    )
+
+    settings = Settings()
+    providers = None
+    if args.providers:
+        providers = [part.strip() for part in str(args.providers).split(",") if part.strip()]
+    base = (args.base or DEFAULT_BASE).rstrip("/")
+    key = args.key or settings.bootstrap_api_key
+    try:
+        if args.dry_run:
+            report = run_seed(
+                client=None,
+                api_key=key,
+                count=args.count,
+                providers=providers,
+                window_days=args.window_days,
+                include_example=args.include_example,
+                dry_run=True,
+                base_url=base,
+            )
+        else:
+            with httpx.Client(base_url=base, timeout=30.0) as client:
+                report = run_seed(
+                    client=client,
+                    api_key=key,
+                    count=args.count,
+                    providers=providers,
+                    window_days=args.window_days,
+                    include_example=args.include_example,
+                    dry_run=False,
+                    base_url=base,
+                )
+    except SeedError as exc:
+        print(str(exc), file=sys.stderr)
+        return int(exc.exit_code)
+    if args.json:
+        print(json.dumps(report.as_dict(), indent=2))
+    else:
+        print(format_report(report))
     return 0
 
 

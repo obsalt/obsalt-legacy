@@ -13,6 +13,9 @@ dependencies = ["obsalt==0.0.0"]
 [project.entry-points."obsalt.plugins"]
 elevenlabs = "obsalt_elevenlabs.plugin:ElevenLabsPlugin"
 
+[tool.uv.sources]
+obsalt = { workspace = true }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

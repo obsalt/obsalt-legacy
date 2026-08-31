@@ -123,11 +123,11 @@ def emit_standard_event(
     """Enqueue one Standard Webhooks event. Stable id; never a second logical event."""
     if event_type not in STANDARD_EVENTS and event_type != "*":
         return
-    store = getattr(state, "webhook_store", None)
+    store = state.webhook_store
     dests = (
         store.list_destinations(revision.org_id)
-        if getattr(store, "durable", False)
-        else list(getattr(state, "webhook_destinations", None) or [])
+        if store is not None
+        else list(state.webhook_destinations)
     )
     if not dests:
         return
@@ -145,7 +145,7 @@ def emit_standard_event(
     event_id = f"{event_type}:{revision.org_id}:{revision.call_id}:{revision.revision}"
     if suffix:
         event_id = f"{event_id}:{suffix}"
-    if getattr(store, "durable", False):
+    if store is not None:
         for dest in dests:
             event = dest.get("event_type") or dest.get("event") or "call.finalized"
             if event not in {event_type, "*"}:
@@ -153,11 +153,7 @@ def emit_standard_event(
             store.enqueue({"event_id": event_id, "dest": dest, "payload": payload, "attempts": 0})
         drain_outbound(state)
         return
-    outbox = getattr(state, "webhook_outbox", None)
-    if outbox is None:
-        state.webhook_outbox = []
-        outbox = state.webhook_outbox
-    if any(item.get("event_id") == event_id for item in outbox):
+    if any(item.get("event_id") == event_id for item in state.webhook_outbox):
         return
     for dest in dests:
         if dest.get("org_id") and dest["org_id"] != revision.org_id:
@@ -165,7 +161,7 @@ def emit_standard_event(
         event = dest.get("event_type") or dest.get("event") or "call.finalized"
         if event not in {event_type, "*"}:
             continue
-        outbox.append(
+        state.webhook_outbox.append(
             {
                 "event_id": event_id,
                 "dest": dest,
@@ -213,9 +209,8 @@ def _overlap_secrets(dest: dict[str, Any]) -> list[bytes]:
 
 
 def drain_outbound(state: Any) -> int:
-    store = getattr(state, "webhook_store", None)
-    durable = getattr(store, "durable", False)
-    outbox = store.claim(32) if durable else list(getattr(state, "webhook_outbox", None) or [])
+    store = state.webhook_store
+    outbox = store.claim(32) if store is not None else list(state.webhook_outbox)
     remaining: list[dict[str, Any]] = []
     delivered = 0
     for item in outbox:
@@ -241,14 +236,14 @@ def drain_outbound(state: Any) -> int:
         )
         if ok:
             delivered += 1
-            if durable:
+            if store is not None:
                 store.mark_delivered(item["event_id"])
             continue
         item["attempts"] = int(item.get("attempts") or 0) + 1
         item["last_error"] = detail
         if item["attempts"] < 8 and str(detail).startswith("retryable"):
             remaining.append(item)
-            if durable:
+            if store is not None:
                 store.mark_failed(item["event_id"], detail, item["attempts"])
         else:
             log.warning(
@@ -257,8 +252,8 @@ def drain_outbound(state: Any) -> int:
             from obsalt.metrics import dlq_inserts_total
 
             dlq_inserts_total.inc()
-            if durable:
-                store.mark_failed(item["event_id"], detail, item["attempts"])
-    if not durable:
+            if store is not None:
+                store.mark_failed(item["event_id"], detail, 8)
+    if store is None:
         state.webhook_outbox = remaining
     return delivered

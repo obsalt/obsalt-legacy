@@ -8,6 +8,8 @@
     "attributes": {
       "gen_ai.conversation.id": "pipe-stock-1",
       "gen_ai.provider.name": "pipecat",
+      "agent.id": "support",
+      "obsalt.hangup.reason": "user_hangup",
       "turn.index": 0,
       "turn.speaker": "user",
       "obsalt.pii.user_transcript": "I need a refund for order ORD-100"
@@ -60,6 +62,19 @@
       "gen_ai.conversation.id": "pipe-stock-1",
       "turn.index": 0,
       "metrics.ttfb": 22.0
+    }
+  },
+  {
+    "name": "turn",
+    "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "span_id": "1111111111111111",
+    "start_unix_nano": 1755777601200000000,
+    "end_unix_nano": 1755777601800000000,
+    "attributes": {
+      "gen_ai.conversation.id": "pipe-stock-1",
+      "turn.index": 1,
+      "turn.speaker": "agent",
+      "obsalt.pii.agent_transcript": "I have refunded order ORD-99999 for $12.00."
     }
   }
 ]

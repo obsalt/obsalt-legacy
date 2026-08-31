@@ -22,7 +22,7 @@ async def serve_otlp_grpc(state: Any, *, port: int) -> Any:
     from obsalt.ingest.receive import ReceiveLimits
     from obsalt.otel.receiver import request_to_spans
 
-    class _Servicer(trace_service_pb2_grpc.TraceServiceServicer):  # type: ignore[misc]
+    class _Servicer(trace_service_pb2_grpc.TraceServiceServicer):
         async def Export(self, request: Any, context: Any) -> Any:  # noqa: N802
             raw = request.SerializeToString()
             spans = request_to_spans(request)
@@ -63,7 +63,7 @@ async def serve_otlp_grpc(state: Any, *, port: int) -> Any:
             return trace_service_pb2.ExportTraceServiceResponse()
 
     server = aio.server()
-    trace_service_pb2_grpc.add_TraceServiceServicer_to_server(_Servicer(), server)
+    trace_service_pb2_grpc.add_TraceServiceServicer_to_server(_Servicer(), server)  # type: ignore[no-untyped-call]
     server.add_insecure_port(f"[::]:{port}")
     await server.start()
     log.info("OTLP gRPC listening on %s", port)
@@ -81,7 +81,9 @@ def _org_from_metadata(context: Any, state: Any) -> str | None:
     if found is None and getattr(state, "key_directory", None) is not None:
         record = state.key_directory.lookup(str(key))
         if record is not None:
-            return record.org_id
+            org_id: str = record.org_id
+            return org_id
     if found is None:
         return None
-    return found[0]
+    org: str = found[0]
+    return org

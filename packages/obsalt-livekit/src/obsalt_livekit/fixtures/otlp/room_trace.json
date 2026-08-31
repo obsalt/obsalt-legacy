@@ -8,6 +8,8 @@
     "attributes": {
       "lk.room.name": "room-stock-1",
       "gen_ai.conversation.id": "lk-stock-1",
+      "agent.id": "support",
+      "obsalt.hangup.reason": "completed",
       "gen_ai.usage.audio.input_tokens": 42
     }
   },

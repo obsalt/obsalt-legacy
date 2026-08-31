@@ -11,25 +11,26 @@ There is no SQLite mode. There is no require_auth=false.
 - A second storage backend
 - org_id chosen from a payload field or OTLP attribute
 - Missing Tier-2 judge output as a passing eval
+- HeuristicJudge scoring an English rubric (those stay not_judged)
+- A Faithfulness Pass/Fail table from regex. Cheap path is detector/2 flags.
 - Provider fields that are not in the vendored schema
 - A private POST-us-a-JSON-snapshot SDK. Custom agents emit OTLP.
 
 ## Read first
 
-- docs/concepts.md — voice-agent primer (STT/LLM/TTS, webhooks, OTLP)
-- docs/product.md — six capabilities, comparison tables, source fidelity
+- docs/product.md — six capabilities, two ingest paths, source fidelity
 - docs/architecture.md — pipeline + "The rules we will not break"
-- docs/console.md — what each source actually shows
+- docs/console.md — screens, join view, chips vs waterfall
 - docs/conventions.md — vocabulary and the rules that show up in code
 - AGENTS.md — one-screen version for coding agents
 
 ## How-tos
 
-- docs/getting-started.md — compose, sign in, empty list is success
+- docs/start.md — compose, sign in, empty list is success
+- docs/develop.md — local setup, obsalt seed / Load sample calls
 - docs/connect-hosted.md — Vapi, Retell, ElevenLabs, Cartesia webhooks
 - docs/connect-custom.md — Pipecat, LiveKit, Realtime, Gemini Live via OTLP
-- docs/troubleshooting.md — empty console, 401s, missing waterfall
-- docs/ops.md — health, replay, deletion, rotation
+- docs/operate.md — health, replay, deletion, empty list, 401s, missing waterfall
 - docs/plugins.md — public plugin contract
 
 ## Reference
@@ -37,10 +38,16 @@ There is no SQLite mode. There is no require_auth=false.
 - docs/api.md — /v1 routes
 - docs/reference/configuration.md — OBSALT_*
 - docs/reference/cli.md — obsalt command
-- docs/reference/domain.md — CallRevision, measurements, hangup taxonomy
 - docs/reference/otlp.md — span names, attributes, PII
 - docs/reference/security.md — tenancy, redaction, egress
-- docs/reference/glossary.md — chip, revision, provenance, STT/TTS
+
+## Data flow (ASCII)
+
+Hosted platform --signed webhook--> ingest
+Your agent     --OTLP traces------> ingest
+ingest: write blob -> Postgres inbox/outbox -> 2xx ack
+worker: decode -> redact -> assemble -> ClickHouse revision -> CAS Postgres pointer
+console: read pointer, then that revision
 
 ## Vocabulary to keep
 

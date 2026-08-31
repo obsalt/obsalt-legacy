@@ -8,6 +8,7 @@ from obsalt.assemble.facts import stamp_event
 from obsalt.assemble.promote import MemoryPointerStore, promote
 from obsalt.assemble.timeline import timeline_view
 from obsalt.domain.enums import (
+    HangupReason,
     MeasurementPlacement,
     Metric,
     PipelineArchitecture,
@@ -175,6 +176,55 @@ def test_assemble_derives_started_at_from_the_earliest_turn() -> None:
     assert stamp.derivation == "min(turn.started_at)"
 
 
+def test_assemble_derives_started_at_from_stage_intervals_when_no_turns() -> None:
+    start = datetime(2026, 8, 22, 12, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 22, 12, 0, 2, tzinfo=UTC)
+    events = [
+        stamp_event(
+            CallObserved(source_call_id="c1", agent_id="a"),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=0,
+        ),
+        stamp_event(
+            StageObserved(
+                stage=Stage.TTS,
+                metric=Metric.DURATION,
+                value_ms=400,
+                placement=MeasurementPlacement.INTERVAL,
+                started_at=start,
+                ended_at=end,
+                provenance=Provenance.PROVIDER_REPORTED,
+                source_path="span:tts",
+            ),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=1,
+        ),
+        stamp_event(
+            OutcomeObserved(provider_code="completed", reason=HangupReason.COMPLETED, ended_at=end),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=2,
+        ),
+    ]
+    call = Assembler(_decl(), decoder_version="t/1", processing_run_id="r").assemble(
+        "o", "cid", "test", events
+    )
+    assert call.started_at == start
+    assert call.ended_at == end
+    assert call.provenance["started_at"].derivation == "min(stage.started_at)"
+
+
 def test_assemble_stamps_hangup_last_speaker_and_text_refs() -> None:
     first = datetime(2026, 8, 22, 12, 0, 1, tzinfo=UTC)
     later = datetime(2026, 8, 22, 12, 0, 3, tzinfo=UTC)
@@ -227,6 +277,41 @@ def test_assemble_stamps_hangup_last_speaker_and_text_refs() -> None:
     assert call.hangup.last_speaker is Speaker.AGENT
     assert call.hangup.last_user_text_ref == call.turns[0].text_ref
     assert call.hangup.last_agent_text_ref == call.turns[1].text_ref
+    assert call.ended_at == later
+    assert call.duration_ms == 2000.0
+    assert call.provenance["ended_at"].derivation == "max(turn.ended_at) after ending reported"
+
+
+def test_assemble_does_not_invent_end_for_an_ongoing_call() -> None:
+    first = datetime(2026, 8, 22, 12, 0, 1, tzinfo=UTC)
+    events = [
+        stamp_event(
+            CallObserved(source_call_id="c1", agent_id="a"),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=0,
+        ),
+        stamp_event(
+            TurnObserved(
+                turn_index=0, speaker=Speaker.USER, text="hi", started_at=first, ended_at=first
+            ),
+            org_id="o",
+            call_key="k",
+            envelope_id="e",
+            decoder_version="t/1",
+            processing_run_id="r",
+            envelope_sequence=1,
+        ),
+    ]
+    call = Assembler(_decl(), decoder_version="t/1", processing_run_id="r").assemble(
+        "o", "cid", "test", events
+    )
+    assert call.hangup is None
+    assert call.ended_at is None
+    assert call.duration_ms is None
 
 
 def test_promote_cas_and_retain_prior_revision() -> None:

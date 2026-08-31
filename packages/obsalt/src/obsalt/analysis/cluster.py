@@ -13,7 +13,8 @@ from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
 
-from obsalt.domain.enums import HangupParty, HangupReason, Speaker
+from obsalt.analysis.hangup import hangup_bucket, hangup_provider_code
+from obsalt.domain.enums import HangupParty, Speaker
 from obsalt.domain.models import CallRevision
 from obsalt.plugin.types import RedactedDocument
 from obsalt.search.hybrid import LocalEmbedder, content_tokens
@@ -54,12 +55,12 @@ class MemoryHangupClusterStore:
         return payload
 
 
-class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
+class ClickHouseHangupClusterStore:
     """Persist scheduled cluster generations. Pageviews read the table, not re-embed."""
 
     def __init__(self, client: Any) -> None:
-        super().__init__()
         self._client = client
+        self._mem = MemoryHangupClusterStore()
 
     def refresh(
         self,
@@ -70,7 +71,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
         embedder: LocalEmbedder | None = None,
         similarity_threshold: float = 0.3,
     ) -> dict[str, Any]:
-        payload = super().refresh(
+        payload = self._mem.refresh(
             org_id, calls, generation, embedder=embedder, similarity_threshold=similarity_threshold
         )
         try:
@@ -116,7 +117,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
         return payload
 
     def get(self, org_id: str, generation: str | None = None) -> dict[str, Any] | None:
-        cached = super().get(org_id, generation)
+        cached = self._mem.get(org_id, generation)
         if cached is not None:
             return cached
         try:
@@ -142,7 +143,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
             served_gen = served_gen or str(gen)
             if generation and str(gen) != generation:
                 continue
-            parsed = {}
+            parsed: dict[str, Any] = {}
             if payload:
                 if isinstance(payload, bytes):
                     payload = payload.decode("utf-8")
@@ -169,7 +170,7 @@ class ClickHouseHangupClusterStore(MemoryHangupClusterStore):
             "call_count": sum(int(row.get("size") or 0) for row in clusters),
             "note": "scheduled clustering of the active-revision set; not re-embedded per pageview",
         }
-        self.by_org[org_id] = payload
+        self._mem.by_org[org_id] = payload
         return payload
 
 
@@ -191,7 +192,14 @@ def cluster_hangups(
         used = embedder or LocalEmbedder()
         subclusters = _embed_subclusters(members, used, similarity_threshold)
         for index, subset in enumerate(subclusters):
-            ranked = sorted(subset, key=lambda call: (-_loss(call), call.call_id))
+            ranked = sorted(
+                subset,
+                key=lambda call: (
+                    call.started_at.isoformat() if call.started_at else "",
+                    call.call_id,
+                ),
+                reverse=True,
+            )
             cluster_id = f"{reason}:{party}:{index:02d}"
             top = ranked[0]
             clusters.append(
@@ -202,8 +210,6 @@ def cluster_hangups(
                     "size": len(ranked),
                     "call_ids": [call.call_id for call in ranked],
                     "top_call_id": top.call_id,
-                    "max_loss_score": _loss(top),
-                    "loss_reasons": list(top.hangup.loss_reasons) if top.hangup else [],
                     "last_speaker": (
                         top.hangup.last_speaker.value
                         if top.hangup and top.hangup.last_speaker
@@ -211,6 +217,7 @@ def cluster_hangups(
                     ),
                     "last_user_text": _last_text(top, Speaker.USER),
                     "last_agent_text": _last_text(top, Speaker.AGENT),
+                    "provider_code": hangup_provider_code(top),
                 }
             )
 
@@ -224,15 +231,8 @@ def cluster_hangups(
 
 
 def _reason_party(call: CallRevision) -> tuple[str, str]:
-    if call.hangup is None:
-        return HangupReason.UNKNOWN.value, HangupParty.UNKNOWN.value
-    return call.hangup.reason.value, call.hangup.party.value
-
-
-def _loss(call: CallRevision) -> float:
-    if call.hangup is None:
-        return 0.0
-    return float(call.hangup.loss_score)
+    party = call.hangup.party.value if call.hangup else HangupParty.UNKNOWN.value
+    return hangup_bucket(call), party
 
 
 def _last_user_text(call: CallRevision) -> str:

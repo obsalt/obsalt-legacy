@@ -1,68 +1,55 @@
 # The console
 
 The console is the product: `/v1/ui` after a live call has been
-decoded. The HTTP API is the same data without the HTML.
+decoded. Each screen answers one of the six questions. Call detail is
+the join view. Settings is the operator surface. The HTTP API is the
+same data without the HTML.
 
-Collection pages (calls, latency, hangups, quality, search) require a
-`start` and `end`. If the list is still empty, ingest has not promoted
-a revision yet — check `obsalt worker` and `GET /ready`.
-
-New to the domain? [Voice agents](concepts.md). Deciding whether to
-run this? [What obsalt does](product.md).
+Collection pages share a UTC window. The console defaults to the last
+7 days; chips cover 24 hours, 7 days, and 30 days. Source and agent
+are dropdowns of plugins and agents already on the calls in that
+window. The HTTP API still wants explicit ISO `start` and `end`.
 
 ## Screens
 
-There is no query builder and no custom dashboard. Fleet-wide
-infrastructure correlation is a link out to your OTLP backend.
+There is no query builder and no custom dashboard.
 
 | Page | What it answers |
 | --- | --- |
-| **Calls** | What happened, recently. Filter by agent, outcome, source, latency, flag, eval. |
-| **Call detail** | Where time went **and** what was said. Timeline left, transcript right. |
-| **Latency** | Stage distributions and percentiles, by agent, over time. |
-| **Hangups** | Why calls ended, clustered, with last speaker, last user/agent text, and drill-through. |
-| **Quality** | Rubric results and hallucination flags. Missing output is never a pass. Agree or disagree on the review queue. |
-| **Search** | Calls matching a question, plus filters. |
-| **Settings** | Connections, rubrics, retention, plugins, keys, users. |
+| **Calls** | What happened recently. The strip at the top is the six questions for this range, as numbers. |
+| **Call detail** | Where time went **and** what was said. Verdict first, timeline left, transcript right, detector flags with quoted evidence when settled, grounding pack and tool results on the call, provenance under the fold. Cost and recording only when the source sent them. |
+| **Latency** | Stage sample P50/P95 when measurements exist. Provider-published stats stay unmixed. Slowest calls and tools live here. |
+| **Hangups** | Why we lost callers — share of endings, then clusters with last words and drill-through to the calls. The ending pill is mapped from the provider's reason code, not a diagnosed root cause. |
+| **Quality** | Coverage first (calls in range / confirmed flags / candidates / evidence missing / not settled), then confirmed hallucination flags, unbound candidates, review queue. Missing judge output is never a pass. Pack `tool_use` does not fail on effective tool failure alone; that is the tool capability on call detail and Latency until a bound phantom (success claimed, failure denied, or wrong argument) or an enabled English judge. When the optional groundedness extra has run, the screen adds local groundedness spans. |
+| **Search** | Calls matching a question, with the matching utterance and hangup. |
+| **Settings** | Connect a source, write evals (including optional local groundedness), rotate keys, outbound webhooks, replay, export, deletion. |
 
-Call detail is the join view:
+A health strip on every signed-in page repeats `/ready` when something
+is off (outbox backing up, DLQ, no plugins, deletion backlog).
 
-- **Timeline.** Turn bars when we have turn clocks. A stage waterfall
-  **only** from measurements with real start and end. Unplaced
-  durations are chips. Provider p50/p95 are labelled aggregates, never
-  mixed into sample percentiles.
-- **Transcript.** Speaker + text from the assembled revision.
-- **Tools.** Name, status, duration if the source measured one.
-- **Flags / evals.** Deterministic flags on every call. LLM evals when
-  you request them or a sample/budget allows. “Evaluate this call” is on
-  the page.
-- **Provenance / coverage.** For every signal: present, absent,
-  unsupported, redacted, or decode failed — with a reason and a source
-  path. This is how you tell “Vapi never sent VAD clocks” from “our
-  decoder dropped a field.”
+## Chips vs waterfall
 
-Fidelity on the call is derived from what landed, not from a sticker on
-the plugin:
+```mermaid
+flowchart TD
+  measure[Stage measurement] --> place{Placement}
+  place -->|interval with start and end| wf[Waterfall bar]
+  place -->|duration only| chip[Chip not placed on the call]
+  place -->|provider p50 or p95| agg[Aggregate never mixed into samples]
+```
+
+A timeline bar is drawn only from measurements with real start and end.
+Durations without clocks are magnitude rows with a caption that says
+so. Provider p50/p95 are labelled aggregates.
+
+Fidelity on the call is derived from what landed:
 
 | Fidelity | Meaning |
 | --- | --- |
 | `stage_level` | At least one real stage interval. Waterfall possible. |
-| `turn_level` | Real turn boundaries. Stage values are chips. |
+| `turn_level` | Real turn boundaries. Stage values are duration rows, not a waterfall. |
 | `message_level` | Coarse message anchors (often whole seconds). |
 | `call_level` | Aggregates only. |
 | `none` | We have a call and almost no clocks. |
-
-### Grafana vs this console
-
-| Question | Where |
-| --- | --- |
-| Where did time go **and** what was said? | This console, call detail |
-| Fleet waterfalls / P95 of **real** spans | Your Tempo / Grafana |
-| Hangup clusters, evals, search, provenance | This console and `/v1` |
-
-obsalt-derived metrics (`voice.call.duration`, `voice.stage.duration`,
-…) export alongside forwarded OTLP. Provider aggregate latency is a
-labelled gauge, not a span width.
 
 ## What each source will show you
 
@@ -70,19 +57,18 @@ Read your row before you expect a waterfall.
 
 | Source | How it arrives | Transcript | Hangup | Tools | Stage waterfall | Latency you will see |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Vapi** | Webhook | Yes | Yes | Yes, no duration | **No** | Per-turn STT/LLM/TTS/e2e/endpointing as chips (ms, unplaced). Interruptions, confidence, cost, recording when sent. |
-| **Retell** | Webhook | Yes, words in **seconds** | Yes | Yes, no duration | **No** | Call-level p50/p95 as aggregates. Word-ish turn intervals. Transport RTT when sent. |
-| **ElevenLabs** | Webhook | Yes, whole-second anchors | Yes | Limited | Only if the OTLP-shaped webhook has real span clocks | Message-level timing from post-call JSON. |
-| **Cartesia Line** | Webhook | Yes | Limited | Limited | **No** | Real turn intervals + unplaced STT/TTS TTFB chips. |
-| **Pipecat** | OTLP | When you put text on `obsalt.pii.*` or the mapper finds it | If you emit outcome | Yes, if you emit `execute_tool` | **Yes**, where spans have real intervals | Native STT/LLM/TTS/TTFA from clocks you own. |
-| **LiveKit** | OTLP | Same as above | Same | Yes | **Yes** | Real span intervals; audio-token attributes accepted in both key shapes. |
-| **OpenAI Realtime** | OTLP | If you attach PII attrs | If you emit it | If you emit it | **Partial** — `user_input` / `generation` / `playout` only | No STT/LLM/TTS split. Empty cascade rows are a bug, not a feature. |
-| **Gemini Live** | OTLP | Same | Same | Same | **Partial** — same S2S shape | Same as Realtime. |
+| **Vapi** | Webhook | Yes | Yes | Yes, no duration | **No** | Per-turn STT/LLM/TTS/e2e chips (ms, unplaced) |
+| **Retell** | Webhook | Yes, words in **seconds** | Yes | Yes, no duration | **No** | Call-level p50/p95 as aggregates |
+| **ElevenLabs** | Webhook | Yes, whole-second anchors | Yes | Limited | Only if the OTLP-shaped webhook has real span clocks | Message-level timing |
+| **Cartesia Line** | Webhook | Yes | Limited | Limited | **No** | Turn intervals + unplaced TTFB chips |
+| **Pipecat** | OTLP | When you put text on `obsalt.pii.*` | If you emit outcome | If you emit `execute_tool` | **Yes**, where spans have real intervals | Native stages from clocks you own |
+| **LiveKit** | OTLP | Same | Same | Yes | **Yes** | Real span intervals |
+| **OpenAI Realtime** | OTLP | If you attach PII attrs | If you emit it | If you emit it | **Partial** — `user_input` / `generation` / `playout` | No STT/LLM/TTS split |
+| **Gemini Live** | OTLP | Same | Same | Same | **Partial** | Same as Realtime |
 
 Grounding (prompt, knowledge, tool results, caller text) is what
-hallucination detection reads. Hosted plugins populate it when the
-payload has it. Custom agents populate it when you emit it. If grounding
-is empty, evals that need it fail closed — they do not silently pass.
+hallucination detection reads. Empty grounding means evals that need
+it fail closed.
 
 ## Provenance legend
 
@@ -95,29 +81,35 @@ is empty, evals that need it fail closed — they do not silently pass.
 | `decode_failed` | The payload had something we could not parse. Replay after a plugin fix. |
 
 `provider_reported` vs `obsalt_derived` travels with every number.
-Derived values carry the derivation (for example a turn gap).
 
 ## Settings you will use
 
-- **Connections** — the ingest keys you already created. Secrets never
-  come back out.
-- **Rubrics** — plain-English evals. Editing creates a new version;
-  historical results keep the version they were judged under.
-- **Retention** — 30 days raw, 90 days transcripts, 400 days aggregates
-  unless you change it. Raw is unredacted. Replay dies when raw expires.
-- **Keys / users** — scopes `ingest`, `read`, `analyze`, `admin`. Roles
-  `owner`, `admin`, `analyst`, `reviewer`.
+- **Connections** — create a hosted webhook connection. The ingest URL
+  is shown **once**. Custom agents do not need a connection; Settings
+  prints the OTLP endpoint. Delete a connection by typing DELETE.
+- **Evals** — cheap/expensive OpenAI-compatible runners, monthly cap,
+  sample rate, LiveKit pack checkboxes. API keys encrypted, never shown
+  again. Enable is blocked until a runner and a cap > $0 exist.
+- **Rubrics** — English judges and predicates. Editing creates a new
+  version. Without a judge runner, English rows stay `not_judged`.
+- **Outbound webhooks** — Standard Webhooks. Secret shown once.
+- **Privacy** — replay retained raw, download `calls.jsonl`, verified
+  deletion. Status `accepted` is not done.
+- **Keys** — rotate the key you paste. The browser role comes from that
+  key: `owner`, `admin`, `analyst`, `reviewer`. Reviewer is read-only.
 
-## If the call looks wrong
+Locally, **Load sample calls** (dev / test only) queues vendored
+fixtures. It refuses `OBSALT_ENVIRONMENT=production`.
 
-1. Provenance first. Unsupported vs decode_failed is the fork.
-2. `GET /ready` — inbox age, outbox depth, DLQ, orphan blobs.
-3. `GET /v1/plugins` — is the plugin even loaded?
-4. `obsalt parse payload.json --provider vapi` — decode without ingesting.
-5. `POST /v1/replay` if the raw blob is still in the horizon.
+## Grafana vs this console
+
+| Question | Where |
+| --- | --- |
+| Where did time go **and** what was said? | This console, call detail |
+| Fleet waterfalls / P95 of **real** spans | Your Tempo / Grafana |
+| Hangup clusters, evals, search, provenance | This console and `/v1` |
 
 ## Next
 
-Something looks off: [Troubleshooting](troubleshooting.md). You want
-scripts instead of HTML: [HTTP API](api.md). This is going to
-production: [Operate](ops.md).
+Something looks off: [Operate](operate.md). Scripts instead of HTML:
+[HTTP API](api.md).

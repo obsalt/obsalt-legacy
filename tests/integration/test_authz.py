@@ -61,30 +61,30 @@ def test_reviewer_session_cannot_replay() -> None:
     analyst = sign_session("dev", state.settings.session_secret, role=Role.ANALYST)
     settings = client.get("/v1/ui/settings", cookies={"obsalt_session": analyst})
     assert settings.status_code == 200
-
-
-def test_users_crud_is_owner_only() -> None:
-    client, state = _client()
-    state.keys["admin"] = ("dev", ROLE_SCOPES[Role.ADMIN])
-    denied = client.post(
-        "/v1/users",
-        headers={"X-API-Key": "admin"},
-        json={"email": "analyst@acme.test", "role": "analyst"},
+    csrf = info.csrf
+    assert (
+        client.post(
+            "/v1/ui/connections",
+            data={"csrf": csrf, "provider": "vapi"},
+            cookies={"obsalt_session": token},
+        ).status_code
+        == 403
     )
-    assert denied.status_code == 403
-    created = client.post(
-        "/v1/users",
-        headers={"X-API-Key": "dev-key"},
-        json={"email": "analyst@acme.test", "role": "analyst"},
+    assert (
+        client.post(
+            "/v1/ui/calls/missing/delete",
+            data={"csrf": csrf, "confirm": "missing"},
+            cookies={"obsalt_session": token},
+        ).status_code
+        == 403
     )
-    assert created.status_code == 200
-    assert created.json()["role"] == "analyst"
-    listed = client.get("/v1/users", headers={"X-API-Key": "admin"})
-    assert listed.status_code == 200
-    emails = {item["email"] for item in listed.json()["items"]}
-    assert "analyst@acme.test" in emails
-    user_id = created.json()["id"]
-    reviewer = client.delete(f"/v1/users/{user_id}", headers={"X-API-Key": "admin"})
-    assert reviewer.status_code == 403
-    deleted = client.delete(f"/v1/users/{user_id}", headers={"X-API-Key": "dev-key"})
-    assert deleted.status_code == 200
+    analyst_info = read_session(analyst, state.settings.session_secret)
+    assert analyst_info is not None
+    assert (
+        client.post(
+            "/v1/ui/keys/rotate",
+            data={"csrf": analyst_info.csrf, "current_key": "dev-key"},
+            cookies={"obsalt_session": analyst},
+        ).status_code
+        == 403
+    )

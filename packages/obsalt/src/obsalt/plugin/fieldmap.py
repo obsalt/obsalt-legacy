@@ -6,10 +6,9 @@ Not a DSL. Event discrimination, unit conversion, and pairing stay in Python.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from typing import Any
 
-from obsalt.util import as_float, as_str, dig, parse_datetime
+from obsalt.util import dig, parse_datetime
 
 
 class Ts:
@@ -55,15 +54,3 @@ def _path(payload: dict[str, Any], dotted: str) -> Any:
         else:
             parts.append(part)
     return dig(payload, *parts)
-
-
-def str_field(value: Any) -> str | None:
-    return as_str(value)
-
-
-def float_field(value: Any) -> float | None:
-    return as_float(value)
-
-
-def dt_field(value: Any) -> datetime | None:
-    return parse_datetime(value)

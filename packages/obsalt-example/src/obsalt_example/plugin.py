@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
-from datetime import date
+from datetime import date, datetime
+from typing import Any
 
 from obsalt.crypto.primitives import constant_time_eq, header_values, hmac_hex
 from obsalt.domain.enums import (
@@ -263,7 +264,7 @@ class ExamplePlugin:
         )
 
 
-def _json(raw: bytes) -> dict:
+def _json(raw: bytes) -> dict[str, Any]:
     if not raw:
         return {}
     try:
@@ -273,7 +274,7 @@ def _json(raw: bytes) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _ts(value):
+def _ts(value: Any) -> datetime | None:
     from obsalt.util import parse_datetime
 
     return parse_datetime(value)

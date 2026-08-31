@@ -14,7 +14,7 @@ from collections import defaultdict
 from datetime import UTC
 from typing import Any
 
-from obsalt.analysis.rollups import _percentile_stats, build_latency_rollup
+from obsalt.analysis.rollups import _percentile_stats
 from obsalt.domain.models import CallRevision
 from obsalt.util import new_id
 
@@ -114,15 +114,27 @@ class MemoryRollupStore:
         }
 
 
-class ClickHouseRollupStore(MemoryRollupStore):
+class ClickHouseRollupStore:
     """Immutable contribution facts in ClickHouse. Memory copy serves this process."""
 
     def __init__(self, client: Any) -> None:
-        super().__init__()
         self._client = client
+        self._mem = MemoryRollupStore()
+
+    @property
+    def samples(self) -> list[dict[str, Any]]:
+        return self._mem.samples
+
+    @property
+    def aggregates(self) -> list[dict[str, Any]]:
+        return self._mem.aggregates
+
+    @property
+    def generation(self) -> str:
+        return self._mem.generation
 
     def contribute(self, revision: CallRevision) -> str:
-        generation = super().contribute(revision)
+        generation = self._mem.contribute(revision)
         bucket = _bucket(revision)
         rows = [
             [
@@ -203,9 +215,9 @@ class ClickHouseRollupStore(MemoryRollupStore):
                 parameters={"org": org_id},
             )
         except Exception:
-            return super().latency(org_id, as_of_generation)
+            return self._mem.latency(org_id, as_of_generation)
         if not getattr(result, "result_rows", None):
-            return super().latency(org_id, as_of_generation)
+            return self._mem.latency(org_id, as_of_generation)
         items = []
         sample_percentiles: dict[str, Any] = {}
         for stage, metric, p50, p95, count in result.result_rows:
@@ -234,8 +246,11 @@ class ClickHouseRollupStore(MemoryRollupStore):
             ),
         }
 
+    def rebuild(self, revisions: list[CallRevision]) -> str:
+        return self._mem.rebuild(revisions)
+
     def delete_call(self, org_id: str, call_id: str) -> str:
-        generation = super().delete_call(org_id, call_id)
+        generation = self._mem.delete_call(org_id, call_id)
         try:
             self._client.command(
                 "ALTER TABLE rollup_contributions DELETE WHERE org_id = {org:String} AND call_id = {cid:String}",
@@ -251,15 +266,3 @@ def _bucket(revision: CallRevision) -> Any:
     if ts.tzinfo is not None:
         ts = ts.astimezone(UTC).replace(tzinfo=None)
     return ts.replace(minute=0, second=0, microsecond=0)
-
-
-def latency_from_store_or_calls(
-    calls: list[CallRevision],
-    *,
-    as_of_generation: str,
-    store: MemoryRollupStore | None = None,
-    org_id: str | None = None,
-) -> dict[str, Any]:
-    if store is not None and store.samples:
-        return store.latency(org_id or (calls[0].org_id if calls else ""), as_of_generation)
-    return build_latency_rollup(calls, as_of_generation)

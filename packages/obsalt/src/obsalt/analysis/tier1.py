@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from obsalt.analysis.hangup import customer_loss_score
+from datetime import UTC, datetime
+from typing import Any
+
+from obsalt.analysis.behavior import behavior_flags
+from obsalt.analysis.compliance import compliance_flags
+from obsalt.analysis.hangup import hangup_bucket, hangup_provider_code
+from obsalt.analysis.tool_integrity import tool_integrity_flags
 from obsalt.domain.enums import AnalysisState, HangupReason, ToolStatus
 from obsalt.domain.models import AnalysisExecution, AnalysisResult, CallRevision
 from obsalt.util import sha256_text
 
-ANALYZER_VERSION = "1"
+ANALYZER_VERSION = "2"
 DEAD_AIR_SECONDS = 8.0
 
 
@@ -15,8 +21,16 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
     """Cheap deterministic analysis. Never mutates the immutable call revision."""
     results: list[AnalysisResult] = []
     if call.hangup is not None:
-        score, reasons = customer_loss_score(call)
-        results.append(_result(call, "hangup", {"loss_score": score, "loss_reasons": reasons}))
+        results.append(
+            _result(
+                call,
+                "hangup",
+                {
+                    "reason": hangup_bucket(call),
+                    "provider_code": hangup_provider_code(call),
+                },
+            )
+        )
 
     flags: list[dict[str, object]] = []
     if call.hangup and call.hangup.reason in {
@@ -35,6 +49,9 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
         flags.append({"kind": "dead_air", "gap_seconds": dead})
     if _truncated_llm(call):
         flags.append({"kind": "truncated_llm", "reason": "empty_or_length"})
+    flags.extend(tool_integrity_flags(call))
+    flags.extend(behavior_flags(call))
+    flags.extend(compliance_flags(call))
     results.append(_result(call, "flags", {"flags": flags}))
 
     tool_roll = {
@@ -61,7 +78,8 @@ def analyze_tier1(call: CallRevision) -> list[AnalysisResult]:
 
 def _dead_air(call: CallRevision) -> float | None:
     timed = [turn for turn in call.turns if turn.started_at or turn.ended_at]
-    timed.sort(key=lambda turn: turn.started_at or turn.ended_at or turn.started_at)
+    epoch = datetime.min.replace(tzinfo=UTC)
+    timed.sort(key=lambda turn: turn.started_at or turn.ended_at or epoch)
     widest = 0.0
     for prev, nxt in zip(timed, timed[1:], strict=False):
         prev_end = prev.ended_at or prev.started_at
@@ -90,7 +108,7 @@ def _truncated_llm(call: CallRevision) -> bool:
     return (not text) or text.endswith("...") or text.endswith("…")
 
 
-def _result(call: CallRevision, analyzer_id: str, payload: dict) -> AnalysisResult:
+def _result(call: CallRevision, analyzer_id: str, payload: dict[str, Any]) -> AnalysisResult:
     execution = AnalysisExecution(
         call_id=call.call_id,
         revision=call.revision,

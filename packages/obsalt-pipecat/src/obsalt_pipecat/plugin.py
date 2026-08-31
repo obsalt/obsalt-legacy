@@ -24,17 +24,21 @@ from obsalt.domain.events import (
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
 from obsalt.otel.conventions import (
+    AGENT_ID,
     CONVERSATION_ID,
     PROVIDER_CALL_ID,
+    SPAN_CALL,
     SPAN_LLM,
     SPAN_STT,
     SPAN_STT_PROVIDER_ATTEMPT,
     SPAN_TOOL,
     SPAN_TTS,
     SPAN_TURN,
+    agent_id_from_attrs,
     genai_provider_name,
     genai_provider_name_key,
 )
+from obsalt.otel.s2s import outcome_from_span_attrs
 from obsalt.otel.span_time import valid_span_interval
 from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import PluginManifest, ReadableSpan
@@ -56,7 +60,13 @@ class PipecatPlugin:
             {MeasurementPlacement.INTERVAL, MeasurementPlacement.ANCHORED_DURATION}
         ),
         provides=frozenset(
-            {Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.TTFA, Signal.GROUNDING_USER}
+            {
+                Signal.STAGE_INTERVAL,
+                Signal.TURN_INTERVAL,
+                Signal.TTFA,
+                Signal.GROUNDING_USER,
+                Signal.HANGUP,
+            }
         ),
         structurally_absent={},
         schema_source="Pipecat tracing (metrics.ttfb, turn.*, gen_ai.provider.name in code; gen_ai.system in docs)",
@@ -77,6 +87,8 @@ class PipecatPlugin:
             SPAN_TOOL,
         }:
             return 30
+        if span.name == SPAN_CALL:
+            return 40
         if genai_provider_name(attrs):
             return 25
         return 0
@@ -84,21 +96,41 @@ class PipecatPlugin:
     def decode(self, spans: Sequence[ReadableSpan]) -> Iterable[NormalizedEvent]:
         conv = None
         provider_key = None
+        agent_id = None
+        agent_key = None
+        outcome = None
         for span in spans:
             attrs = span.attributes or {}
             conv = attrs.get(CONVERSATION_ID) or attrs.get(PROVIDER_CALL_ID) or conv
             provider_key = provider_key or genai_provider_name_key(attrs)
+            if agent_id is None:
+                found = agent_id_from_attrs(attrs)
+                if found:
+                    agent_id = found
+                    agent_key = (
+                        AGENT_ID if attrs.get(AGENT_ID) not in (None, "") else "obsalt.agent.id"
+                    )
+            found_outcome = outcome_from_span_attrs(attrs)
+            if found_outcome is not None:
+                outcome = found_outcome
         provenance: dict[str, ProvenanceStamp] = {}
-        if provider_key:
+        if agent_id and agent_key:
+            provenance["agent_id"] = ProvenanceStamp(
+                provenance=Provenance.PROVIDER_REPORTED, source_path=agent_key
+            )
+        elif provider_key:
             provenance["agent_id"] = ProvenanceStamp(
                 provenance=Provenance.PROVIDER_REPORTED, source_path=provider_key
             )
         if conv:
             yield CallObserved(
                 source_call_id=str(conv),
+                agent_id=agent_id,
                 architecture=PipelineArchitecture.CASCADE,
                 provenance_by_field=provenance,
             )
+        if outcome is not None:
+            yield outcome
         for span in spans:
             attrs = span.attributes or {}
             start_ns = span.start_unix_nano or 0

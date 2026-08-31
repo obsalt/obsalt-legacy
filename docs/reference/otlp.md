@@ -27,7 +27,11 @@ Three tiers, in priority order:
 3. **`obsalt.*` for what the spec leaves open.** Barge-in vs client
    cancel, endpointing / VAD, STT confidence, perceived end-to-end
    latency, TTFA, transport legs, recording reference with channel
-   layout, timeline fidelity, provenance.
+   layout, timeline fidelity, provenance. Hangup:
+   `obsalt.hangup.reason` (taxonomy: `user_hangup`, `completed`, …)
+   and optional `obsalt.hangup.provider_code`. Agent:
+   `agent.id` / `obsalt.agent.id`. Proposed
+   `gen_ai.agent.invocation.end_reason` is accepted when present.
 
 ## Accept
 

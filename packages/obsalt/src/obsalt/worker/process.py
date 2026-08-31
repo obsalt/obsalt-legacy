@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import Any
 
-from obsalt.analysis.hallucination import extract_candidate_claims
+from obsalt.analysis.hallucination import (
+    DETECTOR_VERSION,
+    HALLUCINATION_ANALYZER_VERSION,
+    detect_claims,
+    detector_payload,
+)
 from obsalt.analysis.hangup import classify_provider_reason
+from obsalt.analysis.quality_card import quality_card_result
 from obsalt.analysis.tier1 import analyze_tier1
 from obsalt.assemble.assembler import Assembler
 from obsalt.assemble.facts import stamp_event
-from obsalt.assemble.promote import RevisionPointerStore, promote
+from obsalt.assemble.promote import promote
 from obsalt.assemble.rehydrate import events_from_revision
 from obsalt.domain.enums import EnvelopeState
 from obsalt.domain.events import (
@@ -25,28 +30,19 @@ from obsalt.domain.models import AnalysisResult, CallRevision, FidelityDeclarati
 from obsalt.plugin.contract import WebhookSource
 from obsalt.plugin.types import RawEnvelope
 from obsalt.redact.choke import redact_events
+from obsalt.store.ports import ObjectStore, RevisionPointerStore, RevisionSink
 from obsalt.util import call_id_for, canonical_json, new_id, sha256_bytes, sha256_text
 
 
-class RevisionSink:
-    def write(self, revision: CallRevision) -> None:
-        raise NotImplementedError
-
-    def get(self, org_id: str, call_id: str, revision: str) -> CallRevision | None:
-        raise NotImplementedError
-
-    def delete_call(self, org_id: str, call_id: str) -> None:
-        raise NotImplementedError
-
-    def verify_visible(self, revision: CallRevision) -> CallRevision:
-        """§4.2: a candidate is not eligible for CAS until it is query-visible."""
-        loaded = self.get(revision.org_id, revision.call_id, revision.revision)
-        if loaded is None:
-            raise RuntimeError("revision write is not query-visible")
-        return loaded
+def verify_revision_visible(sink: RevisionSink, revision: CallRevision) -> CallRevision:
+    """§4.2: a candidate is not eligible for CAS until it is query-visible."""
+    loaded = sink.get(revision.org_id, revision.call_id, revision.revision)
+    if loaded is None:
+        raise RuntimeError("revision write is not query-visible")
+    return loaded
 
 
-class MemoryRevisionSink(RevisionSink):
+class MemoryRevisionSink:
     def __init__(self) -> None:
         self.revisions: dict[tuple[str, str, str], CallRevision] = {}
         self.analysis: dict[tuple[str, str, str], list[AnalysisResult]] = {}
@@ -89,6 +85,9 @@ class MemoryRevisionSink(RevisionSink):
             rows.extend(values)
         return rows
 
+    def verify_visible(self, revision: CallRevision) -> CallRevision:
+        return verify_revision_visible(self, revision)
+
 
 def process_envelope(
     envelope: RawEnvelope,
@@ -99,7 +98,7 @@ def process_envelope(
     sink: RevisionSink,
     decoder_version: str,
     source: str,
-    objects: Any | None = None,
+    objects: ObjectStore | None = None,
     rooted: bool = True,
 ) -> CallRevision:
     if envelope.state is EnvelopeState.TOMBSTONED:
@@ -126,7 +125,7 @@ def process_envelope(
 
 
 def persist_evidence_blobs(
-    events: Sequence[NormalizedEvent], objects: Any | None, org_id: str
+    events: Sequence[NormalizedEvent], objects: ObjectStore | None, org_id: str
 ) -> None:
     """Content-address evidence inside an org namespace. Never cross-tenant dedupe."""
 
@@ -178,7 +177,7 @@ def process_normalized_events(
     pointers: RevisionPointerStore,
     sink: RevisionSink,
     decoder_version: str,
-    objects: Any | None = None,
+    objects: ObjectStore | None = None,
     rooted: bool = True,
     caller_token: str | None = None,
     unmapped_attributes: dict[str, str] | None = None,
@@ -262,7 +261,7 @@ def _tier1_analysis(revision: CallRevision) -> list[AnalysisResult]:
     if revision.conflicts:
         return []
     analysis = list(analyze_tier1(revision))
-    claims = extract_candidate_claims(revision)
+    claims = detect_claims(revision)
     if claims:
         from obsalt.domain.enums import AnalysisState
         from obsalt.domain.models import AnalysisExecution
@@ -273,12 +272,14 @@ def _tier1_analysis(revision: CallRevision) -> list[AnalysisResult]:
                     call_id=revision.call_id,
                     revision=revision.revision,
                     analyzer_id="hallucination",
-                    analyzer_version="1",
-                    state=AnalysisState.PENDING,
+                    analyzer_version=HALLUCINATION_ANALYZER_VERSION,
+                    judge_version=DETECTOR_VERSION,
+                    state=AnalysisState.COMPLETED,
                 ),
-                payload={"candidates": claims, "selection": "pending"},
+                payload=detector_payload(claims),
             )
         )
+    analysis.append(quality_card_result(revision, claims=claims))
     return analysis
 
 

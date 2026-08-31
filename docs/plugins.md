@@ -164,4 +164,4 @@ How a user connects the thing you just wrote:
 [connect-hosted](connect-hosted.md) or
 [connect-custom](connect-custom.md). What they will see:
 [the console](console.md) fidelity table. Repo layout and PR bar:
-[Developing](developing.md).
+[Develop](develop.md).

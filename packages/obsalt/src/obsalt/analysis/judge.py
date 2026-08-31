@@ -1,68 +1,38 @@
-"""Pluggable judges. Heuristic is the offline default; LLM is OpenAI-compatible."""
+"""LLM judges. Cheap software verdicts live in ``detect_claims``, not here.
+
+There is no heuristic stand-in. Without a runner, callers pass ``judge=None``
+and leave English rows ``not_judged``. Historical ``heuristic/1`` payloads stay
+unconfirmed via ``is_heuristic_result``.
+"""
 
 from __future__ import annotations
 
 import json
-import re
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
 
+from obsalt.domain.enums import JudgeVerdict
 from obsalt.egress import EgressDenied, validate_destination
 from obsalt.plugin.types import JudgeRequest, JudgeResult
 
-HEURISTIC_VERSION = "heuristic/1"
 LLM_PROMPT_VERSION = "judge/1"
 
-_PRICE_RE = re.compile(r"\$\s?\d[\d,]*(?:\.\d{2})?")
-_ID_RE = re.compile(r"\b(?:ord|conf|inv|tkt)[-_][a-z0-9]{2,}\b", re.I)
-_ENTAILMENT_MARKERS = (
-    "hallucin",
-    "invent",
-    "grounded",
-    "unsupported",
-    "contradicted",
-    "entail",
-)
-_SUCCESS_CLAIMS = ("refund", "processed", "booked", "scheduled", "confirmed", "sent")
-_FAILURE_MARKERS = ("error", "not_found", "failed", "timeout", "timed out")
-_ENTAILMENT_RUBRIC_IDS = frozenset({"hallucination-entailment", "hallucination"})
 
-
-class HeuristicJudge:
-    """Offline default so evaluate-on-click works without a bill."""
-
-    name = "heuristic"
-    version = HEURISTIC_VERSION
-
-    async def judge(self, request: JudgeRequest) -> JudgeResult:
-        if _is_entailment(request):
-            return _entail_claim(request)
-        text = request.rubric_text.lower()
-        transcript = request.transcript.lower()
-        grounding = "\n".join(request.grounding).lower()
-        score = 1.0
-        quotes: list[str] = []
-        if "hallucin" in text or "invent" in text:
-            if any(token in transcript for token in ("ord-", "$")):
-                if not any(token in grounding for token in ("ord-", "$")):
-                    score -= 0.5
-                    quotes.append("ungrounded identifier or price")
-        contradicted = any(token in grounding for token in _FAILURE_MARKERS) and any(
-            token in transcript for token in _SUCCESS_CLAIMS
-        )
-        if contradicted:
-            score = min(score, 0.2)
-            quotes.append("tool/knowledge corpus contradicts the agent claim")
-        passed = score >= 0.7
-        return JudgeResult(
-            score=score,
-            passed=passed,
-            rationale="heuristic",
-            quotes=quotes,
-            model=HEURISTIC_VERSION,
-            prompt_version="heuristic/1",
-        )
+def is_heuristic_result(payload: Mapping[str, Any] | None, execution: Any | None = None) -> bool:
+    """True when a stored row came from the removed regex stand-in. Never confirmed."""
+    for raw in (
+        (payload or {}).get("model"),
+        getattr(execution, "judge_version", None),
+    ):
+        if str(raw or "").startswith("heuristic"):
+            return True
+    for bucket in ((payload or {}).get("claims"), (payload or {}).get("candidates")):
+        for item in bucket or []:
+            if isinstance(item, dict) and str(item.get("model") or "").startswith("heuristic"):
+                return True
+    return False
 
 
 class OpenAICompatibleJudge:
@@ -98,8 +68,10 @@ class OpenAICompatibleJudge:
                     "role": "system",
                     "content": (
                         "Judge the call against the rubric. Return JSON with keys "
-                        "score (0-1 float), passed (bool), rationale (string), "
-                        "quotes (array of evidence spans)."
+                        "verdict (pass, fail, maybe, not_applicable, evidence_missing), "
+                        "score (0-1 float), passed (bool, true only when verdict is pass), "
+                        "rationale (string), quotes (array of evidence spans). "
+                        "Use maybe when unsure. Missing evidence is evidence_missing, never pass."
                     ),
                 },
                 {
@@ -125,9 +97,9 @@ class OpenAICompatibleJudge:
             payload = response.json()
         content = _message_content(payload)
         parsed = _parse_structured(content)
-        return JudgeResult(
+        return _result(
+            _parse_verdict(parsed),
             score=float(parsed.get("score") or 0.0),
-            passed=bool(parsed.get("passed")),
             rationale=str(parsed.get("rationale") or content),
             quotes=[str(item) for item in parsed.get("quotes") or []],
             model=request.model or self.model,
@@ -142,7 +114,7 @@ def judge_from_settings(
     judge_url: str | None = None,
     judge_api_key: str | None = None,
     judge_model: str | None = None,
-) -> HeuristicJudge | OpenAICompatibleJudge:
+) -> OpenAICompatibleJudge | None:
     url = judge_url or getattr(settings, "judge_base_url", None)
     key = judge_api_key or getattr(settings, "judge_api_key", None)
     model = judge_model or getattr(settings, "judge_model", None) or "gpt-4.1-mini"
@@ -150,87 +122,53 @@ def judge_from_settings(
         try:
             return OpenAICompatibleJudge(base_url=str(url), api_key=str(key), model=str(model))
         except EgressDenied:
-            return HeuristicJudge()
-    return HeuristicJudge()
+            return None
+    return None
 
 
-def _is_entailment(request: JudgeRequest) -> bool:
-    if request.rubric_id in _ENTAILMENT_RUBRIC_IDS:
-        return True
-    text = request.rubric_text.lower()
-    return any(marker in text for marker in _ENTAILMENT_MARKERS)
-
-
-def _normalize_money(value: str) -> str:
-    return re.sub(r"[\s,]", "", value.lower())
-
-
-def _entail_claim(request: JudgeRequest) -> JudgeResult:
-    """Fail-closed for checkable claims. Empty grounding is not a pass (§9.4)."""
-
-    transcript = request.transcript.lower()
-    grounding = "\n".join(request.grounding).lower()
-    prices = [_normalize_money(match.group(0)) for match in _PRICE_RE.finditer(request.transcript)]
-    identifiers = [match.group(0).lower() for match in _ID_RE.finditer(request.transcript)]
-    claims_success = any(token in transcript for token in _SUCCESS_CLAIMS)
-    tool_failed = any(token in grounding for token in _FAILURE_MARKERS)
-    missing_price = bool(prices) and not any(
-        price in _normalize_money(grounding) for price in prices
-    )
-    missing_id = bool(identifiers) and not any(item in grounding for item in identifiers)
-    checkable = bool(prices or identifiers or claims_success)
-
-    if tool_failed and claims_success:
-        return JudgeResult(
-            score=0.15,
-            passed=False,
-            rationale="contradicted",
-            quotes=["tool/knowledge corpus contradicts the agent claim"],
-            model=HEURISTIC_VERSION,
-            prompt_version="entailment/1",
-        )
-    if checkable and (not grounding.strip() or missing_price or missing_id):
-        return JudgeResult(
-            score=0.25 if (missing_price or missing_id) else 0.4,
-            passed=False,
-            rationale="unsupported",
-            quotes=["ungrounded identifier or price"]
-            if (prices or identifiers)
-            else ["claim has no supporting span"],
-            model=HEURISTIC_VERSION,
-            prompt_version="entailment/1",
-        )
-    if prices and identifiers and not missing_price and not missing_id:
-        return JudgeResult(
-            score=0.9,
-            passed=True,
-            rationale="grounded",
-            quotes=[request.transcript[:200]],
-            model=HEURISTIC_VERSION,
-            prompt_version="entailment/1",
-        )
-    if grounding.strip() and (prices or identifiers) and not missing_price and not missing_id:
-        return JudgeResult(
-            score=0.85,
-            passed=True,
-            rationale="grounded",
-            quotes=[request.transcript[:200]],
-            model=HEURISTIC_VERSION,
-            prompt_version="entailment/1",
-        )
+def _result(
+    verdict: JudgeVerdict,
+    *,
+    score: float,
+    rationale: str,
+    quotes: list[str] | None = None,
+    model: str = "",
+    prompt_version: str,
+    cost_usd: float | None = None,
+) -> JudgeResult:
+    if verdict is JudgeVerdict.PASS:
+        passed: bool | None = True
+    elif verdict is JudgeVerdict.FAIL:
+        passed = False
+    else:
+        passed = None
     return JudgeResult(
-        score=0.45,
-        passed=False,
-        rationale="unsupported",
-        quotes=["no quoted supporting span"],
-        model=HEURISTIC_VERSION,
-        prompt_version="entailment/1",
+        score=score,
+        passed=passed,
+        verdict=verdict,
+        rationale=rationale,
+        quotes=list(quotes or []),
+        model=model,
+        prompt_version=prompt_version,
+        cost_usd=cost_usd,
     )
+
+
+def _parse_verdict(parsed: dict[str, Any]) -> JudgeVerdict:
+    raw = str(parsed.get("verdict") or "").strip().lower()
+    if raw in {item.value for item in JudgeVerdict}:
+        return JudgeVerdict(raw)
+    if parsed.get("passed") is True:
+        return JudgeVerdict.PASS
+    if parsed.get("passed") is False:
+        return JudgeVerdict.FAIL
+    return JudgeVerdict.NOT_JUDGED
 
 
 def _usage_cost_usd(payload: dict[str, Any], parsed: dict[str, Any]) -> float | None:
     """Use a cost the judge or gateway actually reported. Do not invent a token price."""
-    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    raw_usage = payload.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
     raw = usage.get("cost") or usage.get("total_cost") or parsed.get("cost_usd")
     if raw in (None, ""):
         return None
@@ -252,5 +190,5 @@ def _parse_structured(content: str) -> dict[str, Any]:
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
-        return {"score": 0.0, "passed": False, "rationale": content, "quotes": []}
+        return {"rationale": content, "quotes": []}
     return data if isinstance(data, dict) else {"rationale": content}

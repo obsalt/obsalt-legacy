@@ -163,11 +163,38 @@ class ToolStatus(StrEnum):
 class HallucinationKind(StrEnum):
     UNGROUNDED_FACT = "ungrounded_fact"
     PHANTOM_TOOL_SUCCESS = "phantom_tool_success"
+    PHANTOM_TOOL_FAILURE = "phantom_tool_failure"
     FABRICATED_ID = "fabricated_id"
     PRICE_CLAIM = "price_claim"
+    DATE_TIME_CLAIM = "date_time_claim"
+    COUNT_CLAIM = "count_claim"
+    ARGS_MISMATCH = "args_mismatch"
     POLICY_CLAIM = "policy_claim"
     COMMITMENT = "commitment"
     PRIVATE_KNOWLEDGE = "private_knowledge"
+
+
+class ClaimVerdict(StrEnum):
+    GROUNDED = "grounded"
+    CONTRADICTED = "contradicted"
+    UNSUPPORTED = "unsupported"
+    EVIDENCE_MISSING = "evidence_missing"
+    NEEDS_REVIEW = "needs_review"
+
+
+class EvidenceNeed(StrEnum):
+    TOOL_RESULT = "tool_result"
+    GROUNDING_SPAN = "grounding_span"
+    PRIOR_TURN = "prior_turn"
+    POLICY_TEXT = "policy_text"
+
+
+class ClaimSeverity(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    NEEDS_REVIEW = "needs_review"
 
 
 class AnalysisState(StrEnum):
@@ -177,6 +204,32 @@ class AnalysisState(StrEnum):
     RUNNING = "running"
     FAILED = "failed"
     COMPLETED = "completed"
+
+
+class JudgeVerdict(StrEnum):
+    """Binary judge outcome. Missing is never a pass. maybe is not 0.5."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    MAYBE = "maybe"
+    NOT_APPLICABLE = "not_applicable"
+    NOT_JUDGED = "not_judged"
+    EVIDENCE_MISSING = "evidence_missing"
+
+
+class EvalSlot(StrEnum):
+    CHEAP = "cheap"
+    EXPENSIVE = "expensive"
+    AUDIO = "audio"
+
+
+class EvalRunnerKind(StrEnum):
+    OPENAI_COMPATIBLE = "openai_compatible"
+
+
+class RubricKind(StrEnum):
+    LLM_JUDGE = "llm_judge"
+    PREDICATE = "predicate"
 
 
 class EnvelopeState(StrEnum):

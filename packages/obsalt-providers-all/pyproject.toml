@@ -18,3 +18,13 @@ dependencies = [
   "obsalt-pipecat==0.0.0",
   "obsalt-livekit==0.0.0",
 ]
+
+[tool.uv.sources]
+obsalt-vapi = { workspace = true }
+obsalt-retell = { workspace = true }
+obsalt-elevenlabs = { workspace = true }
+obsalt-cartesia = { workspace = true }
+obsalt-openai-realtime = { workspace = true }
+obsalt-gemini-live = { workspace = true }
+obsalt-pipecat = { workspace = true }
+obsalt-livekit = { workspace = true }

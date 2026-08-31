@@ -12,6 +12,7 @@ from obsalt.domain.enums import (
 from obsalt.domain.events import NormalizedEvent
 from obsalt.domain.models import FidelityDeclaration
 from obsalt.otel.conventions import (
+    SPAN_CALL,
     SPAN_GENERATION,
     SPAN_PLAYOUT,
     SPAN_USER_INPUT,
@@ -33,7 +34,15 @@ class GeminiLivePlugin:
         source_format="obsalt.sdk.gemini_live",
         possible_architectures=frozenset({PipelineArchitecture.SPEECH_TO_SPEECH}),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
-        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TURN_INTERVAL, Signal.BARGE_IN}),
+        provides=frozenset(
+            {
+                Signal.STAGE_INTERVAL,
+                Signal.TURN_INTERVAL,
+                Signal.BARGE_IN,
+                Signal.HANGUP,
+                Signal.TRANSCRIPT,
+            }
+        ),
         structurally_absent={
             Signal.STT_DURATION: "speech-to-speech has no STT stage",
             Signal.LLM_TTFT: "speech-to-speech has no LLM stage",
@@ -53,11 +62,13 @@ class GeminiLivePlugin:
         )
 
     def claims(self, span: ReadableSpan) -> int:
-        if span.name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}:
-            return 80
         provider = (genai_provider_name(span.attributes) or "").lower()
         if "gemini" in provider or "google" in provider:
-            return 20
+            return 90
+        if span.name in {SPAN_USER_INPUT, SPAN_GENERATION, SPAN_PLAYOUT}:
+            return 80
+        if span.name == SPAN_CALL:
+            return 40
         return 0
 
     def decode(self, spans: Sequence[ReadableSpan]) -> Iterable[NormalizedEvent]:

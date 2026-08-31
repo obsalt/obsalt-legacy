@@ -7,6 +7,7 @@ Do not run this on the webhook request path.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Iterable
 from typing import Any
 
@@ -20,27 +21,37 @@ from obsalt.worker.process import process_normalized_events
 
 log = logging.getLogger("obsalt.worker.drain")
 
+# Serve runs drain as a BackgroundTask after every ack. Those tasks share one
+# psycopg connection; overlapping drains nest transactions and wedge the outbox.
+_DRAIN_LOCK = threading.Lock()
+
 
 def process_after_ack(state: Any, envelope: RawEnvelope | None = None) -> None:
     """FastAPI BackgroundTask target. Invoke after the provider acknowledgement is built."""
-    if envelope is None:
-        drain_once(state)
-        return
-    try:
-        persist_envelope(state, envelope)
-    except Exception as exc:  # noqa: BLE001 — isolate background work
-        log.exception("envelope %s failed", envelope.envelope_id)
-        state.inbox.mark_failed(envelope.envelope_id, str(exc))
-    finalize_due_traces(state)
-    drain_tier2(state)
-    from obsalt.otel.forward_queue import drain_forward_queue
-    from obsalt.webhooks.outbound import drain_outbound
+    with _DRAIN_LOCK:
+        if envelope is None:
+            _drain_once_unlocked(state)
+            return
+        try:
+            persist_envelope(state, envelope)
+        except Exception as exc:  # noqa: BLE001 — isolate background work
+            log.exception("envelope %s failed", envelope.envelope_id)
+            state.inbox.mark_failed(envelope.envelope_id, str(exc))
+        finalize_due_traces(state)
+        drain_tier2(state)
+        from obsalt.otel.forward_queue import drain_forward_queue
+        from obsalt.webhooks.outbound import drain_outbound
 
-    drain_forward_queue(state)
-    drain_outbound(state)
+        drain_forward_queue(state)
+        drain_outbound(state)
 
 
 def drain_once(state: Any, *, limit: int = 32) -> int:
+    with _DRAIN_LOCK:
+        return _drain_once_unlocked(state, limit=limit)
+
+
+def _drain_once_unlocked(state: Any, *, limit: int = 32) -> int:
     processed = process_outbox(state, limit=limit)
     processed += finalize_due_traces(state)
     drain_tier2(state)
@@ -87,7 +98,15 @@ def persist_envelope(state: Any, envelope: RawEnvelope) -> CallRevision | None:
         return None
 
     if envelope.body is None:
-        envelope = envelope.model_copy(update={"body": objects.get(envelope.object_key)})
+        try:
+            body = objects.get(envelope.object_key)
+        except KeyError:
+            inbox.mark_failed(
+                envelope.envelope_id,
+                f"raw body object missing from object store: {envelope.object_key}",
+            )
+            return None
+        envelope = envelope.model_copy(update={"body": body})
 
     from obsalt.ingest.receive import decoded_envelope_body
 
@@ -294,15 +313,12 @@ def _assemble_and_promote(
     unmapped_attributes: dict[str, str] | None = None,
 ) -> CallRevision:
     inbox = state.inbox
-    record_run = getattr(inbox, "record_run", None)
-    run_id = None
-    if callable(record_run):
-        run_id = record_run(
-            org_id=envelope.org_id,
-            envelope_id=envelope.envelope_id,
-            decoder_version=decoder_version,
-            status="running",
-        )
+    run_id = inbox.record_run(
+        org_id=envelope.org_id,
+        envelope_id=envelope.envelope_id,
+        decoder_version=decoder_version,
+        status="running",
+    )
     try:
         revision = process_normalized_events(
             events,
@@ -320,24 +336,22 @@ def _assemble_and_promote(
             unmapped_attributes=unmapped_attributes,
         )
     except Exception:
-        if callable(record_run) and run_id:
-            record_run(
-                org_id=envelope.org_id,
-                envelope_id=envelope.envelope_id,
-                decoder_version=decoder_version,
-                status="failed",
-                run_id=run_id,
-                error="persist failed",
-            )
-        raise
-    if callable(record_run) and run_id:
-        record_run(
+        inbox.record_run(
             org_id=envelope.org_id,
             envelope_id=envelope.envelope_id,
             decoder_version=decoder_version,
-            status="completed",
+            status="failed",
             run_id=run_id,
+            error="persist failed",
         )
+        raise
+    inbox.record_run(
+        org_id=envelope.org_id,
+        envelope_id=envelope.envelope_id,
+        decoder_version=decoder_version,
+        status="completed",
+        run_id=run_id,
+    )
     return revision
 
 
@@ -351,17 +365,12 @@ def _after_promote(
     if revision is None:
         return None
     if inbox.is_tombstoned(envelope.org_id, extracted):
-        deleter = getattr(state.sink, "delete_call", None)
-        if callable(deleter):
-            deleter(revision.org_id, revision.call_id)
+        state.sink.delete_call(revision.org_id, revision.call_id)
         inbox.tombstone(envelope.org_id, extracted)
         return None
 
     active = state.pointers.get(revision.org_id, revision.call_id)
-    frontier_fn = getattr(state.pointers, "frontier", None)
-    stored_frontier = (
-        frontier_fn(revision.org_id, revision.call_id) if callable(frontier_fn) else frozenset()
-    )
+    stored_frontier = state.pointers.frontier(revision.org_id, revision.call_id)
     covers = True
     if stored_frontier:
         covers = stored_frontier <= _revision_fact_ids(revision)
@@ -392,10 +401,9 @@ def _after_promote(
         _emit_slo(state, revision)
     except Exception:
         log.warning("outbound webhook emit failed for %s", envelope.envelope_id)
-    leases = getattr(state, "leases", None)
-    if leases is not None:
+    if state.leases is not None:
         try:
-            leases.release(envelope.envelope_id)
+            state.leases.release(envelope.envelope_id)
         except Exception:
             log.warning("lease release failed for %s", envelope.envelope_id)
     return revision
@@ -404,28 +412,17 @@ def _after_promote(
 def _index_and_rollup(state: Any, revision: CallRevision) -> None:
     if state.pointers.get(revision.org_id, revision.call_id) != revision.revision:
         return
-    indexer = getattr(state, "search", None)
-    if indexer is not None and hasattr(indexer, "upsert_revision"):
-        indexer.upsert_revision(revision)
-    elif indexer is not None and hasattr(indexer, "index"):
-        indexer.index(revision)
-    else:
-        index_revision = getattr(state.inbox, "index_revision", None)
-        if callable(index_revision):
-            index_revision(revision)
-    rollups = getattr(state, "rollups", None)
-    if rollups is not None and hasattr(rollups, "contribute"):
-        generation = rollups.contribute(revision)
-        store = getattr(state, "generation_store", None)
-        if store is not None and hasattr(store, "publish"):
-            store.publish("fleet", generation, expected=getattr(state, "rollup_generation", None))
+    if state.search is not None:
+        state.search.upsert_revision(revision)
+    if state.rollups is not None:
+        generation = state.rollups.contribute(revision)
+        if state.generation_store is not None:
+            state.generation_store.publish("fleet", generation, expected=state.rollup_generation)
         state.rollup_generation = generation
-    updater = getattr(state.pointers, "update_summary", None)
-    if callable(updater):
-        try:
-            updater(revision)
-        except Exception:
-            log.warning("active_calls summary update failed for %s", revision.call_id)
+    try:
+        state.pointers.update_summary(revision)
+    except Exception:
+        log.warning("active_calls summary update failed for %s", revision.call_id)
     try:
         _refresh_hangup_clusters(state, revision.org_id)
     except Exception:
@@ -447,17 +444,14 @@ def _revision_fact_ids(revision: CallRevision) -> set[str]:
 
 
 def _refresh_hangup_clusters(state: Any, org_id: str) -> None:
-    store = getattr(state, "hangup_clusters", None)
-    if store is None or not hasattr(store, "refresh"):
-        return
     from obsalt.query import active_calls
     from obsalt.search.hybrid import LocalEmbedder
 
-    embedder = getattr(state, "embedder", None) or LocalEmbedder()
-    store.refresh(
+    embedder = state.embedder or LocalEmbedder()
+    state.hangup_clusters.refresh(
         org_id,
         active_calls(state, org_id),
-        getattr(state, "rollup_generation", ""),
+        state.rollup_generation,
         embedder=embedder,
     )
 
@@ -490,36 +484,49 @@ def drain_tier2(state: Any) -> int:
 
 
 def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
-    from obsalt.analysis.hallucination import extract_candidate_claims
+    from obsalt.analysis.groundedness import ANALYZER_ID as GROUNDEDNESS
+    from obsalt.analysis.groundedness import maybe_run_groundedness
+    from obsalt.analysis.hallucination import detect_claims, hallucination_claim_list
+    from obsalt.analysis.quality_card import ANALYZER_ID as QUALITY_CARD
+    from obsalt.analysis.quality_card import quality_card_result
+    from obsalt.analysis.runners import (
+        enabled_pack,
+        expensive_judge_if_distinct,
+        org_eval_budget,
+        org_eval_sample_rate,
+        resolve_judge,
+    )
     from obsalt.analysis.tier2 import budget_for_judge, decide_tier2
     from obsalt.domain.enums import AnalysisState
     from obsalt.runtime import add_org_spend, org_spend_usd
 
-    settings = getattr(state, "settings", None)
-    rate = float(getattr(settings, "baseline_sample_rate", 0.0) or 0.0)
-    budget = float(getattr(settings, "llm_monthly_budget_usd", 0.0) or 0.0)
+    rate = org_eval_sample_rate(state, revision.org_id)
     spend = org_spend_usd(state, revision.org_id)
-    judge = getattr(state, "judge", None)
-    budget_usd = budget_for_judge(budget, judge)
+    judge = resolve_judge(state, revision.org_id)
+    budget_usd = budget_for_judge(org_eval_budget(state, revision.org_id), judge)
     rubrics = [
         r
         for r in getattr(state, "rubrics", {}).values()
-        if getattr(r, "org_id", None) == revision.org_id
+        if getattr(r, "org_id", None) == revision.org_id and getattr(r, "enabled", True)
     ]
     from obsalt.query import analysis_for
 
     existing = list(analysis_for(state, revision.org_id, revision.call_id, revision.revision))
 
-    claims = []
+    claims: list[dict[str, Any]] = []
+    hallo_done = False
     for row in existing:
         payload = getattr(row, "payload", {}) or {}
-        if payload.get("candidates"):
-            claims = payload["candidates"]
-            break
+        analyzer = getattr(getattr(row, "execution", None), "analyzer_id", "")
+        exec_state = getattr(getattr(row, "execution", None), "state", None)
+        if analyzer == "hallucination" and exec_state is AnalysisState.COMPLETED:
+            hallo_done = True
+        if analyzer == "hallucination" and not claims:
+            claims = hallucination_claim_list(payload)
     if not claims:
-        claims = extract_candidate_claims(revision)
+        claims = detect_claims(revision)
     decisions = []
-    if claims:
+    if claims and not hallo_done:
         decisions.append(
             decide_tier2(
                 revision,
@@ -530,7 +537,13 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
                 analyzer_id="hallucination",
             )
         )
+    predicate_results = []
     for rubric in rubrics:
+        if rubric.is_predicate():
+            from obsalt.analysis.predicates import run_predicate
+
+            predicate_results.append(run_predicate(revision, rubric, selection="always"))
+            continue
         decisions.append(
             decide_tier2(
                 revision,
@@ -538,15 +551,18 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
                 baseline_sample_rate=rate,
                 budget_usd=budget_usd,
                 spend_usd=spend,
+                analyzer_id=f"rubric:{rubric.id}",
             )
         )
-    replacing = {item.analyzer_id for item in decisions}
+    replacing = {item.analyzer_id for item in decisions} | {
+        item.execution.analyzer_id for item in predicate_results
+    }
     results = [
         row
         for row in existing
         if getattr(getattr(row, "execution", None), "analyzer_id", None) not in replacing
     ]
-    writer = getattr(state.sink, "write_analysis", None)
+    writer = state.sink.write_analysis
     for execution in decisions:
         if execution.state is AnalysisState.PENDING:
             result = _run_tier2_blocking(
@@ -559,26 +575,84 @@ def _run_queued_tier2(state: Any, revision: CallRevision) -> None:
                 spend_usd=spend,
                 analyzer_id=execution.analyzer_id,
                 hallucination_candidates=claims or None,
-                judge=getattr(state, "judge", None),
+                judge=judge,
             )
             cost = float((result.payload or {}).get("cost_usd") or 0.0)
             if cost:
                 spend = add_org_spend(state, revision.org_id, cost)
             results.append(result)
-            if result.payload.get("passed") is not True:
-                from obsalt.webhooks.outbound import emit_standard_event
+            if result.payload.get("passed") is not True and not result.payload.get("shadow"):
+                from obsalt.analysis.hallucination import PAGEABLE_SEVERITIES
 
-                emit_standard_event(
-                    state, revision, "eval.failed", {"analyzer_id": execution.analyzer_id}
-                )
+                severity = str(result.payload.get("severity") or "high")
+                if severity in PAGEABLE_SEVERITIES:
+                    from obsalt.webhooks.outbound import emit_standard_event
+
+                    emit_standard_event(
+                        state,
+                        revision,
+                        "eval.failed",
+                        {"analyzer_id": execution.analyzer_id, "severity": severity},
+                    )
         else:
             from obsalt.domain.models import AnalysisResult
 
             results.append(
                 AnalysisResult(execution=execution, payload={"selection": execution.state.value})
             )
+    results.extend(predicate_results)
+    hallo_payload: dict[str, Any] = {}
+    for row in results:
+        if getattr(getattr(row, "execution", None), "analyzer_id", "") == "hallucination":
+            hallo_payload = getattr(row, "payload", {}) or {}
+            break
+    card_claims = hallucination_claim_list(hallo_payload) or claims
+    pack_rows = _run_pack_blocking(
+        revision,
+        names=enabled_pack(state, revision.org_id),
+        judge=judge,
+        expensive_judge=expensive_judge_if_distinct(state, revision.org_id),
+        selection="worker",
+    )
+    results = [
+        row
+        for row in results
+        if getattr(getattr(row, "execution", None), "analyzer_id", "") != QUALITY_CARD
+        and getattr(getattr(row, "execution", None), "analyzer_id", "") != GROUNDEDNESS
+        and not str(getattr(getattr(row, "execution", None), "analyzer_id", "")).startswith("pack:")
+    ]
+    results.extend(pack_rows)
+    card = quality_card_result(revision, claims=card_claims or None)
+    results.append(card)
+    grounded = maybe_run_groundedness(revision, state)
+    if grounded is not None:
+        results.append(grounded)
     if writer is not None:
         writer(revision.org_id, revision.call_id, revision.revision, results)
+
+
+def _run_pack_blocking(revision: CallRevision, **kwargs: Any) -> Any:
+    import asyncio
+    import threading
+
+    from obsalt.analysis.pack import run_pack
+
+    async def _go() -> Any:
+        return await run_pack(revision, **kwargs)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_go())
+    box: dict[str, Any] = {}
+
+    def _thread() -> None:
+        box["result"] = asyncio.run(_go())
+
+    worker = threading.Thread(target=_thread)
+    worker.start()
+    worker.join()
+    return box["result"]
 
 
 def _run_tier2_blocking(revision: CallRevision, **kwargs: Any) -> Any:
@@ -612,6 +686,8 @@ def _emit_slo(state: Any, revision: CallRevision) -> None:
 
 
 def _emit_analysis_hooks(state: Any, revision: CallRevision) -> None:
+    from obsalt.analysis.hallucination import PAGEABLE_SEVERITIES, assign_claim_severity
+    from obsalt.analysis.rollups import _is_confirmed_claim
     from obsalt.query import analysis_for
     from obsalt.webhooks.outbound import emit_standard_event
 
@@ -619,10 +695,23 @@ def _emit_analysis_hooks(state: Any, revision: CallRevision) -> None:
     for row in rows:
         payload = getattr(row, "payload", {}) or {}
         analyzer = getattr(getattr(row, "execution", None), "analyzer_id", "")
-        if analyzer == "flags":
-            for flag in payload.get("flags") or []:
-                if isinstance(flag, dict) and flag.get("kind"):
-                    emit_standard_event(state, revision, "flag.raised", {"kind": str(flag["kind"])})
+        if analyzer == "quality_card" and payload.get("critical_failure"):
+            emit_standard_event(
+                state, revision, "flag.raised", {"kind": "quality_card", "severity": "critical"}
+            )
+        if analyzer == "hallucination":
+            for claim in payload.get("claims") or []:
+                if not isinstance(claim, dict) or not _is_confirmed_claim(claim, payload):
+                    continue
+                severity = str(claim.get("severity") or assign_claim_severity(claim))
+                if severity not in PAGEABLE_SEVERITIES:
+                    continue
+                emit_standard_event(
+                    state,
+                    revision,
+                    "flag.raised",
+                    {"kind": str(claim.get("kind") or ""), "severity": severity},
+                )
 
 
 def _source_call_id(events: Iterable[NormalizedEvent]) -> str | None:

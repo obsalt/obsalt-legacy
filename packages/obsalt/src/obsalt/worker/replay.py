@@ -19,17 +19,13 @@ def replay_envelopes(
 ) -> int:
     """Re-queue matching envelopes and drain. Tombstoned envelopes stay dead."""
 
-    lister = getattr(state.inbox, "list_envelopes", None)
-    requeue = getattr(state.inbox, "requeue", None)
-    if not callable(lister) or not callable(requeue):
-        return drain_once(state, limit=limit)
     queued = 0
-    for envelope in lister(org_id):
+    for envelope in state.inbox.list_envelopes(org_id):
         if not _matches(envelope, provider=provider, source_call_id=source_call_id):
             continue
         if envelope.state is EnvelopeState.TOMBSTONED:
             continue
-        requeue(envelope.envelope_id)
+        state.inbox.requeue(envelope.envelope_id)
         queued += 1
         if queued >= limit:
             break

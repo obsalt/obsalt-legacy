@@ -8,20 +8,40 @@ heuristic "any user speech after an agent turn" — that is a false positive.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
+from obsalt.analysis.hangup import party_for_reason
 from obsalt.domain.enums import (
+    GroundingKind,
+    HangupReason,
     MeasurementPlacement,
     Metric,
     PipelineArchitecture,
     Provenance,
+    Speaker,
     Stage,
 )
-from obsalt.domain.events import CallObserved, InterruptionObserved, NormalizedEvent, StageObserved
+from obsalt.domain.events import (
+    CallObserved,
+    GroundingObserved,
+    InterruptionObserved,
+    NormalizedEvent,
+    OutcomeObserved,
+    StageObserved,
+    TurnObserved,
+)
+from obsalt.domain.models import ProvenanceStamp
 from obsalt.otel.conventions import (
+    AGENT_ID,
     CONVERSATION_ID,
+    ERROR_TYPE,
+    GENAI_END_REASON,
     OBSALT_BARGE_IN,
+    OBSALT_HANGUP_PROVIDER_CODE,
+    OBSALT_HANGUP_REASON,
+    PII_AGENT_TRANSCRIPT,
+    PII_USER_TRANSCRIPT,
     PROVIDER_CALL_ID,
     SPAN_GENERATION,
     SPAN_LLM,
@@ -32,6 +52,7 @@ from obsalt.otel.conventions import (
     SPAN_TTS,
     SPAN_USER_INPUT,
     TURN_INDEX,
+    agent_id_from_attrs,
 )
 from obsalt.otel.span_time import valid_span_interval
 from obsalt.plugin.types import InstrumentedClient, ReadableSpan, SdkConfig
@@ -136,16 +157,62 @@ def decode_s2s_spans(
     if not spans:
         return
     conv = None
+    agent_id = None
+    agent_key = None
+    outcome = None
     for span in spans:
         attrs = span.attributes or {}
         conv = attrs.get(CONVERSATION_ID) or attrs.get(PROVIDER_CALL_ID) or conv
+        if agent_id is None:
+            found = agent_id_from_attrs(attrs)
+            if found:
+                agent_id = found
+                agent_key = (
+                    AGENT_ID
+                    if attrs.get(AGENT_ID) not in (None, "")
+                    else next(
+                        (
+                            key
+                            for key in ("obsalt.agent.id", "gen_ai.agent.id")
+                            if attrs.get(key) not in (None, "")
+                        ),
+                        AGENT_ID,
+                    )
+                )
+        found_outcome = outcome_from_span_attrs(attrs)
+        if found_outcome is not None:
+            outcome = found_outcome
+    provenance: dict[str, ProvenanceStamp] = {}
+    if agent_id and agent_key:
+        provenance["agent_id"] = ProvenanceStamp(
+            provenance=Provenance.PROVIDER_REPORTED, source_path=agent_key
+        )
     if conv:
-        yield CallObserved(source_call_id=str(conv), architecture=architecture)
+        yield CallObserved(
+            source_call_id=str(conv),
+            agent_id=agent_id,
+            architecture=architecture,
+            provenance_by_field=provenance,
+        )
+    if outcome is not None:
+        yield outcome
+    next_turn = 0
     for span in spans:
         if span.name in CASCADE_SPAN_NAMES:
             continue
         if is_real_barge_in(span):
             yield InterruptionObserved(turn_index=_turn_index(span), count=1, kind="barge_in")
+        turn = _turn_from_span(span, next_turn)
+        if turn is not None:
+            yield turn
+            if turn.speaker is Speaker.USER and turn.text:
+                yield GroundingObserved(
+                    kind=GroundingKind.USER_TEXT,
+                    content=turn.text,
+                    provenance=Provenance.PROVIDER_REPORTED,
+                    source_path=f"span.attributes.{PII_USER_TRANSCRIPT}",
+                )
+            next_turn = max(next_turn, turn.turn_index + 1)
         stage = S2S_SPAN_TO_STAGE.get(span.name)
         if stage is None:
             continue
@@ -162,6 +229,73 @@ def decode_s2s_spans(
             provenance=Provenance.PROVIDER_REPORTED,
             source_path=f"span:{span.name}",
         )
+
+
+def outcome_from_span_attrs(attrs: Mapping[str, object]) -> OutcomeObserved | None:
+    reason_raw = attrs.get(OBSALT_HANGUP_REASON) or attrs.get(GENAI_END_REASON)
+    code_raw = attrs.get(OBSALT_HANGUP_PROVIDER_CODE) or reason_raw or attrs.get(ERROR_TYPE)
+    if reason_raw in (None, "") and attrs.get(ERROR_TYPE) in (None, ""):
+        return None
+    code = str(code_raw or reason_raw or "")
+    if not code:
+        return None
+    parsed: HangupReason | None = None
+    if reason_raw not in (None, ""):
+        try:
+            parsed = HangupReason(str(reason_raw))
+        except ValueError:
+            parsed = None
+    stamp = ProvenanceStamp(
+        provenance=Provenance.PROVIDER_REPORTED,
+        source_path=(
+            OBSALT_HANGUP_REASON
+            if attrs.get(OBSALT_HANGUP_REASON) not in (None, "")
+            else GENAI_END_REASON
+            if attrs.get(GENAI_END_REASON) not in (None, "")
+            else ERROR_TYPE
+        ),
+    )
+    if parsed is not None:
+        return OutcomeObserved(
+            provider_code=code,
+            reason=parsed,
+            party=party_for_reason(parsed),
+            provenance_by_field={"provider_code": stamp},
+        )
+    return OutcomeObserved(provider_code=code, provenance_by_field={"provider_code": stamp})
+
+
+def _turn_from_span(span: ReadableSpan, fallback_index: int) -> TurnObserved | None:
+    attrs = span.attributes or {}
+    user_text = attrs.get(PII_USER_TRANSCRIPT)
+    agent_text = attrs.get(PII_AGENT_TRANSCRIPT)
+    speaker: Speaker | None = None
+    text = ""
+    if span.name == SPAN_USER_INPUT or (
+        user_text not in (None, "") and span.name != SPAN_GENERATION
+    ):
+        if user_text not in (None, ""):
+            speaker = Speaker.USER
+            text = str(user_text)
+    if speaker is None and agent_text not in (None, ""):
+        speaker = Speaker.AGENT
+        text = str(agent_text)
+    if speaker is None or not text:
+        return None
+    index = _turn_index(span)
+    started = None
+    ended = None
+    if span.start_unix_nano:
+        started = datetime.fromtimestamp(span.start_unix_nano / 1e9, tz=UTC)
+    if valid_span_interval(span):
+        ended = datetime.fromtimestamp(span.end_unix_nano / 1e9, tz=UTC)
+    return TurnObserved(
+        turn_index=index if index is not None else fallback_index,
+        speaker=speaker,
+        text=text,
+        started_at=started,
+        ended_at=ended,
+    )
 
 
 class InstrumentedVoiceClient:

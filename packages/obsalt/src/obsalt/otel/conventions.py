@@ -26,8 +26,10 @@ CALL_ID = "call.id"
 PROVIDER_CALL_ID = "call.provider_id"
 ORG_ID = "obsalt.org"
 AGENT_ID = "agent.id"
+OBSALT_AGENT_ID = "obsalt.agent.id"
 TURN_INDEX = "turn.index"
 CONVERSATION_ID = "gen_ai.conversation.id"
+GENAI_END_REASON = "gen_ai.agent.invocation.end_reason"
 
 # Merged GenAI
 GENAI_OPERATION = "gen_ai.operation.name"
@@ -52,6 +54,8 @@ OBSALT_TTFA_MS = "obsalt.ttfa_ms"
 OBSALT_FIDELITY = "obsalt.timeline_fidelity"
 OBSALT_PROVENANCE = "obsalt.provenance"
 OBSALT_AS_ROOT = "obsalt.as_root"
+OBSALT_HANGUP_REASON = "obsalt.hangup.reason"
+OBSALT_HANGUP_PROVIDER_CODE = "obsalt.hangup.provider_code"
 
 # PII lives only under this prefix. Default exporter strips it.
 PII_PREFIX = "obsalt.pii."
@@ -119,13 +123,24 @@ def genai_provider_name_key(attrs: Mapping[str, object] | None) -> str | None:
     return None
 
 
+def agent_id_from_attrs(attrs: Mapping[str, object] | None) -> str | None:
+    """Copy ``agent.id`` / ``obsalt.agent.id`` / ``gen_ai.agent.id``. Never invent one."""
+
+    attrs = attrs or {}
+    for key in (AGENT_ID, OBSALT_AGENT_ID, "gen_ai.agent.id"):
+        value = attrs.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
 def genai_audio_input_tokens(attrs: Mapping[str, object] | None) -> tuple[int | None, str | None]:
     """Accept merged ``gen_ai.usage.audio.input_tokens`` and LiveKit ``gen_ai.usage.input_audio_tokens``."""
 
     attrs = attrs or {}
     for key in (GENAI_AUDIO_IN, GENAI_AUDIO_IN_LIVEKIT):
         raw = attrs.get(key)
-        if raw is None:
+        if not isinstance(raw, (int, float, str)):
             continue
         try:
             return int(raw), key
@@ -159,9 +174,14 @@ def setup_tracing(
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor,
+        ConsoleSpanExporter,
+        SpanExporter,
+    )
 
     provider = TracerProvider(resource=Resource.create({"service.name": "voice-agent"}))
+    exporter: SpanExporter
     if otlp_endpoint:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
@@ -174,10 +194,3 @@ def setup_tracing(
     provider.add_span_processor(StripPiiSpanProcessor(emit_pii=emit_pii))
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
-
-
-def assert_no_pii_in_name(name: str) -> None:
-    lowered = name.lower()
-    for token in ("@", "transcript", "email"):
-        if token in lowered:
-            raise AssertionError(f"span name {name!r} looks like it contains content")

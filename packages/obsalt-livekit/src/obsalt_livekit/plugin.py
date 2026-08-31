@@ -22,7 +22,14 @@ from obsalt.domain.events import (
     ToolObserved,
 )
 from obsalt.domain.models import FidelityDeclaration, ProvenanceStamp
-from obsalt.otel.conventions import CONVERSATION_ID, genai_audio_input_tokens
+from obsalt.otel.conventions import (
+    AGENT_ID,
+    CONVERSATION_ID,
+    SPAN_CALL,
+    agent_id_from_attrs,
+    genai_audio_input_tokens,
+)
+from obsalt.otel.s2s import outcome_from_span_attrs
 from obsalt.otel.span_time import stage_from_span_semantics, valid_span_interval
 from obsalt.plugin import PLUGIN_API_VERSION
 from obsalt.plugin.types import PluginManifest, ReadableSpan
@@ -41,7 +48,7 @@ class LiveKitPlugin:
             {PipelineArchitecture.CASCADE, PipelineArchitecture.SPEECH_TO_SPEECH}
         ),
         possible_placements=frozenset({MeasurementPlacement.INTERVAL}),
-        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TOOL_RESULT}),
+        provides=frozenset({Signal.STAGE_INTERVAL, Signal.TOOL_RESULT, Signal.HANGUP}),
         structurally_absent={},
         schema_source="LiveKit lk.* and gen_ai.usage.input_audio_tokens (accepted alongside merged spec)",
         schema_revision="2026-08-22",
@@ -52,28 +59,43 @@ class LiveKitPlugin:
         attrs = span.attributes or {}
         if any(str(k).startswith("lk.") for k in attrs):
             return 70
+        if span.name == SPAN_CALL:
+            return 40
         return 0
 
     def decode(self, spans: Sequence[ReadableSpan]) -> Iterable[NormalizedEvent]:
         conv = None
         token_key = None
+        agent_id = None
+        outcome = None
         for span in spans:
             attrs = span.attributes or {}
             conv = attrs.get(CONVERSATION_ID) or attrs.get("lk.room.name") or conv
             _count, key = genai_audio_input_tokens(attrs)
             if key:
                 token_key = token_key or key
+            agent_id = agent_id or agent_id_from_attrs(attrs)
+            found_outcome = outcome_from_span_attrs(attrs)
+            if found_outcome is not None:
+                outcome = found_outcome
         provenance: dict[str, ProvenanceStamp] = {}
         if token_key:
             provenance["input_audio_tokens"] = ProvenanceStamp(
                 provenance=Provenance.PROVIDER_REPORTED, source_path=token_key
             )
+        if agent_id:
+            provenance["agent_id"] = ProvenanceStamp(
+                provenance=Provenance.PROVIDER_REPORTED, source_path=AGENT_ID
+            )
         if conv:
             yield CallObserved(
                 source_call_id=str(conv),
+                agent_id=agent_id,
                 architecture=PipelineArchitecture.CASCADE,
                 provenance_by_field=provenance,
             )
+        if outcome is not None:
+            yield outcome
         for span in spans:
             if not span.name:
                 continue

@@ -82,9 +82,7 @@ def _connections(
 ) -> list[tuple[ConnectionConfig, Any]]:
     out: list[tuple[ConnectionConfig, Any]] = []
     plugins = {item.name: item.plugin for item in state.plugins}
-    for cfg in getattr(state.resolver, "connections", {}).values():
-        if cfg.org_id != org_id:
-            continue
+    for cfg in state.resolver.list_for_org(org_id):
         if provider and cfg.provider != provider:
             continue
         if connection_id and cfg.connection_id != connection_id:

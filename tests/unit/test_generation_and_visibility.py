@@ -7,7 +7,11 @@ import pytest
 from obsalt.assemble.promote import MemoryPointerStore
 from obsalt.domain.events import CallObserved
 from obsalt.runtime import MemoryGenerationStore
-from obsalt.worker.process import MemoryRevisionSink, RevisionSink, process_normalized_events
+from obsalt.worker.process import (
+    MemoryRevisionSink,
+    process_normalized_events,
+    verify_revision_visible,
+)
 from tests.helpers import fidelity_declaration
 
 
@@ -24,7 +28,7 @@ class InvisibleSink(MemoryRevisionSink):
         return
 
     def verify_visible(self, revision):  # type: ignore[no-untyped-def]
-        return RevisionSink.verify_visible(self, revision)
+        return verify_revision_visible(self, revision)
 
 
 def test_invisible_write_blocks_promotion() -> None:

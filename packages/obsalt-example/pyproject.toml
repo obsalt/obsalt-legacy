@@ -13,6 +13,9 @@ dependencies = ["obsalt==0.0.0"]
 [project.entry-points."obsalt.plugins"]
 example = "obsalt_example.plugin:ExamplePlugin"
 
+[tool.uv.sources]
+obsalt = { workspace = true }
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

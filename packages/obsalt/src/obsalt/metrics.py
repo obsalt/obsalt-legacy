@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 late_spans_after_finalize_total = Counter(
     "obsalt_late_spans_after_finalize_total",
@@ -55,4 +55,18 @@ tier2_spend_usd = Gauge(
     "obsalt_tier2_spend_usd",
     "Per-org LLM spend burn-down.",
     ["org_id"],
+)
+groundedness_runs_total = Counter(
+    "obsalt_groundedness_runs_total",
+    "Local encoder runs by status.",
+    ["status"],
+)
+groundedness_seconds = Histogram(
+    "obsalt_groundedness_seconds",
+    "Local encoder wall time per agent turn.",
+)
+detector_claims_total = Counter(
+    "obsalt_detector_claims_total",
+    "Structured exact claims by kind, verdict, and detector version.",
+    ["kind", "verdict", "version"],
 )

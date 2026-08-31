@@ -66,13 +66,6 @@ def test_delete_by_call_cannot_be_replayed() -> None:
     assert list_calls(client)["items"] == []
 
 
-def test_retention_horizon_is_the_documented_default() -> None:
-    client = api_client(example_state())
-    horizon = client.get("/v1/retention", headers=auth())
-    assert horizon.status_code == 200
-    assert horizon.json()["raw_retention_days"] == 30
-
-
 def test_quality_does_not_count_another_orgs_hallucinations() -> None:
     """Org A must not see org B's confirmed flags. Built entirely over HTTP."""
     client = api_client(example_state())

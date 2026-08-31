@@ -1,7 +1,18 @@
 # Security and tenancy
 
 Short version: [What obsalt does](../product.md). Operating deletion
-and rotation: [Operate](../ops.md).
+and rotation: [Operate](../operate.md).
+
+```mermaid
+flowchart LR
+  key[API key or ingest URL] --> org[org_id]
+  payload[Payload fields] -.-> corroborate[Corroborate only]
+  span[OTLP resource attrs] -.-> corroborate
+  corroborate -.-> org
+```
+
+Payload fields and OTLP attributes may corroborate. They may never
+select an organization.
 
 ## Tenancy
 
@@ -71,7 +82,7 @@ never sets `completed_at` is not a deletion.
 
 ## Egress
 
-One policy for backfill, judges, embedders, OTLP destinations,
+One policy for backfill, judges, embedders, local groundedness weight fetch, OTLP destinations,
 recording retrieval, and outbound webhooks. Validates schemes and
 ports, blocks internal address ranges by default, re-resolves DNS after
 redirects, bounds response size and time.
@@ -105,4 +116,4 @@ alert on insert, not just a log line.
 ## Next
 
 Knobs: [Configuration](configuration.md). Day-to-day operations:
-[Operate](../ops.md).
+[Operate](../operate.md).

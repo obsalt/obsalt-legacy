@@ -150,7 +150,7 @@ def sweep_raw(
                 continue
         if hasattr(envelope, "state"):
             envelope.state = EnvelopeState.FAILED
-    orphans = sweep_orphan_blobs(objects, inbox, older_than_seconds=300)
+    orphans = sweep_orphan_blobs(objects, inbox)
     return {
         **replay_horizon(raw_retention_days=days, now=now),
         "inspected": inspected,
@@ -159,16 +159,10 @@ def sweep_raw(
     }
 
 
-def sweep_orphan_blobs(objects: Any, inbox: Any, *, older_than_seconds: int = 300) -> int:
+def sweep_orphan_blobs(objects: Any, inbox: Any) -> int:
     """Delete raw object keys that have no matching inbox row (§12.2)."""
 
-    if objects is None or not hasattr(objects, "list_keys"):
-        return 0
-    known = {
-        getattr(envelope, "object_key", "") for envelope in getattr(inbox, "by_id", {}).values()
-    }
-    if hasattr(inbox, "list_envelopes") and not known:
-        return 0
+    known = {envelope.object_key for envelope in inbox.list_envelopes() if envelope.object_key}
     purged = 0
     for key in objects.list_keys("org/"):
         if "/raw/" not in key:
@@ -187,7 +181,4 @@ def _orgs(state: Any) -> list[str]:
     seen: set[str] = set()
     for org, _scopes in getattr(state, "keys", {}).values():
         seen.add(org)
-    lister = getattr(state.pointers, "list_org", None)
-    if callable(lister) and seen:
-        return sorted(seen)
     return sorted(seen) or ["local"]

@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from obsalt.crypto.primitives import require_singleton
 from obsalt.domain.enums import EnvelopeState, ObservationalEventKind, VerifyOutcome
 from obsalt.ingest.headers import RawHeaders
 from obsalt.plugin.contract import WebhookSource
 from obsalt.plugin.types import (
-    ConnectionConfig,
     RawEnvelope,
-    TombstoneHints,
     VerifyResult,
     WebhookResponse,
 )
+from obsalt.store.ports import ConnectionResolver, Inbox, ObjectStore
 from obsalt.util import new_id, sha256_bytes, utcnow
 
 log = logging.getLogger("obsalt.ingest")
@@ -24,48 +23,17 @@ log = logging.getLogger("obsalt.ingest")
 DEFAULT_COMPRESSED_LIMIT = 1_000_000
 DEFAULT_EXPANDED_LIMIT = 8_000_000
 
-
-class ObjectStore(Protocol):
-    def put(
-        self, key: str, body: bytes, *, content_type: str = "application/octet-stream"
-    ) -> None: ...
-    def get(self, key: str) -> bytes: ...
-    def delete(self, key: str) -> None: ...
-
-
-class Inbox(Protocol):
-    def accept(
-        self,
-        envelope: RawEnvelope,
-        *,
-        tombstone_hints: TombstoneHints,
-    ) -> tuple[RawEnvelope, bool]:
-        """Insert or resume the envelope, delivery-key dedupe, and outbox in one transaction.
-
-        Returns (envelope, created). Duplicate requests resume incomplete acceptance.
-        """
-
-    def is_tombstoned(self, org_id: str, hints: TombstoneHints) -> bool: ...
-
-    def tombstone(self, org_id: str, hints: TombstoneHints) -> None: ...
-
-    def claim_outbox(self, limit: int = 32) -> list[RawEnvelope]: ...
-
-    def outbox_depth(self) -> int: ...
-
-    def mark_assembled(self, envelope_id: str) -> None: ...
-
-    def mark_failed(self, envelope_id: str, error: str) -> None: ...
-
-    def get_by_id(self, envelope_id: str) -> RawEnvelope | None: ...
-
-    def list_envelopes(self, org_id: str) -> list[RawEnvelope]: ...
-
-    def requeue(self, envelope_id: str) -> None: ...
-
-
-class ConnectionResolver(Protocol):
-    def resolve(self, provider: str, ingest_key: str) -> ConnectionConfig | None: ...
+__all__ = [
+    "ConnectionResolver",
+    "Inbox",
+    "ObjectStore",
+    "ReceiveLimits",
+    "ReceiveResult",
+    "decoded_envelope_body",
+    "normalize_content_encoding",
+    "object_key_for",
+    "receive_webhook",
+]
 
 
 @dataclass
@@ -137,7 +105,7 @@ def receive_webhook(
     if connection.provider != provider:
         return _reject(404, "provider mismatch")
 
-    singleton = getattr(plugin, "singleton_headers", frozenset())
+    singleton: frozenset[bytes] = getattr(plugin, "singleton_headers", frozenset())
     dup = require_singleton(headers.as_list(), singleton)
     if dup is not None:
         return ReceiveResult(

@@ -19,19 +19,15 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
         with:
+          enable-cache: true
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            requirements-dev.txt
-            packages/**/pyproject.toml
       - name: Install
-        run: |
-          python -m pip install -U pip
-          python -m pip install -r requirements-dev.txt
+        run: uv sync --all-packages
       - name: Offline vendored pin check
-        run: python -m obsalt schema-drift --all
+        run: uv run obsalt schema-drift --all
       - name: Note
         run: >
           echo "This job stays reproducible unless a refetched --remote schema is

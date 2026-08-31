@@ -132,5 +132,9 @@ def test_analysis_insert_persists_execution_state() -> None:
 
 def test_fair_claim_sql_partitions_by_org() -> None:
     source = Path(PostgresInbox.claim_outbox.__code__.co_filename).read_text()
-    assert "PARTITION BY o.org_id" in source
+    assert "PARTITION BY org_id" in source
     assert "ROW_NUMBER()" in source
+    # FOR UPDATE must not share a SELECT with the window function; Postgres
+    # rejects that (FeatureNotSupported) and crash-looped the worker.
+    assert "FOR UPDATE OF o SKIP LOCKED" in source
+    assert "FOR UPDATE SKIP LOCKED\n                    ) ranked" not in source

@@ -8,7 +8,7 @@ Start at the [README](README.md). The documentation index is
 ## I want to change the code
 
 ```bash
-python -m pip install -r requirements-dev.txt
+uv sync --all-packages
 make test-unit          # no Docker
 make lint
 ```
@@ -18,7 +18,7 @@ Optional, once: `pre-commit install` (hooks live in
 
 Read, in this order:
 
-1. [Developing](docs/developing.md) — layout, commands, how to add a source
+1. [Develop](docs/develop.md) — layout, commands, how to add a source
 2. [Conventions](docs/conventions.md) — the rules a formatter cannot see
 3. [AGENTS.md](AGENTS.md) — one-screen version for you and for coding agents
 

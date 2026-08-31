@@ -3,24 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import Any
 
 from redis import Redis
 from redis.exceptions import RedisError
 
 from obsalt.plugin.types import RawEnvelope
+from obsalt.store.ports import LeaseAccelerator
 
 log = logging.getLogger("obsalt.leases")
 
 QUEUE_KEY = "obsalt:outbox"
 LEASE_PREFIX = "obsalt:lease:"
-
-
-class LeaseAccelerator(Protocol):
-    def notify(self, envelope_id: str) -> None: ...
-    def pop_ready(self, limit: int = 32) -> list[str]: ...
-    def acquire(self, envelope_id: str, owner: str, ttl: int) -> bool: ...
-    def release(self, envelope_id: str) -> None: ...
 
 
 class RedisLeaseAccelerator:

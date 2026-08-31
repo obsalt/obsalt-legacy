@@ -7,7 +7,10 @@
     "end_unix_nano": 1755777600700000000,
     "attributes": {
       "gen_ai.conversation.id": "gem-stock-1",
-      "gen_ai.provider.name": "gemini"
+      "gen_ai.provider.name": "gemini",
+      "agent.id": "support",
+      "obsalt.pii.user_transcript": "Just checking my booking confirmation CONF-8801.",
+      "obsalt.hangup.reason": "completed"
     }
   },
   {
@@ -18,7 +21,8 @@
     "end_unix_nano": 1755777601500000000,
     "attributes": {
       "gen_ai.conversation.id": "gem-stock-1",
-      "obsalt.barge_in": true
+      "obsalt.barge_in": true,
+      "obsalt.pii.agent_transcript": "I found confirmation CONF-8801. Anything else?"
     }
   },
   {

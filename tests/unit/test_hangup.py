@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-from obsalt.analysis.hangup import classify_provider_reason, mapped_count
-from obsalt.domain.enums import HangupParty, HangupReason
+from datetime import UTC, datetime
+
+from obsalt.analysis.hangup import (
+    ENDING_NOT_REPORTED,
+    ENDING_UNROOTED,
+    classify_provider_reason,
+    hangup_bucket,
+    mapped_count,
+)
+from obsalt.domain.enums import CallStatus, HangupParty, HangupReason
+from obsalt.domain.models import CallRevision, Hangup
 
 
 def test_voice_failed_is_tts_before_provider_name() -> None:
@@ -33,6 +42,35 @@ def test_explicit_customer_hangup() -> None:
 def test_retell_asr() -> None:
     reason, _ = classify_provider_reason("retell", "error_asr")
     assert reason == HangupReason.ERROR_STT
+
+
+def test_hangup_bucket_does_not_call_missing_unknown() -> None:
+    base = dict(
+        org_id="o",
+        call_id="c1",
+        revision="r1",
+        source="openai_realtime",
+        source_call_id="s1",
+        started_at=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+    missing = CallRevision(**base)
+    assert hangup_bucket(missing) == ENDING_NOT_REPORTED
+    unrooted = CallRevision(**base, rooted=False, status=CallStatus.UNROOTED)
+    assert hangup_bucket(unrooted) == ENDING_UNROOTED
+    unmapped = CallRevision(
+        **base,
+        hangup=Hangup(
+            reason=HangupReason.UNKNOWN,
+            party=HangupParty.UNKNOWN,
+            provider_code="mystery",
+        ),
+    )
+    assert hangup_bucket(unmapped) == HangupReason.UNKNOWN.value
+    blank_unknown = CallRevision(
+        **base,
+        hangup=Hangup(reason=HangupReason.UNKNOWN, party=HangupParty.UNKNOWN, provider_code=""),
+    )
+    assert hangup_bucket(blank_unknown) == ENDING_NOT_REPORTED
 
 
 def test_mapped_count_helper() -> None:

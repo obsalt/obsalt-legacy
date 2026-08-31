@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from obsalt.domain.enums import HangupParty, HangupReason
-from obsalt.domain.models import CallRevision, Hangup
+from obsalt.domain.enums import CallStatus, HangupParty, HangupReason
+from obsalt.domain.models import CallRevision
+
+# Presentation / filter buckets. Not HangupReason values — the taxonomy stays stable.
+ENDING_NOT_REPORTED = "not_reported"
+ENDING_UNROOTED = "unrooted"
 
 # Explicit high-value codes. Prefix rules cover the rest of a pinned enum.
 EXPLICIT: dict[tuple[str, str], tuple[HangupReason, HangupParty]] = {}
@@ -64,25 +68,37 @@ RETELL_EXPLICIT: dict[str, tuple[HangupReason, HangupParty]] = {
     "manual_stopped": (HangupReason.CANCELLED, HangupParty.SYSTEM),
 }
 
-_NEGATIVE = (
-    "nevermind",
-    "never mind",
-    "this is useless",
-    "speak to a human",
-    "real person",
-    "cancel",
-    "stupid",
-    "waste of time",
-    "wrong number",
-    "stop calling",
-    "don't call",
-    "do not call",
-    "refund",
-    "supervisor",
-    "manager",
-    "frustrated",
-    "ridiculous",
-)
+
+def hangup_bucket(call: CallRevision) -> str:
+    """Stable key for console filters and hangup clusters.
+
+    Missing outcome is not ``unknown``. ``unknown`` is reserved for a provider
+    code we received and could not map.
+    """
+    if (not call.rooted) or call.status is CallStatus.UNROOTED:
+        return ENDING_UNROOTED
+    hangup = call.hangup
+    if hangup is None:
+        return ENDING_NOT_REPORTED
+    if hangup.reason is HangupReason.UNKNOWN and not (hangup.provider_code or "").strip():
+        return ENDING_NOT_REPORTED
+    return hangup.reason.value
+
+
+def hangup_provider_code(call: CallRevision) -> str:
+    if call.hangup is None:
+        return ""
+    return (call.hangup.provider_code or "").strip()
+
+
+def party_for_reason(reason: HangupReason) -> HangupParty:
+    if reason is HangupReason.USER_HANGUP:
+        return HangupParty.USER
+    if reason in {HangupReason.AGENT_HANGUP, HangupReason.TRANSFER, HangupReason.COMPLETED}:
+        return HangupParty.AGENT
+    if reason is HangupReason.UNKNOWN:
+        return HangupParty.UNKNOWN
+    return HangupParty.SYSTEM
 
 
 def classify_provider_reason(provider: str, reason: str | None) -> tuple[HangupReason, HangupParty]:
@@ -206,56 +222,3 @@ def mapped_count(codes: list[str], provider: str) -> tuple[int, int]:
         if reason is not HangupReason.UNKNOWN:
             mapped += 1
     return mapped, len(codes)
-
-
-def customer_loss_score(call: CallRevision) -> tuple[float, list[str]]:
-    score = 0.0
-    reasons: list[str] = []
-    hangup = call.hangup
-    if hangup is None:
-        return 0.0, reasons
-    if hangup.reason == HangupReason.USER_HANGUP:
-        score += 0.45
-        reasons.append("user_hangup")
-    elif hangup.reason in {HangupReason.INACTIVITY, HangupReason.SILENCE_TIMEOUT}:
-        score += 0.25
-        reasons.append("silence_or_inactivity")
-    elif hangup.reason in {
-        HangupReason.ERROR_STT,
-        HangupReason.ERROR_LLM,
-        HangupReason.ERROR_TTS,
-        HangupReason.ERROR_TOOL,
-    }:
-        score += 0.35
-        reasons.append("pipeline_error")
-    last_user = ""
-    for turn in reversed(call.turns):
-        if turn.speaker.value == "user":
-            last_user = (turn.text or "").lower()
-            break
-    if any(token in last_user for token in _NEGATIVE):
-        score += 0.25
-        reasons.append("negative_last_utterance")
-    failed_tools = [t for t in call.tools if t.status.value in {"error", "timeout"}]
-    if failed_tools:
-        score += 0.2
-        reasons.append("tool_failure")
-    last_e2e = None
-    for sample in reversed(call.stage_measurements):
-        if sample.stage.value in {"e2e", "ttfa"}:
-            last_e2e = sample.value_ms
-            break
-    if last_e2e is not None and last_e2e > 1500:
-        score += 0.1
-        reasons.append("slow_last_turn")
-    duration = call.duration_ms or 0
-    if hangup.reason == HangupReason.USER_HANGUP and 0 < duration < 15_000:
-        score += 0.15
-        reasons.append("early_user_hangup")
-    return min(1.0, round(score, 3)), reasons
-
-
-def annotate_hangup(call: CallRevision, hangup: Hangup) -> Hangup:
-    last = call.turns[-1] if call.turns else None
-    hangup.last_speaker = last.speaker if last else None
-    return hangup

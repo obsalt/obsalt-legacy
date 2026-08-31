@@ -76,16 +76,29 @@ class MemorySearchIndex:
             },
         )
 
+    def delete_for_call(self, org_id: str, call_id: str) -> None:
+        self._docs.pop(f"{org_id}:{call_id}", None)
+
     def query(
         self,
-        q: str,
+        org_id: str,
+        q: str | None = None,
         *,
         filters: dict[str, Any] | None = None,
         limit: int = 20,
         k: int = 60,
     ) -> dict[str, Any]:
-        """Filter, then lexical + vector, fused with ``rrf`` from hybrid.py."""
-        candidates = [doc for doc in self._docs.values() if _matches(doc, filters)]
+        """Filter, then lexical + vector, fused with ``rrf`` from hybrid.py.
+
+        ``query(org_id, q)`` is the port. ``query("refunds")`` remains for unit tests.
+        """
+        if q is None:
+            q = org_id
+            org_id = ""
+        merged = dict(filters or {})
+        if org_id:
+            merged.setdefault("org_id", org_id)
+        candidates = [doc for doc in self._docs.values() if _matches(doc, merged)]
         candidates.sort(key=lambda doc: doc.call_id)
         if not q.strip():
             items = [_hit(doc, 0.0) for doc in candidates[:limit]]

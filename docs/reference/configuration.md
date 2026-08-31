@@ -28,7 +28,7 @@ key is added without the example line.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `OBSALT_POSTGRES_DSN` | `postgresql://obsalt:obsalt@localhost:5432/obsalt` | libpq DSN |
-| `OBSALT_CLICKHOUSE_URL` | `http://localhost:8123` | HTTP URL |
+| `OBSALT_CLICKHOUSE_URL` | `http://default:clickhouse@localhost:8123` | HTTP URL |
 | `OBSALT_CLICKHOUSE_DATABASE` | `obsalt` | Database name |
 | `OBSALT_REDIS_URL` | `redis://localhost:6379/0` | Lease accelerator |
 | `OBSALT_S3_ENDPOINT` | `http://localhost:9010` | MinIO / S3 / GCS-compatible |
@@ -62,6 +62,7 @@ intentional.
 | `OBSALT_MAX_CALL_DURATION_SECONDS` | `14400` | Trace finalize upper bound |
 | `OBSALT_TRACE_GRACE_SECONDS` | `30` | After root end |
 | `OBSALT_PLUGIN_DEADLINE_SECONDS` | `10` | Plugin join deadline |
+| `OBSALT_SLO_E2E_MS` | `2000` | E2E SLO threshold for outbound `slo.breached` |
 
 ## Retention and keys
 
@@ -83,14 +84,24 @@ intentional.
 | `OBSALT_JUDGE_API_KEY` | unset | Judge credential |
 | `OBSALT_JUDGE_MODEL` | `gpt-4.1-mini` | Default judge model |
 | `OBSALT_EMBEDDER_ONNX_PATH` | unset | Override local ONNX weights |
-| `OBSALT_SLO_E2E_MS` | `2000` | SLO threshold for outbound `slo.breached` |
+| `OBSALT_GROUNDEDNESS_ENABLED` | `false` | Bootstrap local encoder when the org has no eval policy row |
+| `OBSALT_GROUNDEDNESS_SAMPLE_RATE` | `0` | Bootstrap sample rate. `0` is a no-op |
+| `OBSALT_GROUNDEDNESS_MODEL` | `KRLabsOrg/lettucedect-v2-mmbert-base` | HF id or local path (allowlisted). Process-level |
+| `OBSALT_GROUNDEDNESS_CACHE_DIR` | unset | HuggingFace cache / vendored weights |
+| `OBSALT_GROUNDEDNESS_TURN_TIMEOUT_SECONDS` | `8` | Killable timeout per agent turn |
 
 `OBSALT_LLM_*` is spend. `OBSALT_JUDGE_*` is the judge endpoint. They
 are related and intentionally different prefixes: budget is a product
-control, judge is a plugin capability.
+control, judge is a plugin capability. Settings → Evals stores per-org
+runners and a cap; env values are bootstrap when the org has no row.
+
+Local groundedness (`obsalt[groundedness]`) does not spend the LLM
+budget. Enable + sample rate are per-org on the same eval policy row.
+Weights stay process-level. Spans are never confirmed hallucination
+flags. Default Docker image does not install torch.
 
 ## Next
 
 Flags on the command: [CLI](cli.md). Running this for real:
-[Operate](../ops.md). Tenancy implications:
+[Operate](../operate.md). Tenancy implications:
 [Security](security.md).

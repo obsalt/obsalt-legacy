@@ -77,7 +77,7 @@ def test_dead_air_and_truncated_llm_flags() -> None:
     assert "truncated_llm" in kinds
 
 
-def test_hallucination_stays_pending_until_tier2() -> None:
+def test_empty_grounding_hallucination_is_evidence_missing() -> None:
     from obsalt.domain.enums import AnalysisState
 
     state = example_state()
@@ -97,5 +97,8 @@ def test_hallucination_stays_pending_until_tier2() -> None:
     )
     rows = state.sink.analysis[(rev.org_id, rev.call_id, rev.revision)]
     hallo = next(row for row in rows if row.execution.analyzer_id == "hallucination")
-    assert hallo.execution.state is AnalysisState.PENDING
-    assert hallo.payload.get("selection") == "pending"
+    assert hallo.execution.state is AnalysisState.COMPLETED
+    assert hallo.payload.get("selection") == "detector"
+    assert all(
+        item.get("verdict") == "evidence_missing" for item in hallo.payload.get("claims") or []
+    )

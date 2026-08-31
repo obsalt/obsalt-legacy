@@ -1,100 +1,430 @@
 {% extends "base.html" %}
 {% block title %}obsalt — settings{% endblock %}
 {% block content %}
+  {% set can = can|default({}) %}
   <h1>Settings</h1>
-  <p class="muted">Provider connections, versioned rubrics, retention, plugins, and keys. Plugins are trusted, operator-installed code.</p>
-  <section class="panel">
-    <h2>Provider connections</h2>
+  <p class="lead muted">Connect a source, write rubrics, rotate keys, and delete data. Secrets are shown once. Retention is env-driven.</p>
+  {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+
+  <nav class="section-nav" aria-label="Settings sections">
+    <a href="#status">Status</a>
+    <a href="#connections">Connections</a>
+    <a href="#evals">Evals</a>
+    <a href="#rubrics">Rubrics</a>
+    <a href="#webhooks">Outbound webhooks</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#plugins">Plugins</a>
+    <a href="#users">Users</a>
+    <a href="#keys">Keys</a>
+  </nav>
+
+  <section class="panel" id="status">
+    <h2>Status</h2>
+    <div class="stats">
+      <div class="stat">
+        <span class="n">{{ environment|default("") }}</span>
+        <div class="q">Environment</div>
+      </div>
+      <div class="stat">
+        <span class="n">{{ (health.plugin_count if health else plugins|default([])|length) }}</span>
+        <div class="q">Plugins loaded</div>
+      </div>
+      <div class="stat{% if health and health.outbox_depth %} warn{% endif %}">
+        <span class="n">{{ health.outbox_depth if health else 0 }}</span>
+        <div class="q">Outbox depth</div>
+      </div>
+      <div class="stat{% if health and health.dlq_depth %} loss{% endif %}">
+        <span class="n">{{ health.dlq_depth if health else 0 }}</span>
+        <div class="q">Dead-letter queue</div>
+      </div>
+      <div class="stat{% if health and health.deletion_backlog %} warn{% endif %}">
+        <span class="n">{{ health.deletion_backlog if health else 0 }}</span>
+        <div class="q">Deletion backlog</div>
+      </div>
+      <div class="stat">
+        <span class="n">${{ spend_usd|default(0) }}</span>
+        <div class="q">of ${{ budget_usd|default(0) }} LLM{% if eval_policy and eval_policy.llm_evals_enabled %} · on{% else %} · off{% endif %}</div>
+      </div>
+    </div>
+    <p class="caption">Replay horizon: {{ retention.raw_days|default(30) }} days of unredacted raw. Expired raw cannot be re-decoded.</p>
+    <p class="muted">Transcripts {{ retention.transcripts_days|default(90) }} days · aggregates {{ retention.aggregates_days|default(400) }} days. Tier-2 sample rate {{ baseline_sample_rate|default(0) }}.</p>
+    <p class="caption">Local groundedness extra: {% if groundedness_extra %}installed{% else %}not installed — <code>uv pip install 'obsalt[groundedness]'</code>{% endif %}{% if eval_policy %} · org {% if eval_policy.groundedness_enabled %}enabled{% else %}off{% endif %} at sample {{ eval_policy.groundedness_sample_rate|default(0) }}{% endif %}. Model <code>{{ groundedness_model|default("KRLabsOrg/lettucedect-v2-mmbert-base") }}</code>.</p>
+    {% set dlq = dlq|default({}) %}
+    {% if dlq.count %}
+    <h3>Dead-letter queue</h3>
+    <p class="caption">Envelopes the worker gave up on after retries. Clearing the queue acknowledges the failures; it does not decode them. Replay a specific call if you still have raw.</p>
     <table>
-      <thead><tr><th>Provider</th><th>Connection</th><th>Org</th></tr></thead>
+      <thead><tr><th>Error</th><th>Count</th></tr></thead>
+      <tbody>
+        {% for row in dlq.by_error|default([]) %}
+        <tr><td>{{ row.error }}</td><td>{{ row.count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if can.get("replay") and csrf %}
+    <form class="settings-form" method="post" action="/v1/ui/dlq/purge">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Type DELETE <input name="confirm" required autocomplete="off" /></label>
+      <button class="danger" type="submit">Clear dead-letter queue</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="panel" id="connections">
+    <h2>Provider connections</h2>
+    <p class="muted">Hosted platforms POST signed webhooks. Custom agents emit OTLP with an API key — they do not need a webhook connection. One path per call.</p>
+    <table>
+      <thead><tr><th>Provider</th><th>Connection</th><th>Secret fields</th><th></th></tr></thead>
       <tbody>
         {% for item in connections|default([]) %}
         <tr>
-          <td>{{ item.provider }}</td>
-          <td>{{ item.connection_id }}</td>
-          <td>{{ item.org_id }}</td>
+          <td>{{ item.display_name or item.provider }}</td>
+          <td class="id">{{ item.connection_id }}</td>
+          <td>{{ item.secret_fields|join(", ") or "—" }}</td>
+          <td>
+            {% if can.get("connections.write") and csrf %}
+            {% if item.can_backfill %}
+            <form class="inline-form" method="post" action="/v1/ui/connections/{{ item.connection_id }}/backfill">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <button type="submit">Backfill</button>
+            </form>
+            {% endif %}
+            <form class="inline-form" method="post" action="/v1/ui/connections/{{ item.connection_id }}/delete">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <label>Type DELETE <input name="confirm" required autocomplete="off" /></label>
+              <button class="danger" type="submit">Delete</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="3">No connections.</td></tr>
+        <tr><td colspan="4">No connections yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+
+    {% if otlp_plugins %}
+    <h3>Custom agents (OTLP)</h3>
+    <p class="caption">Point the exporter at this service. Tenancy comes from the API key, never from a span attribute.</p>
+    <p class="secret-box" id="otlp-endpoint">{{ request.base_url }}v1/traces</p>
+    <p class="actions"><button type="button" onclick="copyFrom('otlp-endpoint')">Copy endpoint</button></p>
+    <p class="caption">Header <code>X-API-Key</code>. Loaded mappers: {% for item in otlp_plugins %}{{ item.display_name }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+    {% endif %}
+
+    {% if can.get("connections.write") and csrf and webhook_plugins %}
+    <h3>Create a hosted connection</h3>
+    <p class="caption">The ingest key is shown once. Paste the URL into the provider dashboard.</p>
+    {% for plugin in webhook_plugins %}
+    <details>
+      <summary>{{ plugin.display_name }}</summary>
+      <form class="settings-form" method="post" action="/v1/ui/connections">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <input type="hidden" name="provider" value="{{ plugin.name }}" />
+        {% for field in plugin.secret_fields %}
+        <label>{{ field.label }}
+          <input name="secret_{{ field.name }}" type="password" autocomplete="off" />
+        </label>
+        {% endfor %}
+        {% for field in plugin.settings_fields %}
+        <label>{{ field.label }}
+          {% if field.choices %}
+          <select name="setting_{{ field.name }}">
+            {% for choice in field.choices %}
+            <option value="{{ choice }}">{{ choice }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input name="setting_{{ field.name }}" autocomplete="off" />
+          {% endif %}
+        </label>
+        {% endfor %}
+        <button class="primary" type="submit">Create {{ plugin.display_name }} connection</button>
+      </form>
+    </details>
+    {% endfor %}
+    {% elif not webhook_plugins %}
+    <p class="muted">No webhook plugins loaded. Install <code>obsalt-vapi</code> or the hosted source you use.</p>
+    {% endif %}
   </section>
-  <section class="panel">
-    <h2>Rubrics</h2>
+
+  <section class="panel" id="evals">
+    <h2>Evals</h2>
+    <p class="muted">Point a cheap and an expensive OpenAI-compatible judge. API keys are encrypted and never shown again. LLM evals stay off until a runner and a monthly cap are set. Detectors still run at $0.</p>
+    {% set policy = eval_policy|default({}) %}
+    {% if eval_runners|default([]) %}
     <table>
-      <thead><tr><th>Name</th><th>Version</th><th>Enabled</th></tr></thead>
+      <thead><tr><th>Slot</th><th>Model</th><th>URL</th><th></th></tr></thead>
       <tbody>
-        {% for item in rubrics|default([]) %}
+        {% for item in eval_runners %}
         <tr>
-          <td>{{ item.name }}</td>
-          <td>{{ item.version }}</td>
-          <td>{{ item.enabled }}</td>
+          <td>{{ item.slot }}</td>
+          <td>{{ item.model }}</td>
+          <td class="muted">{{ item.base_url }}</td>
+          <td>
+            {% if can.get("eval_runners.write") and csrf %}
+            <form class="inline-form" method="post" action="/v1/ui/eval-runners/{{ item.id }}/ping">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <button type="submit">Test</button>
+            </form>
+            <form class="inline-form" method="post" action="/v1/ui/eval-runners/{{ item.id }}/delete">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <button type="submit">Delete</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
-        {% else %}
-        <tr><td colspan="3">No rubrics.</td></tr>
         {% endfor %}
       </tbody>
     </table>
-  </section>
-  <section class="panel">
-    <h2>Retention</h2>
-    {% set retention = retention|default({}) %}
-    <dl>
-      <dt>Transcripts / recordings</dt>
-      <dd>{{ retention.transcripts_days|default(90) }} days</dd>
-      <dt>Raw envelopes</dt>
-      <dd>{{ retention.raw_days|default(raw_retention_days)|default(30) }} days</dd>
-      <dt>Aggregates</dt>
-      <dd>{{ retention.aggregates_days|default(400) }} days</dd>
-    </dl>
-    <p>Tier-2 baseline sample rate: {{ baseline_sample_rate|default(0) }}</p>
-    <p>Monthly LLM budget: {{ budget_usd|default(0) }}</p>
-    <p class="muted">Raw blobs are unredacted by definition. Replay is bounded by the configured raw retention horizon.</p>
-    {% if csrf and org %}
-    <form method="post" action="/v1/ui/replay">
-      <input type="hidden" name="csrf" value="{{ csrf }}"/>
-      <button type="submit">Replay retained raw envelopes</button>
+    {% else %}
+    <p class="muted">No judge runners. Add one to score English rubrics. {% if eval_enable_blocked %}{{ eval_enable_blocked }}{% endif %}</p>
+    {% endif %}
+    {% if eval_pack|default([]) and not can.get("eval_runners.write") %}
+    <h3>LiveKit pack</h3>
+    <p class="caption">Enabled judges for this org.</p>
+    <div class="pills">
+      {% for item in eval_pack %}
+        {% if item.enabled %}<span class="pill">{{ item.name }}</span>{% endif %}
+      {% endfor %}
+    </div>
+    <p class="caption">Local groundedness: {% if policy.groundedness_enabled %}on{% else %}off{% endif %} · sample {{ policy.groundedness_sample_rate|default(0) }}. Extra: {% if groundedness_extra %}installed{% else %}not installed{% endif %}.</p>
+    {% endif %}
+    {% if can.get("eval_runners.write") and csrf %}
+    <h3>Add a runner</h3>
+    <form class="settings-form" method="post" action="/v1/ui/eval-runners">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Slot
+        <select name="slot">
+          <option value="cheap">cheap</option>
+          <option value="expensive">expensive</option>
+        </select>
+      </label>
+      <label>Base URL <input name="base_url" required placeholder="https://api.openai.com/v1" autocomplete="off" /></label>
+      <label>Model <input name="model" required placeholder="gpt-4.1-mini" autocomplete="off" /></label>
+      <label>API key <input name="api_key" type="password" required autocomplete="off" /></label>
+      <label><input type="checkbox" name="allow_http_localhost" value="true" /> Allow http://localhost</label>
+      <button class="primary" type="submit">Save runner</button>
+    </form>
+    <h3>Policy</h3>
+    <form class="settings-form" method="post" action="/v1/ui/eval-policy">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Monthly cap USD <input name="monthly_budget_usd" type="number" min="0" step="0.01" value="{{ policy.monthly_budget_usd|default(0) }}" /></label>
+      <label>Unbiased sample rate <input name="baseline_sample_rate" type="number" min="0" max="1" step="0.01" value="{{ policy.baseline_sample_rate|default(0) }}" /></label>
+      <label><input type="checkbox" name="llm_evals_enabled" value="true"{% if policy.llm_evals_enabled %} checked{% endif %} /> Enable LLM evals</label>
+      <fieldset>
+        <legend>LiveKit pack</legend>
+        <p class="caption">Default on: accuracy, tool use, conciseness, safety. Handoff is not applicable when there was no transfer. Task completion needs a prompt in grounding.</p>
+        {% for item in eval_pack|default([]) %}
+        <label>
+          <input type="checkbox" name="pack" value="{{ item.name }}"{% if item.enabled %} checked{% endif %} />
+          {{ item.name }}{% if item.default %} (default){% endif %}
+        </label>
+        {% endfor %}
+      </fieldset>
+      <fieldset>
+        <legend>Local groundedness</legend>
+        <p class="caption">Optional encoder (LettuceDetect). Spans are not confirmed flags. Sample rate 0 means no calls run.</p>
+        <label><input type="checkbox" name="groundedness_enabled" value="true"{% if policy.groundedness_enabled %} checked{% endif %} /> Enable local encoder (LettuceDetect). Spans are not confirmed flags.</label>
+        <label>Sample rate <input name="groundedness_sample_rate" type="number" min="0" max="1" step="0.01" value="{{ policy.groundedness_sample_rate|default(0) }}" /></label>
+        <p class="caption">Extra: {% if groundedness_extra %}installed{% else %}not installed — <code>uv pip install 'obsalt[groundedness]'</code>{% endif %}. Model: <code>{{ groundedness_model|default("KRLabsOrg/lettucedect-v2-mmbert-base") }}</code> (process env; restart to change).</p>
+      </fieldset>
+      {% if eval_enable_blocked %}<p class="caption">{{ eval_enable_blocked }}</p>{% endif %}
+      <button class="primary" type="submit">Save policy</button>
     </form>
     {% endif %}
   </section>
-  <section class="panel">
-    <h2>Plugins</h2>
-    <ul>
-      {% for item in plugins|default([]) %}
-        <li>{{ item.name }} — {{ item.display_name|default(item.name) }}</li>
-      {% else %}
-        <li>No plugins loaded.</li>
-      {% endfor %}
-    </ul>
-    <p><a href="/v1/plugins">Installed plugins (API)</a></p>
+
+  <section class="panel" id="rubrics">
+    <h2>Rubrics</h2>
+    <p class="muted">Plain-English quality questions. Editing creates a new version; historical scores stay attached to the version they were judged under. A heuristic cannot score these — configure a judge to get pass/fail.</p>
+    {% for item in rubrics|default([]) %}
+    <div class="eval-row">
+      <strong>{{ item.name }}</strong>
+      <span class="pill">v{{ item.version }}</span>
+      <span class="pill">{{ item.kind }}</span>
+      <span class="pill{% if item.enabled %} ok{% endif %}">{% if item.enabled %}enabled{% else %}paused{% endif %}</span>
+      {% if item.description %}<div class="muted">{{ item.description }}</div>{% endif %}
+      {% if can.get("rubrics.write") and csrf %}
+      <form class="settings-form" method="post" action="/v1/ui/rubrics/{{ item.id }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <label>Name <input name="name" value="{{ item.name }}" required /></label>
+        <label>Question <textarea name="description">{{ item.description }}</textarea></label>
+        <label>Threshold <input name="threshold" type="number" step="0.05" min="0" max="1" value="{{ item.threshold }}" /></label>
+        <label>State
+          <select name="enabled">
+            <option value="true"{% if item.enabled %} selected{% endif %}>Enabled</option>
+            <option value="false"{% if not item.enabled %} selected{% endif %}>Paused</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button class="primary" type="submit">Save new version</button>
+        </div>
+      </form>
+      <form class="inline-form" method="post" action="/v1/ui/rubrics/{{ item.id }}/delete">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <label>Type DELETE <input name="confirm" required autocomplete="off" /></label>
+        <button class="danger" type="submit">Delete</button>
+      </form>
+      {% endif %}
+    </div>
+    {% else %}
+    <p class="muted">No rubrics. Write the quality question you already ask in QA. Without a judge, English questions stay not judged. Detectors still run at $0.</p>
+    {% endfor %}
+    {% if can.get("rubrics.write") and csrf %}
+    <h3>New rubric</h3>
+    <form class="settings-form" method="post" action="/v1/ui/rubrics">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Name <input name="name" required placeholder="empathy" /></label>
+      <label>Question in English
+        <textarea name="description" required placeholder="Did the agent acknowledge frustration before proposing a fix?"></textarea>
+      </label>
+      <label>Threshold <input name="threshold" type="number" step="0.05" min="0" max="1" value="0.7" /></label>
+      <button class="primary" type="submit">Create rubric</button>
+    </form>
+    <h3>New predicate</h3>
+    <p class="caption">Runs on every call. No LLM. Unknown fields are rejected.</p>
+    <form class="settings-form" method="post" action="/v1/ui/rubrics">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <input type="hidden" name="kind" value="predicate" />
+      <label>Name <input name="name" required placeholder="recording-disclosure" /></label>
+      <label>Match
+        <select name="combinator">
+          <option value="all">all of these (must)</option>
+          <option value="any">any of these</option>
+          <option value="none">none of these (must not)</option>
+        </select>
+      </label>
+      <label>Phrase in agent speech <input name="phrase_in_agent" placeholder="call may be recorded" autocomplete="off" /></label>
+      <label>Phrase in opening agent turn <input name="phrase_in_opening" placeholder="this call may be recorded" autocomplete="off" /></label>
+      <label>Agent mentions (comma-separated) <input name="agent_mentions" placeholder="refunded, booked" autocomplete="off" /></label>
+      <label>Tool name contains <input name="tool_called" placeholder="verify_identity" autocomplete="off" /></label>
+      <label>Tool status
+        <select name="tool_status">
+          <option value="any">any</option>
+          <option value="ok">ok</option>
+          <option value="error">error</option>
+          <option value="timeout">timeout</option>
+        </select>
+      </label>
+      <label>Hangup is
+        <select name="hangup_in">
+          <option value="any">any</option>
+          <option value="completed">completed</option>
+          <option value="transfer">transfer</option>
+          <option value="user_hangup">user_hangup</option>
+        </select>
+      </label>
+      <button class="primary" type="submit">Create predicate</button>
+    </form>
+    {% endif %}
   </section>
-  <section class="panel">
-    <h2>Users</h2>
-    <p class="muted">Browser roles come from org users. Owner rotates keys; admin replays; analyst evaluates; reviewer is read-only.</p>
+
+  <section class="panel" id="webhooks">
+    <h2>Outbound webhooks</h2>
+    <p class="muted">Standard Webhooks. Secret is shown once. HTTPS only unless you opt in to localhost HTTP.</p>
     <table>
-      <thead><tr><th>Email</th><th>Role</th></tr></thead>
+      <thead><tr><th>URL</th><th>Event</th><th></th></tr></thead>
       <tbody>
-        {% for item in users|default([]) %}
+        {% for item in outbound|default([]) %}
         <tr>
-          <td>{{ item.email }}</td>
-          <td>{{ item.role }}</td>
+          <td>{{ item.url }}</td>
+          <td>{{ item.event_type }}</td>
+          <td>
+            {% if can.get("webhooks.write") and csrf %}
+            <form class="inline-form" method="post" action="/v1/ui/outbound-webhooks/{{ item.id }}/rotate">
+              <input type="hidden" name="csrf" value="{{ csrf }}" />
+              <button type="submit">Rotate secret</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="2">No users.</td></tr>
+        <tr><td colspan="3">No destinations.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if can.get("webhooks.write") and csrf %}
+    <form class="settings-form" method="post" action="/v1/ui/outbound-webhooks">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>URL <input name="url" type="url" required placeholder="https://example.com/hooks/obsalt" /></label>
+      <label>Event
+        <select name="event_type">
+          {% for event in webhook_events|default([]) %}
+          <option value="{{ event }}">{{ event }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label><input type="checkbox" name="allow_http_localhost" value="1" /> Allow http://localhost (dev only)</label>
+      <button class="primary" type="submit">Add destination</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="panel" id="privacy">
+    <h2>Replay, export, deletion</h2>
+    <p class="muted">Raw blobs are unredacted by definition. Replay is bounded by the configured raw retention horizon. Deletion cannot be undone. External warehouse copies cannot be revoked.</p>
+    {% if can.get("replay") and csrf %}
+    <h3>Replay retained raw</h3>
+    <form class="settings-form" method="post" action="/v1/ui/replay">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Provider <input name="provider" placeholder="vapi" /></label>
+      <label>Source call id <input name="source_call_id" /></label>
+      <button type="submit">Replay</button>
+    </form>
+    {% endif %}
+    {% if can.get("export") and csrf %}
+    <h3>Export</h3>
+    <form method="post" action="/v1/ui/export">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <button type="submit">Download calls.jsonl</button>
+    </form>
+    <p class="caption">Active revisions for this org. obsalt cannot revoke copies you move elsewhere.</p>
+    {% endif %}
+    {% if can.get("privacy.delete") and csrf %}
+    <h3>Verified deletion</h3>
+    <form class="settings-form" method="post" action="/v1/ui/privacy/deletion-requests">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Call id <input name="call_id" /></label>
+      <label>Source call id <input name="source_call_id" /></label>
+      <label>Caller <input name="caller" /></label>
+      <p class="caption">Or delete the current console window by checking the box (UTC range from the Calls page filters is not implied — set start/end).</p>
+      <label>Start <input name="start" placeholder="2026-08-01T00:00:00Z" /></label>
+      <label>End <input name="end" placeholder="2026-08-31T23:59:59Z" /></label>
+      <label>Type DELETE <input name="confirm" required autocomplete="off" /></label>
+      <button class="danger" type="submit">Request deletion</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="panel" id="plugins">
+    <h2>Plugins</h2>
+    <p class="muted">Plugins are trusted, operator-installed code. Core ships none.</p>
+    <table>
+      <thead><tr><th>Plugin</th><th>Capabilities</th><th>Format</th></tr></thead>
+      <tbody>
+        {% for item in plugin_rows|default([]) %}
+        <tr>
+          <td>{{ item.display_name }} <span class="muted">{{ item.name }}</span></td>
+          <td>{{ item.capability_labels|join(", ") }}</td>
+          <td>{{ item.source_format or "—" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">No plugins loaded.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </section>
-  <section class="panel">
+
+  <section class="panel" id="keys">
     <h2>Keys</h2>
-    <p class="muted">Service keys are hashed at rest, org-bound, and scoped. Secrets are never returned after creation.</p>
-    <ul>
-      {% for item in keys|default([]) %}
-        <li>{{ item.label|default(item.scope) }} · {{ item.scope }}</li>
-      {% else %}
-        <li>No keys listed.</li>
-      {% endfor %}
-    </ul>
+    <p class="muted">Service keys are hashed at rest, org-bound, and scoped. The plaintext is never stored in the session cookie. Rotate by pasting the current key; the new key is shown once. Old and new accept for the overlap window.</p>
+    {% if can.get("keys.rotate") and csrf %}
+    <form class="settings-form" method="post" action="/v1/ui/keys/rotate">
+      <input type="hidden" name="csrf" value="{{ csrf }}" />
+      <label>Current API key <input name="current_key" type="password" required autocomplete="off" /></label>
+      <button class="primary" type="submit">Rotate this key</button>
+    </form>
+    {% endif %}
   </section>
 {% endblock %}

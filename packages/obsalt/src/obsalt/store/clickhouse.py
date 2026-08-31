@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,10 +10,11 @@ from urllib.parse import unquote, urlparse
 
 import clickhouse_connect
 
+from obsalt.analysis.rollups import latest_analysis_results
 from obsalt.config import Settings
 from obsalt.domain.models import AnalysisResult, CallRevision
+from obsalt.store.sql_script import sql_statements
 from obsalt.util import canonical_json, utcnow
-from obsalt.worker.process import RevisionSink
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "clickhouse.sql"
 
@@ -48,40 +50,55 @@ def clickhouse_client(settings: Settings) -> Any:
     )
 
 
+class _SyncClientGuard:
+    """Serialize every call on a clickhouse_connect synchronous client.
+
+    The synchronous client keeps a single HTTP session and is not safe for
+    concurrent use across threads. The worker runs tier-2 analysis in a thread
+    while the main loop drains the outbox, and the API serves webhook
+    background tasks from a threadpool; both reach the same shared client.
+    Uncoordinated use raises ``ProgrammingError: Attempt to execute concurrent
+    queries within the same session``. A single lock prevents two threads from
+    using the session at once while keeping one client instance (so the
+    derived stores that receive this client are covered too).
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+        self._lock = threading.RLock()
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._client, name)
+        if callable(attr):
+
+            def _guarded(*args: Any, **kwargs: Any) -> Any:
+                with self._lock:
+                    return attr(*args, **kwargs)
+
+            return _guarded
+        return attr
+
+
 def apply_schema(client: Any) -> None:
-    for statement in _sql_statements(SCHEMA_PATH.read_text()):
+    for statement in sql_statements(SCHEMA_PATH.read_text()):
         client.command(statement)
 
 
-def _sql_statements(script: str) -> list[str]:
-    statements: list[str] = []
-    buf: list[str] = []
-    for line in script.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("--"):
-            continue
-        buf.append(line)
-        if stripped.endswith(";"):
-            stmt = "\n".join(buf).strip().rstrip(";").strip()
-            buf = []
-            if stmt:
-                statements.append(stmt)
-    tail = "\n".join(buf).strip().rstrip(";").strip()
-    if tail:
-        statements.append(tail)
-    return statements
-
-
-class ClickHouseSink(RevisionSink):
+class ClickHouseSink:
     """Writes a complete CallRevision payload plus narrow facts. GET is exact-revision only."""
 
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
-        self._client = client or clickhouse_client(settings)
+        self._client = _SyncClientGuard(client or clickhouse_client(settings))
         self.revisions: dict[tuple[str, str, str], CallRevision] = {}
         self.analysis: dict[tuple[str, str, str], list[AnalysisResult]] = {}
 
     def ping(self) -> None:
         self._client.command("SELECT 1")
+
+    def verify_visible(self, revision: CallRevision) -> CallRevision:
+        from obsalt.worker.process import verify_revision_visible
+
+        return verify_revision_visible(self, revision)
 
     def write(self, revision: CallRevision) -> None:
         created = as_clickhouse_datetime(revision.created_at) or as_clickhouse_datetime(utcnow())
@@ -248,11 +265,12 @@ class ClickHouseSink(RevisionSink):
             result = self._client.query(
                 """
                 SELECT call_id, revision, analyzer_id, analyzer_version, payload,
-                       state, error, rubric_version
+                       state, error, rubric_version, created_at
                 FROM analysis_results
                 WHERE org_id = {org:String}
                   AND ({cid:String} = '' OR call_id = {cid:String})
                   AND ({rev:String} = '' OR revision = {rev:String})
+                ORDER BY created_at ASC
                 """,
                 parameters={"org": org_id, "cid": call_id or "", "rev": revision or ""},
             )
@@ -292,8 +310,8 @@ class ClickHouseSink(RevisionSink):
                 )
             )
         if rows:
-            return rows
-        return self._memory_analysis(org_id, call_id, revision)
+            return latest_analysis_results(rows)
+        return latest_analysis_results(self._memory_analysis(org_id, call_id, revision))
 
     def _memory_analysis(
         self,
@@ -412,7 +430,7 @@ class ClickHouseSink(RevisionSink):
 
 
 def _analysis_row(row: Any) -> tuple[Any, ...]:
-    """New rows are 8 columns. Older inserts were payload-only (5 columns)."""
+    """New rows are 8+ columns. Older inserts were payload-only (5 columns)."""
     values = tuple(row)
     if len(values) >= 8:
         return values[:8]

@@ -43,7 +43,9 @@
       "tool_observed",
       "outcome_observed",
       "aggregate_observed",
-      "grounding_observed"
+      "grounding_observed",
+      "evidence_observed",
+      "interruption_observed"
     ]
   },
   {

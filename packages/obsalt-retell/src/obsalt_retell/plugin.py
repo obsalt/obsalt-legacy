@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from obsalt.crypto.primitives import (
     constant_time_eq,
@@ -157,7 +158,8 @@ class RetellPlugin:
 
     def delivery_key(self, raw: bytes, headers: list[tuple[bytes, bytes]]) -> str | None:
         payload = _json(raw)
-        blob = payload.get("call") if isinstance(payload.get("call"), dict) else payload
+        call = payload.get("call")
+        blob = call if isinstance(call, dict) else payload
         call_id = as_str(blob.get("call_id"))
         event = as_str(payload.get("event")) or "call_ended"
         if call_id:
@@ -166,7 +168,8 @@ class RetellPlugin:
 
     def tombstone_hints(self, raw: bytes) -> TombstoneHints:
         payload = _json(raw)
-        blob = payload.get("call") if isinstance(payload.get("call"), dict) else payload
+        call = payload.get("call")
+        blob = call if isinstance(call, dict) else payload
         return TombstoneHints(source_call_id=as_str(blob.get("call_id")))
 
     def acknowledgement(self, kind: ObservationalEventKind) -> WebhookResponse:
@@ -175,7 +178,8 @@ class RetellPlugin:
     def decode(self, envelope: RawEnvelope) -> Iterable[NormalizedEvent]:
         payload = _json(envelope.body or b"{}")
         event = as_str(payload.get("event")) or "call_ended"
-        blob = payload.get("call") if isinstance(payload.get("call"), dict) else payload
+        call = payload.get("call")
+        blob = call if isinstance(call, dict) else payload
         call_id = as_str(blob.get("call_id"))
         if not call_id:
             return
@@ -185,7 +189,8 @@ class RetellPlugin:
         elif blob.get("direction") == "outbound":
             direction = CallDirection.OUTBOUND
         cost = None
-        cost_obj = blob.get("call_cost") if isinstance(blob.get("call_cost"), dict) else {}
+        raw_cost = blob.get("call_cost")
+        cost_obj = raw_cost if isinstance(raw_cost, dict) else {}
         cents = as_float(cost_obj.get("combined_cost"))
         if cents is not None:
             cost = cents / 100.0
@@ -251,7 +256,8 @@ class RetellPlugin:
                 parse_datetime(blob.get("start_timestamp")),
                 emit_user_grounding=event in {"call_ended", "call_analyzed"},
             )
-        yield from _latency(blob.get("latency") if isinstance(blob.get("latency"), dict) else {})
+        raw_latency = blob.get("latency")
+        yield from _latency(raw_latency if isinstance(raw_latency, dict) else {})
         reason = as_str(blob.get("disconnection_reason"))
         if reason:
             yield OutcomeObserved(
@@ -269,7 +275,7 @@ class RetellPlugin:
 
 
 def _turns_and_tools(
-    items: list,
+    items: list[Any],
     call_started: datetime | None,
     *,
     emit_user_grounding: bool = False,
@@ -390,7 +396,7 @@ def _turns_and_tools(
         )
 
 
-def _latency(latency: dict) -> Iterable[NormalizedEvent]:
+def _latency(latency: dict[str, Any]) -> Iterable[NormalizedEvent]:
     for key, (stage, metric) in _STAGE_KEYS.items():
         block = latency.get(key)
         if not isinstance(block, dict):
@@ -432,7 +438,7 @@ def _latency(latency: dict) -> Iterable[NormalizedEvent]:
             )
 
 
-def _json(raw: bytes) -> dict:
+def _json(raw: bytes) -> dict[str, Any]:
     try:
         data = json.loads(raw or b"{}")
     except json.JSONDecodeError:

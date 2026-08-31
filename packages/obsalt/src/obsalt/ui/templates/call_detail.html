@@ -1,146 +1,341 @@
 {% extends "base.html" %}
-{% block title %}Call {{ call.call_id }}{% endblock %}
+{% block title %}Call {{ view.call_id or (call.call_id if call is defined else "") }}{% endblock %}
 {% block content %}
-  <p class="muted">
-    {{ call.source }} / {{ call.agent_id }}
-    · fidelity {{ call.timeline_fidelity.value }}
-    · architecture {{ call.pipeline_architecture.value }}
-    · decoder_version {{ call.decoder_version }}
-    · revision {{ call.revision }}
+  {% set view = view|default({}) %}
+  {% set cid = view.call_id or (call.call_id if call is defined else "") %}
+  {% set timeline = view.timeline|default(timeline) %}
+  <p class="muted meta-line">
+    <a href="{{ calls_href|default('/v1/ui') }}">Calls</a>
+    <span>{{ view.source }}{% if view.agent_id %} / {{ view.agent_id }}{% endif %}</span>
+    <span class="id" title="{{ cid }}">{{ view.short_id }}</span>
+    <span id="call-id" hidden>{{ cid }}</span>
+    <button type="button" onclick="copyFrom('call-id')">Copy id</button>
   </p>
+
+  <div class="verdict {{ view.hangup_tone|default('') }}">
+    <h1>{{ view.headline }}</h1>
+    <div class="pills">
+      {% if view.hangup %}<span class="pill {{ view.hangup_tone|default('') }}">{{ view.hangup }}</span>{% endif %}
+    </div>
+    {% if view.next_action %}<p class="next muted">{{ view.next_action }}</p>{% endif %}
+    <p class="muted">{{ view.when }} · {{ view.duration }}{% if view.direction %} · {{ view.direction }}{% endif %}{% if view.cost %} · {{ view.cost }}{% endif %}{% if view.provider_code %} · {{ view.provider_code }}{% endif %}</p>
+    {% if view.recording %}
+    <p class="caption"><a href="{{ view.recording.uri }}" rel="noreferrer" target="_blank">{{ view.recording.label }}</a> — obsalt does not host the audio.</p>
+    {% endif %}
+    {% if view.coverage_strip %}
+    <div class="coverage">
+      {% for item in view.coverage_strip %}
+        <div class="item {{ item.status }}">
+          <span class="k">{{ item.signal }}</span>
+          {{ item.label }}
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if view.grounding_empty %}
+      <p class="caption">Hallucination checks have nothing to trust (no prompt, knowledge, tool results, or caller text).</p>
+    {% endif %}
+    {% if view.quality_historical and view.quality_axes and view.quality_axes.accuracy %}
+    <div class="quality-axes">
+      <div>
+        <h3>Accuracy</h3>
+        {% for dim in view.quality_axes.accuracy %}
+        <div class="dim">
+          <span>{{ dim.label }}</span>
+          <span class="pill {{ dim.tone }}" title="{{ dim.reason }}">{{ dim.status_label }}</span>
+          <span class="muted">{{ dim.reason }}</span>
+        </div>
+        {% endfor %}
+        <p class="caption">Historical detector card; replay to refresh.</p>
+      </div>
+    </div>
+    {% elif view.evidence_confirmed or view.evidence_candidates %}
+    <div class="evidence-block">
+      {% if view.evidence_confirmed %}
+      <h3>Confirmed flags</h3>
+      {% for item in view.evidence_confirmed %}
+      <div class="evidence">
+        <span class="pill loss">{{ item.label }}</span>
+        <dl>
+          <dt>Agent</dt>
+          <dd class="quote" title="{{ item.span_text }}">{{ item.agent_span }}</dd>
+          {% if item.evidence %}
+          <dt>Tool</dt>
+          <dd>{{ item.evidence }}</dd>
+          {% endif %}
+        </dl>
+      </div>
+      {% endfor %}
+      {% endif %}
+      {% if view.evidence_candidates %}
+      <h3>Candidates</h3>
+      <div class="pills">
+        {% for item in view.evidence_candidates %}
+          <span class="pill warn" title="{{ item.span_text }}">{{ item.label }} — not confirmed</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% elif not view.grounding_empty %}
+    <p class="caption">No checkable numeric, id, or bound tool-success claim on this call.</p>
+    {% endif %}
+    {% if csrf %}
+    <div class="actions">
+      {% if can.get("replay") %}
+      <form class="inline-form" method="post" action="/v1/ui/calls/{{ cid }}/replay">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <button type="submit">Replay this call</button>
+      </form>
+      {% endif %}
+      {% if can.get("privacy.delete") %}
+      <form class="inline-form" method="post" action="/v1/ui/calls/{{ cid }}/delete">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <label>Type the call id to delete <input name="confirm" required autocomplete="off" /></label>
+        <button class="danger" type="submit">Delete this call</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if can.get("replay") %}
+    <p class="caption">Replay re-decodes retained raw ({{ raw_retention_days|default(30) }} day horizon) and promotes a new revision.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+
   <div class="detail">
     <section class="panel">
       <h2>Timeline</h2>
-      <p>{{ timeline.reason }}</p>
-      {% for row in coverage|default(call.coverage) %}
-        {% if row.signal.value == "stage_interval" and row.status.value == "unsupported" and row.reason %}
-          <p class="muted">{{ row.reason }}</p>
-        {% endif %}
+      {% if timeline.fidelity_label and not timeline.duration_rows and not timeline.draw_stage_waterfall %}
+        <p class="caption">{{ timeline.fidelity_label }}</p>
+      {% endif %}
+      {% for row in view.coverage|default([]) if row.signal == "stage_interval" and row.status == "unsupported" and row.reason %}
+        <p class="caption">{{ row.reason }}</p>
       {% endfor %}
+
+      {% if timeline.has_turn_bars %}
+      <div class="turn-bars stage-rows">
+        {% for turn in timeline.turns %}
+          {% if turn.bar_pct %}
+          <div class="stage-row">
+            <div class="name">{{ turn.speaker_label }}</div>
+            <div class="bar-track"><div class="bar-fill" style="width: {{ turn.bar_pct }}%"></div></div>
+            <div class="val">{{ turn.duration }}{% if turn.interrupted %} · interrupted{% endif %}</div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+
       {% if timeline.draw_stage_waterfall %}
-        <p>Stage waterfall (INTERVAL measurements only).</p>
-        {% for item in timeline.stage_intervals %}
-          <div class="chip">{{ item.stage }} {{ item.value_ms }}ms</div>
-        {% endfor %}
-      {% else %}
-        <p>No invented stage intervals.</p>
+        <p class="caption">{{ timeline.waterfall_caption }}</p>
+        <div class="waterfall stage-rows">
+          {% for item in timeline.stage_intervals %}
+          <div class="stage-row">
+            <div class="name">{{ item.stage_label }}</div>
+            <div class="bar-track">
+              <div class="wf-bar" style="left: {{ item.left_pct }}%; width: {{ item.width_pct }}%">{{ item.value_text }}</div>
+            </div>
+            <div class="val">{{ item.value_text }}</div>
+          </div>
+          {% endfor %}
+        </div>
       {% endif %}
-      <h3>Turns</h3>
-      {% for turn in timeline.turns %}
-        <div>{{ turn.index }} {{ turn.speaker }}</div>
-      {% endfor %}
-      {% if timeline.anchored_stage_chips %}
-        <h3>Anchored durations</h3>
-        {% for item in timeline.anchored_stage_chips %}
-          <div class="chip">{{ item.stage }} {{ item.metric }} {{ item.value_ms }}ms (anchored, not an interval)</div>
-        {% endfor %}
+
+      {% if timeline.duration_rows %}
+        <p class="caption">{{ timeline.duration_caption }}</p>
+        <div class="stage-rows">
+          {% for item in timeline.duration_rows %}
+          <div class="stage-row">
+            <div class="name">{{ item.stage_label }}</div>
+            <div class="bar-track"><div class="bar-fill" style="width: {{ item.bar_pct }}%"></div></div>
+            <div class="val">{% if item.metric_label and item.metric_label != "duration" %}{{ item.metric_label }} {% endif %}{{ item.value_text }}</div>
+          </div>
+          {% endfor %}
+        </div>
       {% endif %}
-      {% if timeline.unplaced_stage_chips %}
-        <h3>Unplaced stage chips</h3>
-        {% for item in timeline.unplaced_stage_chips %}
-          <div class="chip">{{ item.stage }} {{ item.metric }} {{ item.value_ms }}ms ({{ item.placement }})</div>
-        {% endfor %}
-      {% endif %}
+
       {% if timeline.aggregates %}
-        <h3>Provider aggregates (not mixed into sample percentiles)</h3>
-        {% for a in timeline.aggregates %}
-          <div class="chip">{{ a.stage }} {{ a.statistic }} {{ a.value_ms }}ms</div>
-        {% endfor %}
+        {% if timeline.duration_rows or timeline.draw_stage_waterfall %}
+        <details>
+          <summary class="caption">{{ timeline.aggregate_caption }}</summary>
+          <div class="stage-rows">
+            {% for a in timeline.aggregates %}
+            <div class="stage-row">
+              <div class="name">{{ a.stage_label }}</div>
+              <div class="muted">{{ a.statistic }}</div>
+              <div class="val">{{ a.value_text }}</div>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+        {% else %}
+        <p class="caption">{{ timeline.aggregate_caption }}</p>
+        <div class="stage-rows">
+          {% for a in timeline.aggregates %}
+          <div class="stage-row">
+            <div class="name">{{ a.stage_label }}</div>
+            <div class="muted">{{ a.statistic }}</div>
+            <div class="val">{{ a.value_text }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endif %}
+
+      {% if not timeline.has_turn_bars and not timeline.draw_stage_waterfall and not timeline.duration_rows and not timeline.aggregates %}
+        <p class="muted">No timing measurements on this call.</p>
       {% endif %}
     </section>
     <section class="panel">
       <h2>Transcript</h2>
-      {% for turn in call.turns %}
-        <p><strong>{{ turn.speaker.value }}</strong> {{ turn.text }}</p>
+      {% for turn in view.turns %}
+        <div class="turn {{ turn.speaker }}">
+          <div class="who">{{ turn.speaker_label }}{% if turn.duration %} · {{ turn.duration }}{% endif %}{% if turn.confidence_text %} · {{ turn.confidence_text }}{% endif %}{% if turn.interrupted %} · interrupted{% endif %}</div>
+          <p>{% if turn.html_parts %}{% for part in turn.html_parts %}{% if part.mark %}<mark class="groundedness-span" title="{{ part.title }}">{{ part.text }}</mark>{% else %}{{ part.text }}{% endif %}{% endfor %}{% else %}{{ turn.text }}{% endif %}</p>
+          {% for mark in turn.flagged|default([]) %}
+            <div class="caption decode_failed">{{ mark }}</div>
+          {% endfor %}
+        </div>
       {% else %}
-        <p class="muted">No transcript on this revision.</p>
+        <p class="muted">No transcript on this revision. Custom agents put text on <code>obsalt.pii.user_transcript</code> / <code>obsalt.pii.agent_transcript</code>.</p>
       {% endfor %}
     </section>
   </div>
-  <section class="panel">
-    <h2>Tools</h2>
-    {% for tool in call.tools %}
-      <div>
-        {{ tool.name }} · {{ tool.status.value }}
-        {% if tool.duration_ms is not none %}
-          · {{ tool.duration_ms }}ms
-        {% else %}
-          · duration: not reported
-        {% endif %}
-        {% if tool.retry_count %} · retries {{ tool.retry_count }}{% endif %}
-      </div>
-    {% else %}
-      <p class="muted">No tool invocations on this call.</p>
-    {% endfor %}
-  </section>
-  <section class="panel">
-    <h2>Flags</h2>
-    {% for flag in flags|default([]) %}
-      <div class="chip">{{ flag.kind }}{% if flag.reason %} · {{ flag.reason }}{% endif %}</div>
-    {% else %}
-      <p class="muted">No flags.</p>
-    {% endfor %}
-  </section>
-  <section class="panel">
-    <h2>Evals</h2>
-    <p class="muted">Missing output is never interpreted as a passing call.</p>
-    {% if csrf %}
-    <form method="post" action="/v1/ui/calls/{{ call.call_id }}/analyze">
-      <input type="hidden" name="csrf" value="{{ csrf }}" />
-      <button type="submit">Evaluate this call</button>
-    </form>
+
+  {% if view.grounding or view.tools or view.flags or view.evals or csrf %}
+  <div class="band">
+    {% if view.grounding %}
+    <section class="panel">
+      <h2>Grounding</h2>
+      <p class="caption">What hallucination checks compared the agent against. Caller text is on the transcript.</p>
+      {% for item in view.grounding %}
+        <div class="tool-row">
+          <strong>{{ item.label }}</strong>
+          <div class="muted">{{ item.text }}</div>
+        </div>
+      {% endfor %}
+    </section>
     {% endif %}
-    {% for ev in evals|default([]) %}
-      <div>
-        {{ ev.rubric_id|default(ev.analyzer_id) }}
-        · state {{ ev.state }}
-        {% if ev.passed is not none %} · {{ "pass" if ev.passed else "fail" }}{% endif %}
-        {% if ev.score is not none %} · score {{ ev.score }}{% endif %}
-        {% if ev.rationale %} · {{ ev.rationale }}{% endif %}
-      </div>
-    {% else %}
-      <p class="muted">No eval results for this revision.</p>
-    {% endfor %}
-  </section>
-  <section class="panel">
-    <h2>Provenance / coverage</h2>
-    <p>decoder_version {{ call.decoder_version }} · assembler_version {{ call.assembler_version }}</p>
-    <p class="muted">Raw retention horizon: {{ raw_retention_days|default(30) }} days. Replay is bounded by that horizon.</p>
-    <ul>
-      {% for row in coverage|default(call.coverage) %}
-        <li class="{{ row.status.value }}">
-          <strong>{{ row.signal.value }}</strong> — {{ row.status.value }}
-          {% if row.reason %} · {{ row.reason }}{% endif %}
-          {% if row.source_path %} · {{ row.source_path }}{% endif %}
-          · decoder {{ row.decoder_version }}
-        </li>
+    {% if view.tools %}
+    <section class="panel">
+      <h2>Tools</h2>
+      {% for tool in view.tools %}
+        <div class="tool-row">
+          <strong>{{ tool.name }}</strong>
+          <span class="pill{% if tool.status in ['error', 'timeout', 'failed'] %} loss{% elif tool.status == 'success' %} ok{% endif %}">{{ tool.status_label }}</span>
+          <div class="muted">{{ tool.duration }}{% if tool.retries %} · retries {{ tool.retries }}{% endif %}</div>
+          {% if tool.result %}<div class="{% if tool.status in ['error', 'timeout', 'failed'] %}decode_failed{% else %}muted{% endif %}">{{ tool.result }}</div>{% endif %}
+        </div>
       {% endfor %}
-    </ul>
-    <h3>Measurements</h3>
-    <ul>
-      {% for m in call.stage_measurements %}
-        <li>
-          {{ m.stage.value }} {{ m.metric.value }} {{ m.value_ms }}ms
-          — {{ m.provenance.value }}
-          · placement {{ m.placement.value }}
-          {% if m.source_path %} · source_path {{ m.source_path }}{% endif %}
-          {% if m.derivation %} · derivation {{ m.derivation }}{% endif %}
-        </li>
+    </section>
+    {% endif %}
+    {% if view.flags %}
+    <section class="panel">
+      <h2>Flags</h2>
+      {% for flag in view.flags %}
+        <div class="flag-row">
+          <span class="pill {{ flag.tone|default('loss') }}">{{ flag.label }}</span>
+          {% if flag.reason %}<div class="muted">{{ flag.reason }}</div>{% endif %}
+        </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+    {% if view.evals or csrf %}
+    <section class="panel">
+      <h2>Evals</h2>
+      <p class="caption">LiveKit pack, predicates, and English rubrics. Missing judge output is never a pass. Predicates and detector prechecks do not need a budget.</p>
+      {% if csrf %}
+      <form method="post" action="/v1/ui/calls/{{ cid }}/analyze">
+        <input type="hidden" name="csrf" value="{{ csrf }}" />
+        <button class="primary" type="submit">Evaluate this call</button>
+      </form>
+      {% endif %}
+      {% for ev in view.evals %}
+        <div class="eval-row">
+          {{ ev.label }}
+          <span class="pill{% if ev.passed_label == 'fail' %} loss{% elif ev.passed_label == 'pass' %} ok{% endif %}">{{ ev.passed_label }}</span>
+          {% if ev.score is not none %}<span class="muted">score {{ ev.score }}</span>{% endif %}
+          {% if ev.rationale %}<div class="muted">{{ ev.rationale }}</div>{% endif %}
+          {% if csrf and can.get("quality.review") %}
+          <form method="post" action="/v1/ui/quality/review">
+            <input type="hidden" name="csrf" value="{{ csrf }}" />
+            <input type="hidden" name="call_id" value="{{ cid }}" />
+            <input type="hidden" name="revision" value="{{ view.revision }}" />
+            <input type="hidden" name="analyzer_id" value="{{ ev.analyzer_id|default('') }}" />
+            <input type="hidden" name="next" value="/v1/ui/calls/{{ cid }}" />
+            <label>Note <input name="note" /></label>
+            <button type="submit" name="agree" value="1">Agree</button>
+            <button type="submit" name="agree" value="0">Disagree</button>
+          </form>
+          {% endif %}
+        </div>
       {% else %}
-        <li class="muted">No stage measurements.</li>
+        {% if view.evals_shadow %}
+        <p class="muted">Pack judges for this revision are not judged (no runner, or shadow). Evaluate this call does not invent a pass.</p>
+        <details>
+          <summary class="caption">Not judged pack</summary>
+          {% for ev in view.evals_shadow %}
+            <div class="eval-row">
+              {{ ev.label }}
+              <span class="pill">{{ ev.passed_label }}</span>
+              {% if ev.rationale %}<div class="muted">{{ ev.rationale }}</div>{% endif %}
+            </div>
+          {% endfor %}
+        </details>
+        {% else %}
+        <p class="muted">No eval results for this revision.</p>
+        {% endif %}
       {% endfor %}
-    </ul>
-    {% if call.provenance %}
-      <h3>Field provenance</h3>
+    </section>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <section class="panel fold">
+    <details>
+      <summary>Where each number came from</summary>
+      <p class="caption">
+        decoder {{ view.decoder_version }} · assembler {{ view.assembler_version }} · revision {{ view.revision }}
+        {% if view.pipeline %} · {{ view.pipeline }}{% endif %}
+        · {{ view.fidelity_label }}
+      </p>
+      <p class="caption">Raw retention horizon: {{ raw_retention_days|default(30) }} days. Replay is bounded by that horizon. This is how you tell “the source never sent it” from “we dropped it.”</p>
+      <h3>Signal coverage</h3>
       <ul>
-        {% for path, stamp in call.provenance.items() %}
-          <li>
-            {{ path }} — {{ stamp.provenance.value }}
-            {% if stamp.source_path %} · {{ stamp.source_path }}{% endif %}
-            {% if stamp.derivation %} · {{ stamp.derivation }}{% endif %}
+        {% for row in view.coverage %}
+          <li class="{{ row.status }}">
+            <strong>{{ row.signal }}</strong> — {{ row.status }}
+            {% if row.reason %} · {{ row.reason }}{% endif %}
+            {% if row.source_path %} · {{ row.source_path }}{% endif %}
+            · decoder {{ row.decoder_version }}
           </li>
         {% endfor %}
       </ul>
-    {% endif %}
+      <h3>Measurements</h3>
+      <ul>
+        {% for m in view.measurements %}
+          <li>
+            {{ m.stage_label }} {{ m.metric_label }} {{ m.value_text }}
+            — {{ m.provenance }}
+            · placement {{ m.placement }}
+            {% if m.source_path %} · source_path {{ m.source_path }}{% endif %}
+            {% if m.derivation %} · derivation {{ m.derivation }}{% endif %}
+          </li>
+        {% else %}
+          <li class="muted">No stage measurements.</li>
+        {% endfor %}
+      </ul>
+      {% if call.provenance %}
+        <h3>Field provenance</h3>
+        <ul>
+          {% for path, stamp in call.provenance.items() %}
+            <li>
+              {{ path }} — {{ stamp.provenance.value }}
+              {% if stamp.source_path %} · {{ stamp.source_path }}{% endif %}
+              {% if stamp.derivation %} · {{ stamp.derivation }}{% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </details>
   </section>
 {% endblock %}

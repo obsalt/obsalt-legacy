@@ -150,10 +150,14 @@ def header_values(headers: list[tuple[bytes, bytes]] | Mapping[str, str], name: 
                 found.append(value)
         return found
     values: list[str] = []
-    for key, value in headers:
-        key_bytes = key.lower() if isinstance(key, bytes) else key.lower().encode("latin-1")
+    for hdr_key, hdr_value in headers:
+        key_bytes = (
+            hdr_key.lower() if isinstance(hdr_key, bytes) else hdr_key.lower().encode("latin-1")
+        )
         if key_bytes == want:
-            values.append(value.decode("latin-1") if isinstance(value, bytes) else str(value))
+            values.append(
+                hdr_value.decode("latin-1") if isinstance(hdr_value, bytes) else str(hdr_value)
+            )
     return values
 
 

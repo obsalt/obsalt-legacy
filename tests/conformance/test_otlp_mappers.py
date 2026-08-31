@@ -5,7 +5,7 @@ from __future__ import annotations
 from tests.helpers import ELEVEN_OTLP, GEMINI_OTLP, LIVEKIT_OTLP, OPENAI_OTLP, PIPECAT_OTLP
 
 from obsalt.domain.enums import MeasurementPlacement, Metric, Stage
-from obsalt.domain.events import GroundingObserved, StageObserved
+from obsalt.domain.events import CallObserved, GroundingObserved, OutcomeObserved, StageObserved
 from obsalt.otel.conventions import SPAN_STT_PROVIDER_ATTEMPT
 from obsalt.otel.foreign import ForeignConventionMapper
 from obsalt.plugin.types import ReadableSpan
@@ -126,3 +126,14 @@ def test_gemini_fidelity_declares_turn_interval() -> None:
     from obsalt.domain.enums import Signal
 
     assert Signal.TURN_INTERVAL in GeminiLivePlugin().fidelity.provides
+    assert Signal.HANGUP in GeminiLivePlugin().fidelity.provides
+    assert Signal.TRANSCRIPT in GeminiLivePlugin().fidelity.provides
+
+
+def test_openai_fixture_copies_agent_ending_and_transcript() -> None:
+    events = list(OpenAIRealtimePlugin().decode(spans_from_fixture(OPENAI_OTLP / "s2s_trace.json")))
+    call = next(event for event in events if isinstance(event, CallObserved))
+    assert call.agent_id == "support"
+    outcome = next(event for event in events if isinstance(event, OutcomeObserved))
+    assert outcome.reason is not None
+    assert outcome.reason.value == "user_hangup"

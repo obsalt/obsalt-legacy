@@ -3,37 +3,47 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Iterable
-from dataclasses import dataclass
+from contextlib import AbstractContextManager
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import TracebackType
 from typing import Any, TypeAlias
 
 from psycopg import Connection
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from obsalt.assemble.promote import RevisionPointerStore
-from obsalt.domain.enums import EnvelopeState, KeyScope, ObservationalEventKind, Role
-from obsalt.domain.models import CallRevision, Rubric
+from obsalt.domain.enums import (
+    EnvelopeState,
+    EvalRunnerKind,
+    EvalSlot,
+    KeyScope,
+    ObservationalEventKind,
+    RubricKind,
+)
+from obsalt.domain.models import CallRevision, EvalPolicy, EvalRunner, Rubric
 from obsalt.plugin.types import ConnectionConfig, RawEnvelope, TombstoneHints
 from obsalt.security.secrets import decrypt_secret, encrypt_secret, hash_key
+from obsalt.store.ports import ApiKeyRecord
+from obsalt.store.sql_script import sql_statements
 from obsalt.util import new_id, utcnow
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "sql" / "postgres.sql"
 
-PgConn: TypeAlias = Connection[Any]
+PgConn: TypeAlias = "Connection[Any] | SerialConnection"
 
 _TOMBSTONE_MATCH = """
 org_id = %s
 AND (
-      (%s IS NOT NULL AND source_call_id = %s)
-   OR (%s IS NOT NULL AND caller_token = %s)
+      (%s::text IS NOT NULL AND source_call_id = %s::text)
+   OR (%s::text IS NOT NULL AND caller_token = %s::text)
    OR (
         range_start IS NOT NULL AND range_end IS NOT NULL
-        AND %s IS NOT NULL
-        AND %s BETWEEN range_start AND range_end
-        AND (caller_token IS NULL OR %s IS NULL OR caller_token = %s)
+        AND %s::timestamptz IS NOT NULL
+        AND %s::timestamptz BETWEEN range_start AND range_end
+        AND (caller_token IS NULL OR %s::text IS NULL OR caller_token = %s::text)
       )
 )
 """
@@ -53,41 +63,86 @@ def _tombstone_params(org_id: str, hints: TombstoneHints) -> tuple[Any, ...]:
     )
 
 
+class SerialConnection:
+    """Serialize use of one psycopg session across threads.
+
+    Serve acks webhooks then drains on a BackgroundTask. The next POST reuses
+    the same connection. Overlapping `transaction()` calls raise
+    ``OutOfOrderTransactionNesting`` and surface as HTTP 500 on ingest.
+    """
+
+    def __init__(self, conn: PgConn) -> None:
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_lock", threading.RLock())
+
+    def execute(self, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def transaction(self, *args: Any, **kwargs: Any) -> AbstractContextManager[Any]:
+        return _SerialTransaction(self._conn, self._lock, *args, **kwargs)
+
+    def rollback(self) -> None:
+        with self._lock:
+            self._conn.rollback()
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+
+class _SerialTransaction:
+    def __init__(self, conn: PgConn, lock: threading.RLock, *args: Any, **kwargs: Any) -> None:
+        self._lock = lock
+        self._cm = conn.transaction(*args, **kwargs)
+
+    def __enter__(self) -> Any:
+        self._lock.acquire()
+        try:
+            return self._cm.__enter__()
+        except BaseException:
+            self._lock.release()
+            raise
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool | None:
+        try:
+            return self._cm.__exit__(exc_type, exc, tb)
+        finally:
+            self._lock.release()
+
+
 def connect(dsn: str) -> PgConn:
-    return Connection.connect(dsn, row_factory=dict_row)
+    # Autocommit so a SELECT cannot leave serve/worker idle-in-transaction.
+    # Writers still use `with conn.transaction()` for atomic commits.
+    conn = Connection.connect(dsn, row_factory=dict_row, autocommit=True)
+    return SerialConnection(conn)
 
 
 def ping(conn: PgConn) -> None:
+    # Roll back so the probe does not leave the session idle-in-transaction;
+    # psycopg refuses autocommit changes and nested DDL control otherwise.
     conn.execute("SELECT 1")
+    conn.rollback()
 
 
 def apply_schema(conn: PgConn) -> None:
-    previous = conn.autocommit
-    conn.autocommit = True
-    try:
-        for statement in _sql_statements(SCHEMA_PATH.read_text()):
+    # One explicit transaction instead of autocommit toggling: works whether the
+    # handed-over connection is idle or mid-transaction, and applies atomically.
+    with conn.transaction():
+        for statement in sql_statements(SCHEMA_PATH.read_text()):
             conn.execute(statement)
-    finally:
-        conn.autocommit = previous
-
-
-def _sql_statements(script: str) -> list[str]:
-    statements: list[str] = []
-    buf: list[str] = []
-    for line in script.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("--"):
-            continue
-        buf.append(line)
-        if stripped.endswith(";"):
-            stmt = "\n".join(buf).strip().rstrip(";").strip()
-            buf = []
-            if stmt:
-                statements.append(stmt)
-    tail = "\n".join(buf).strip().rstrip(";").strip()
-    if tail:
-        statements.append(tail)
-    return statements
 
 
 def _embed_sync(text: str, dim: int = 256, onnx_path: str | None = None) -> list[float]:
@@ -324,22 +379,27 @@ class PostgresInbox:
         with self._conn.transaction():
             rows = self._conn.execute(
                 """
+                WITH candidates AS (
+                    SELECT o.id, o.org_id
+                    FROM outbox o
+                    JOIN raw_envelopes e ON e.envelope_id = o.envelope_id
+                    WHERE o.available_at <= now()
+                      AND (o.leased_until IS NULL OR o.leased_until < now())
+                      AND e.state NOT IN ('assembled', 'tombstoned')
+                      AND o.attempts < 16
+                    FOR UPDATE OF o SKIP LOCKED
+                ),
+                ranked AS (
+                    SELECT id,
+                           ROW_NUMBER() OVER (PARTITION BY org_id ORDER BY id) AS per_org
+                    FROM candidates
+                )
                 UPDATE outbox
                 SET leased_until = now() + interval '30 seconds',
                     lease_owner = COALESCE(lease_owner, 'worker'),
                     attempts = attempts + 1
                 WHERE id IN (
-                    SELECT id FROM (
-                        SELECT o.id,
-                               ROW_NUMBER() OVER (PARTITION BY o.org_id ORDER BY o.id) AS per_org
-                        FROM outbox o
-                        JOIN raw_envelopes e ON e.envelope_id = o.envelope_id
-                        WHERE o.available_at <= now()
-                          AND (o.leased_until IS NULL OR o.leased_until < now())
-                          AND e.state NOT IN ('assembled', 'tombstoned')
-                          AND o.attempts < 16
-                        FOR UPDATE OF o SKIP LOCKED
-                    ) ranked
+                    SELECT id FROM ranked
                     ORDER BY per_org, id
                     LIMIT %s
                 )
@@ -460,11 +520,16 @@ class PostgresInbox:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_envelopes(self, org_id: str) -> list[RawEnvelope]:
-        rows = self._conn.execute(
-            "SELECT * FROM raw_envelopes WHERE org_id = %s ORDER BY received_at",
-            (org_id,),
-        ).fetchall()
+    def list_envelopes(self, org_id: str | None = None) -> list[RawEnvelope]:
+        if org_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM raw_envelopes ORDER BY received_at",
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM raw_envelopes WHERE org_id = %s ORDER BY received_at",
+                (org_id,),
+            ).fetchall()
         return [_envelope_from_row(row) for row in rows]
 
     def requeue(self, envelope_id: str) -> None:
@@ -488,9 +553,6 @@ class PostgresInbox:
                 """,
                 (envelope_id, row["org_id"]),
             )
-
-    def index_revision(self, revision: CallRevision, *, index_version: str = "1") -> None:
-        PostgresSearchDocuments(self._conn).upsert_revision(revision, index_version=index_version)
 
     def record_run(
         self,
@@ -593,6 +655,9 @@ class PostgresResolver:
         ).fetchall()
         return {(row["provider"], row["ingest_key_hash"]): self._row_to_cfg(row) for row in rows}
 
+    def list_for_org(self, org_id: str) -> list[ConnectionConfig]:
+        return [cfg for cfg in self.connections.values() if cfg.org_id == org_id]
+
     def delete(self, org_id: str, connection_id: str) -> bool:
         with self._conn.transaction():
             row = self._conn.execute(
@@ -602,9 +667,7 @@ class PostgresResolver:
         return row is not None
 
 
-class PostgresPointerStore(RevisionPointerStore):
-    supports_sql_list = True
-
+class PostgresPointerStore:
     def __init__(self, conn: PgConn) -> None:
         self._conn = conn
 
@@ -734,14 +797,14 @@ class PostgresPointerStore(RevisionPointerStore):
             SELECT call_id, revision, agent_id, started_at, source, hangup_reason, status
             FROM active_calls
             WHERE org_id = %s
-              AND (%s IS NULL OR started_at >= %s)
-              AND (%s IS NULL OR started_at <= %s)
-              AND (%s IS NULL OR agent_id = %s)
-              AND (%s IS NULL OR source = %s)
-              AND (%s IS NULL OR hangup_reason = %s OR status = %s)
+              AND (%s::timestamptz IS NULL OR started_at >= %s)
+              AND (%s::timestamptz IS NULL OR started_at <= %s)
+              AND (%s::text IS NULL OR agent_id = %s)
+              AND (%s::text IS NULL OR source = %s)
+              AND (%s::text IS NULL OR hangup_reason = %s OR status = %s)
               AND (
-                    %s IS NULL
-                 OR (started_at, call_id) < (%s, %s)
+                    %s::timestamptz IS NULL
+                 OR (started_at, call_id) < (%s::timestamptz, %s::text)
               )
             ORDER BY started_at DESC NULLS LAST, call_id DESC
             LIMIT %s
@@ -771,13 +834,6 @@ class PostgresPointerStore(RevisionPointerStore):
             last = items[-1]
             next_cursor = f"{last['call_id']}:{last['revision']}"
         return items, next_cursor
-
-
-@dataclass(frozen=True)
-class ApiKeyRecord:
-    key_id: str
-    org_id: str
-    scopes: frozenset[KeyScope]
 
 
 class PostgresKeyDirectory:
@@ -874,8 +930,10 @@ class PostgresRubricStore:
         with self._conn.transaction():
             self._conn.execute(
                 """
-                INSERT INTO rubrics (id, org_id, name, description, version, threshold, enabled, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO rubrics (
+                    id, org_id, name, description, version, threshold, enabled, kind, spec, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     rubric.id,
@@ -885,29 +943,54 @@ class PostgresRubricStore:
                     rubric.version,
                     rubric.threshold,
                     rubric.enabled,
+                    rubric.kind.value,
+                    Json(rubric.spec),
                     rubric.created_at,
                 ),
             )
         return rubric
 
     def new_version(
-        self, previous: Rubric, *, name: str | None = None, description: str | None = None
+        self,
+        previous: Rubric,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        threshold: float | None = None,
+        enabled: bool | None = None,
+        kind: RubricKind | None = None,
+        spec: dict[str, Any] | None = None,
     ) -> Rubric:
         updated = previous.model_copy(
             update={
                 "version": previous.version + 1,
                 "name": name if name is not None else previous.name,
                 "description": description if description is not None else previous.description,
+                "threshold": threshold if threshold is not None else previous.threshold,
+                "enabled": enabled if enabled is not None else previous.enabled,
+                "kind": kind if kind is not None else previous.kind,
+                "spec": spec if spec is not None else previous.spec,
             }
         )
         with self._conn.transaction():
             self._conn.execute(
                 """
                 UPDATE rubrics
-                SET version = %s, name = %s, description = %s
+                SET version = %s, name = %s, description = %s, threshold = %s, enabled = %s,
+                    kind = %s, spec = %s
                 WHERE id = %s AND org_id = %s
                 """,
-                (updated.version, updated.name, updated.description, previous.id, previous.org_id),
+                (
+                    updated.version,
+                    updated.name,
+                    updated.description,
+                    updated.threshold,
+                    updated.enabled,
+                    updated.kind.value,
+                    Json(updated.spec),
+                    previous.id,
+                    previous.org_id,
+                ),
             )
         return updated
 
@@ -920,6 +1003,14 @@ class PostgresRubricStore:
         return row is not None
 
     def _rubric(self, row: dict[str, Any]) -> Rubric:
+        spec = row.get("spec") or {}
+        if not isinstance(spec, dict):
+            spec = {}
+        kind_raw = str(row.get("kind") or RubricKind.LLM_JUDGE.value)
+        try:
+            kind = RubricKind(kind_raw)
+        except ValueError:
+            kind = RubricKind.LLM_JUDGE
         return Rubric(
             id=row["id"],
             org_id=row["org_id"],
@@ -928,6 +1019,8 @@ class PostgresRubricStore:
             version=int(row["version"]),
             threshold=float(row["threshold"]),
             enabled=bool(row["enabled"]),
+            kind=kind,
+            spec=spec,
             created_at=row["created_at"],
         )
 
@@ -1033,16 +1126,16 @@ class PostgresSearchDocuments:
         literal = "[" + ",".join(str(v) for v in qvec) + "]"
         rows = self._conn.execute(
             """
-            SELECT call_id, revision, body, agent_id,
+            SELECT call_id, revision, body, agent_id, source,
                    COALESCE(ts_rank(tsv, plainto_tsquery('simple', %s)), 0) AS lex,
                    (embedding <=> %s::vector) AS dist
             FROM search_documents
             WHERE org_id = %s
-              AND (%s IS NULL OR agent_id = %s)
-              AND (%s IS NULL OR source = %s)
-              AND (%s IS NULL OR hangup_reason = %s)
-              AND (%s IS NULL OR started_at >= %s)
-              AND (%s IS NULL OR started_at <= %s)
+              AND (%s::text IS NULL OR agent_id = %s)
+              AND (%s::text IS NULL OR source = %s)
+              AND (%s::text IS NULL OR hangup_reason = %s)
+              AND (%s::timestamptz IS NULL OR started_at >= %s)
+              AND (%s::timestamptz IS NULL OR started_at <= %s)
             """,
             (
                 q or "",
@@ -1081,6 +1174,7 @@ class PostgresSearchDocuments:
                     "call_id": row["call_id"],
                     "revision": row["revision"],
                     "agent_id": row.get("agent_id") or "",
+                    "source": row.get("source") or "",
                     "score": float(row["lex"]),
                 }
             )
@@ -1157,66 +1251,6 @@ class PostgresDeletionStore:
             "SELECT COUNT(*) AS n FROM deletion_requests WHERE completed_at IS NULL"
         ).fetchone()
         return int(row["n"]) if row else 0
-
-
-class PostgresUserStore:
-    def __init__(self, conn: PgConn) -> None:
-        self._conn = conn
-
-    def upsert(
-        self, org_id: str, email: str, role: Role | str, *, user_id: str | None = None
-    ) -> dict[str, Any]:
-        role_value = role.value if isinstance(role, Role) else str(role)
-        existing = self.get_by_email(org_id, email)
-        rid = user_id or (existing["id"] if existing else new_id())
-        with self._conn.transaction():
-            self._conn.execute(
-                "INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
-                (org_id, org_id),
-            )
-            row = self._conn.execute(
-                """
-                INSERT INTO users (id, org_id, email, role)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (org_id, email) DO UPDATE SET role = EXCLUDED.role
-                RETURNING *
-                """,
-                (rid, org_id, email.lower(), role_value),
-            ).fetchone()
-        return (
-            dict(row)
-            if row
-            else {"id": rid, "org_id": org_id, "email": email.lower(), "role": role_value}
-        )
-
-    def get(self, org_id: str, user_id: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT * FROM users WHERE org_id = %s AND id = %s",
-            (org_id, user_id),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def get_by_email(self, org_id: str, email: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT * FROM users WHERE org_id = %s AND email = %s",
-            (org_id, email.lower()),
-        ).fetchone()
-        return dict(row) if row else None
-
-    def list(self, org_id: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT * FROM users WHERE org_id = %s ORDER BY created_at",
-            (org_id,),
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-    def delete(self, org_id: str, user_id: str) -> bool:
-        with self._conn.transaction():
-            row = self._conn.execute(
-                "DELETE FROM users WHERE org_id = %s AND id = %s RETURNING id",
-                (org_id, user_id),
-            ).fetchone()
-        return row is not None
 
 
 class PostgresGenerationStore:
@@ -1438,10 +1472,21 @@ class PostgresReviewStore:
         with self._conn.transaction():
             self._conn.execute(
                 """
-                INSERT INTO quality_reviews (id, org_id, call_id, agree, note)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO quality_reviews (
+                    id, org_id, call_id, agree, note, revision, analyzer_id, severity
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (rid, item["org_id"], item["call_id"], item["agree"], item.get("note") or ""),
+                (
+                    rid,
+                    item["org_id"],
+                    item["call_id"],
+                    item["agree"],
+                    item.get("note") or "",
+                    item.get("revision") or "",
+                    item.get("analyzer_id") or "",
+                    item.get("severity") or "",
+                ),
             )
         return {**item, "id": rid}
 
@@ -1481,6 +1526,158 @@ class PostgresOrgSpend:
                 (org_id, period, float(amount)),
             )
         return self.get(org_id, period)
+
+
+class PostgresEvalRunnerStore:
+    def __init__(self, conn: PgConn, *, master_key: bytes) -> None:
+        self._conn = conn
+        self._master_key = master_key
+
+    def list(self, org_id: str) -> list[EvalRunner]:
+        rows = self._conn.execute(
+            "SELECT * FROM eval_runners WHERE org_id = %s ORDER BY created_at",
+            (org_id,),
+        ).fetchall()
+        return [self._runner(row) for row in rows]
+
+    def get(self, org_id: str, runner_id: str) -> EvalRunner | None:
+        row = self._conn.execute(
+            "SELECT * FROM eval_runners WHERE org_id = %s AND id = %s",
+            (org_id, runner_id),
+        ).fetchone()
+        return self._runner(row) if row else None
+
+    def get_slot(self, org_id: str, slot: EvalSlot | str) -> EvalRunner | None:
+        row = self._conn.execute(
+            "SELECT * FROM eval_runners WHERE org_id = %s AND slot = %s",
+            (org_id, str(slot)),
+        ).fetchone()
+        return self._runner(row) if row else None
+
+    def upsert(self, runner: EvalRunner) -> EvalRunner:
+        ciphertext = encrypt_secret(runner.api_key, self._master_key)
+        with self._conn.transaction():
+            self._conn.execute(
+                "INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (runner.org_id, runner.org_id),
+            )
+            existing = self.get_slot(runner.org_id, runner.slot)
+            if existing is not None:
+                runner = runner.model_copy(
+                    update={"id": existing.id, "created_at": existing.created_at}
+                )
+                self._conn.execute(
+                    """
+                    UPDATE eval_runners
+                    SET kind = %s, base_url = %s, model = %s, api_key_ciphertext = %s,
+                        allow_http_localhost = %s
+                    WHERE org_id = %s AND id = %s
+                    """,
+                    (
+                        runner.kind.value,
+                        runner.base_url,
+                        runner.model,
+                        ciphertext,
+                        runner.allow_http_localhost,
+                        runner.org_id,
+                        runner.id,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO eval_runners (
+                        id, org_id, slot, kind, base_url, model, api_key_ciphertext,
+                        allow_http_localhost, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        runner.id,
+                        runner.org_id,
+                        runner.slot.value,
+                        runner.kind.value,
+                        runner.base_url,
+                        runner.model,
+                        ciphertext,
+                        runner.allow_http_localhost,
+                        runner.created_at,
+                    ),
+                )
+        return runner
+
+    def delete(self, org_id: str, runner_id: str) -> bool:
+        with self._conn.transaction():
+            row = self._conn.execute(
+                "DELETE FROM eval_runners WHERE org_id = %s AND id = %s RETURNING id",
+                (org_id, runner_id),
+            ).fetchone()
+        return row is not None
+
+    def get_policy(self, org_id: str) -> EvalPolicy | None:
+        row = self._conn.execute(
+            "SELECT * FROM eval_policy WHERE org_id = %s",
+            (org_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        pack = row.get("pack") or []
+        return EvalPolicy(
+            org_id=str(row["org_id"]),
+            monthly_budget_usd=float(row["monthly_budget_usd"]),
+            baseline_sample_rate=float(row["baseline_sample_rate"]),
+            llm_evals_enabled=bool(row["llm_evals_enabled"]),
+            pack=[str(item) for item in pack],
+            groundedness_enabled=bool(row.get("groundedness_enabled") or False),
+            groundedness_sample_rate=float(row.get("groundedness_sample_rate") or 0.0),
+        )
+
+    def set_policy(self, policy: EvalPolicy) -> EvalPolicy:
+        with self._conn.transaction():
+            self._conn.execute(
+                "INSERT INTO orgs (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+                (policy.org_id, policy.org_id),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO eval_policy (
+                    org_id, monthly_budget_usd, baseline_sample_rate, llm_evals_enabled, pack,
+                    groundedness_enabled, groundedness_sample_rate, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (org_id) DO UPDATE SET
+                    monthly_budget_usd = EXCLUDED.monthly_budget_usd,
+                    baseline_sample_rate = EXCLUDED.baseline_sample_rate,
+                    llm_evals_enabled = EXCLUDED.llm_evals_enabled,
+                    pack = EXCLUDED.pack,
+                    groundedness_enabled = EXCLUDED.groundedness_enabled,
+                    groundedness_sample_rate = EXCLUDED.groundedness_sample_rate,
+                    updated_at = now()
+                """,
+                (
+                    policy.org_id,
+                    policy.monthly_budget_usd,
+                    policy.baseline_sample_rate,
+                    policy.llm_evals_enabled,
+                    list(policy.pack),
+                    policy.groundedness_enabled,
+                    policy.groundedness_sample_rate,
+                ),
+            )
+        return policy
+
+    def _runner(self, row: dict[str, Any]) -> EvalRunner:
+        return EvalRunner(
+            id=str(row["id"]),
+            org_id=str(row["org_id"]),
+            slot=EvalSlot(str(row["slot"])),
+            kind=EvalRunnerKind(str(row["kind"])),
+            base_url=str(row["base_url"]),
+            model=str(row["model"]),
+            api_key=decrypt_secret(bytes(row["api_key_ciphertext"]), self._master_key),
+            allow_http_localhost=bool(row["allow_http_localhost"]),
+            created_at=row["created_at"],
+        )
 
 
 # Names used by runtime.production_state and the plugin contract.

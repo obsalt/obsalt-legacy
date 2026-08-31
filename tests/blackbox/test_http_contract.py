@@ -108,6 +108,28 @@ def test_csrf_required_for_ui_mutation() -> None:
     assert denied.status_code == 403
 
 
+def test_connections_list_includes_settings_not_secrets() -> None:
+    client = api_client(example_state())
+    created = client.post(
+        "/v1/connections",
+        headers={**auth(), "content-type": "application/json"},
+        json={
+            "provider": "example",
+            "secrets": {"hmac_secret": "super-secret"},
+            "settings": {"seed": True},
+        },
+    )
+    assert created.status_code == 200
+    listed = client.get("/v1/connections", headers=auth())
+    assert listed.status_code == 200
+    body = listed.json()
+    assert "super-secret" not in listed.text
+    seed_row = next(item for item in body["items"] if (item.get("settings") or {}).get("seed"))
+    assert seed_row["provider"] == "example"
+    assert "ingest_key" not in seed_row
+    assert "hmac_secret" not in seed_row.get("settings", {})
+
+
 def test_plugins_endpoint_requires_an_api_key() -> None:
     client = api_client(example_state())
     assert client.get("/v1/plugins").status_code == 401

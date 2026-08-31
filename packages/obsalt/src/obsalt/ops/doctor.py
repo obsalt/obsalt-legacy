@@ -111,24 +111,9 @@ def probe_redis(settings: Settings) -> None:
 
 
 def probe_object_store(settings: Settings) -> None:
-    import boto3
-    from botocore.client import Config
+    from obsalt.store.objects import S3ObjectStore
 
-    client = boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-        config=Config(
-            signature_version="s3v4",
-            s3={"addressing_style": "path"},
-            connect_timeout=2,
-            read_timeout=2,
-            retries={"max_attempts": 1},
-        ),
-    )
-    client.list_buckets()
+    S3ObjectStore(settings).ping()
 
 
 def _run_probe(name: str, required: bool, fn: Any, settings: Settings, hint: str) -> Check:

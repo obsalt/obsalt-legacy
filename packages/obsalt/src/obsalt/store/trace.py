@@ -13,12 +13,16 @@ from obsalt.plugin.types import ReadableSpan
 from obsalt.util import utcnow
 
 
-class PostgresTraceAssembler(MemoryTraceAssembler):
+class PostgresTraceAssembler:
     """Same protocol as MemoryTraceAssembler; durable across restarts."""
 
     def __init__(self, conn: Any) -> None:
-        super().__init__()
         self._conn = conn
+        self._mem = MemoryTraceAssembler()
+
+    @property
+    def records(self) -> dict[tuple[str, str], TraceRecord]:
+        return self._mem.records
 
     def ingest(
         self,
@@ -33,10 +37,25 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         trace_id = spans[0].trace_id if spans else "unknown"
         existing = self._load(org_id, trace_id)
         if existing is not None:
-            self.records[(org_id, trace_id)] = existing
-        record = super().ingest(org_id, spans, events, now=now, mapper_name=mapper_name)
+            self._mem.records[(org_id, trace_id)] = existing
+        record = self._mem.ingest(org_id, spans, events, now=now, mapper_name=mapper_name)
         self._save(record)
         return record
+
+    def ready(
+        self,
+        record: TraceRecord,
+        *,
+        now: datetime | None = None,
+        grace_seconds: float = 0,
+        max_call_duration_seconds: float = 4 * 60 * 60,
+    ) -> bool:
+        return self._mem.ready(
+            record,
+            now=now,
+            grace_seconds=grace_seconds,
+            max_call_duration_seconds=max_call_duration_seconds,
+        )
 
     def due(
         self,
@@ -46,14 +65,14 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         max_call_duration_seconds: float = 4 * 60 * 60,
     ) -> list[TraceRecord]:
         self._refresh()
-        return super().due(
+        return self._mem.due(
             now=now,
             grace_seconds=grace_seconds,
             max_call_duration_seconds=max_call_duration_seconds,
         )
 
     def mark_finalized(self, record: TraceRecord, *, unrooted: bool = False) -> None:
-        super().mark_finalized(record, unrooted=unrooted)
+        self._mem.mark_finalized(record, unrooted=unrooted)
         self._save(record)
 
     def _refresh(self) -> None:
@@ -67,10 +86,10 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         ).fetchall()
         for row in rows:
             record = _record_from_row(row)
-            self.records[(record.org_id, record.trace_id)] = record
+            self._mem.records[(record.org_id, record.trace_id)] = record
 
     def _load(self, org_id: str, trace_id: str) -> TraceRecord | None:
-        cached = self.records.get((org_id, trace_id))
+        cached = self._mem.records.get((org_id, trace_id))
         if cached is not None:
             return cached
         row = self._conn.execute(
@@ -85,7 +104,7 @@ class PostgresTraceAssembler(MemoryTraceAssembler):
         if row is None:
             return None
         record = _record_from_row(row)
-        self.records[(org_id, trace_id)] = record
+        self._mem.records[(org_id, trace_id)] = record
         return record
 
     def _save(self, record: TraceRecord) -> None:

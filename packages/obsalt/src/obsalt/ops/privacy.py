@@ -60,10 +60,9 @@ def apply_deletion(
     if hints.source_call_id or hints.caller_token or (hints.range_start and hints.range_end):
         state.inbox.tombstone(org_id, hints)
 
-    deleter = getattr(state.pointers, "delete", None)
-    search = getattr(state, "search", None)
-    rollups = getattr(state, "rollups", None)
-    objects = getattr(state, "objects", None)
+    search = state.search
+    rollups = state.rollups
+    objects = state.objects
     source_ids = {
         rev.source_call_id
         for rev in _all_revisions(state, org_id)
@@ -75,14 +74,12 @@ def apply_deletion(
         state.inbox.tombstone(org_id, TombstoneHints(source_call_id=source_id, caller_token=token))
     for cid in to_delete:
         state.sink.delete_call(org_id, cid)
-        if callable(deleter):
-            deleter(org_id, cid)
-        if search is not None and hasattr(search, "delete_for_call"):
+        state.pointers.delete(org_id, cid)
+        if search is not None:
             search.delete_for_call(org_id, cid)
-        if rollups is not None and hasattr(rollups, "delete_call"):
+        if rollups is not None:
             rollups.delete_call(org_id, cid)
-        if objects is not None:
-            _purge_evidence(objects, org_id, cid)
+        _purge_evidence(objects, org_id, cid)
         _purge_queues(state, org_id, cid, source_ids)
 
     # In-flight inbox/outbox/forward rows can exist before a revision is promoted.
@@ -130,9 +127,8 @@ def _complete_deletion(
         "completed_at": utcnow().isoformat(),
         "status": "completed",
     }
-    store = getattr(state, "deletion_store", None)
-    if store is not None and hasattr(store, "complete"):
-        store.complete(
+    if state.deletion_store is not None:
+        state.deletion_store.complete(
             org_id,
             call_ids=call_ids,
             source_call_id=source_call_id,
@@ -148,63 +144,40 @@ def _complete_deletion(
 
 def _all_revisions(state: Any, org_id: str) -> list[CallRevision]:
     items = list(active_calls(state, org_id))
-    revisions = getattr(state.sink, "revisions", {})
-    for rev in revisions.values():
-        if rev.org_id == org_id and rev not in items:
+    seen = {(rev.call_id, rev.revision) for rev in items}
+    for call_id, _revision in state.pointers.list_org(org_id):
+        for rev in state.sink.list_for_call(org_id, call_id):
+            key = (rev.call_id, rev.revision)
+            if key in seen or rev.org_id != org_id:
+                continue
             items.append(rev)
+            seen.add(key)
     return items
 
 
 def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -> None:
-    inbox = getattr(state, "inbox", None)
-    if inbox is not None:
-        for envelope in list(getattr(inbox, "by_id", {}).values()):
-            if getattr(envelope, "org_id", None) != org_id:
-                continue
-            source = getattr(envelope, "source_call_id", None)
-            if (
-                source in source_ids
-                or source == call_id
-                or call_id in (getattr(envelope, "object_key", "") or "")
-            ):
-                drop = getattr(inbox, "drop_outbox", None)
-                if callable(drop):
-                    drop(envelope.envelope_id)
-                if hasattr(envelope, "state"):
-                    from obsalt.domain.enums import EnvelopeState
+    from obsalt.domain.enums import EnvelopeState
 
-                    envelope.state = EnvelopeState.TOMBSTONED
-        dlq = getattr(inbox, "dlq", None)
-        if isinstance(dlq, list):
-            keep = []
-            for row in dlq:
-                eid = row.get("envelope_id")
-                env = getattr(inbox, "by_id", {}).get(eid)
-                if env is not None and (
-                    env.source_call_id in source_ids or env.source_call_id == call_id
-                ):
-                    continue
-                keep.append(row)
-            inbox.dlq = keep
-        purge_dlq = getattr(inbox, "purge_dlq", None)
-        if callable(purge_dlq):
-            purge_dlq(org_id, source_call_ids=source_ids | {call_id})
+    inbox = state.inbox
+    for envelope in inbox.list_envelopes(org_id):
+        source = envelope.source_call_id
+        if source in source_ids or source == call_id or call_id in (envelope.object_key or ""):
+            inbox.drop_outbox(envelope.envelope_id)
+            envelope.state = EnvelopeState.TOMBSTONED
+    inbox.purge_dlq(org_id, source_call_ids=source_ids | {call_id})
 
-    outbox = getattr(state, "webhook_outbox", None)
-    if isinstance(outbox, list):
+    if state.webhook_store is not None:
+        state.webhook_store.purge_for_call(org_id, call_id)
+    else:
         state.webhook_outbox = [
             item
-            for item in outbox
+            for item in state.webhook_outbox
             if item.get("org_id") != org_id or item.get("call_id") not in {call_id, *source_ids}
         ]
-    store = getattr(state, "webhook_store", None)
-    purge_webhooks = getattr(store, "purge_for_call", None) if store is not None else None
-    if callable(purge_webhooks):
-        purge_webhooks(org_id, call_id)
 
     queue = getattr(state, "forward_queue", None)
     pending = getattr(queue, "pending", None) if queue is not None else None
-    if isinstance(pending, list):
+    if queue is not None and isinstance(pending, list):
         queue.pending = [
             job
             for job in pending
@@ -217,11 +190,8 @@ def _purge_queues(state: Any, org_id: str, call_id: str, source_ids: set[str]) -
 
 
 def _purge_evidence(objects: Any, org_id: str, call_id: str) -> None:
-    list_keys = getattr(objects, "list_keys", None)
-    if not callable(list_keys):
-        return
     prefix = f"org/{org_id}/"
-    for key in list_keys(prefix):
+    for key in objects.list_keys(prefix):
         if call_id in key:
             try:
                 objects.delete(key)

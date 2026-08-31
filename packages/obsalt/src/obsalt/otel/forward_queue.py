@@ -73,10 +73,10 @@ def enqueue_raw_batch(
 
 
 def drain_forward_queue(state: Any, *, limit: int = 32) -> int:
-    queue = getattr(state, "forward_queue", None)
+    queue = state.forward_queue
     if queue is None:
         return 0
-    destinations = [d for d in getattr(state, "destinations", []) or []]
+    destinations = list(state.destinations)
     claimed = queue.claim(limit)
     processed = 0
     for job in claimed:
