@@ -1,5 +1,8 @@
-# obsalt
+# obsalt [Legacy]
 
+> A far more capable obsalt with call simulations, production monitoring and many more is being built.
+> This project is superseded by it and will not be continued further.
+ 
 Self-hosted call analytics and quality for live AI voice agents.
 
 You already have a voice stack — Vapi, Retell, Pipecat, LiveKit, or
